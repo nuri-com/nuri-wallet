@@ -1,0 +1,72 @@
+import * as React from 'react';
+import { View as RNView } from 'react-native';
+import type { LayoutChangeEvent, ViewStyle } from 'react-native';
+import type { BoxNS, PaletteNS, StackNS } from '../contract';
+import { useFixedRegionLayout } from './FixedRegionLayout';
+import { FIXED_REGION_STYLE_KEYS, numericPadding, useResolvedNode, withKeys, withSurface } from './shared';
+import { useAssertNotBandContent } from './Bleed';
+
+type FooterStyleProps =
+  Pick<PaletteNS, 'chrome'> &
+  Pick<StackNS, 'direction' | 'align' | 'justify' | 'gap'> &
+  Pick<BoxNS, 'paddingX' | 'paddingY' | 'paddingTop' | 'paddingBottom'>;
+
+export type FooterProps = FooterStyleProps & {
+  safeAreaBottom?: boolean;
+  children?: React.ReactNode;
+  testID?: string;
+  onLayout?: (event: LayoutChangeEvent) => void;
+  ref?: React.Ref<React.ElementRef<typeof RNView>>;
+};
+
+const FooterImpl = React.forwardRef<React.ElementRef<typeof RNView>, FooterProps>(({
+  safeAreaBottom = false,
+  children,
+  testID,
+  onLayout,
+  ...props
+}, ref) => {
+  useAssertNotBandContent('Footer');
+  const { keyboardHeight, safeAreaBottom: hostSafeAreaBottom } = useFixedRegionLayout();
+  const { node } = useResolvedNode(props);
+  const resolvedViewStyle = node.view as ViewStyle;
+  const authoredPaddingBottom =
+    props.paddingBottom !== undefined
+      ? numericPadding(resolvedViewStyle, 'paddingBottom')
+      : numericPadding(resolvedViewStyle, 'paddingVertical');
+  // Keyboard visibility and residual frame occlusion are different signals on
+  // Android: adjustResize can consume the full keyboard and leave a zero frame
+  // inset while the keyboard is still visible. Do not restore the system-bar
+  // safe-area reserve until the keyboard actually hides.
+  const activeSafeAreaBottom = safeAreaBottom && keyboardHeight === 0 ? hostSafeAreaBottom : 0;
+  const composedPaddingBottom =
+    authoredPaddingBottom > 0 || activeSafeAreaBottom > 0
+      ? { paddingBottom: authoredPaddingBottom + activeSafeAreaBottom }
+      : null;
+
+  return (
+    <RNView
+      ref={ref}
+      testID={testID}
+      onLayout={onLayout}
+      style={[
+        FOOTER_STYLE,
+        node.view,
+        composedPaddingBottom,
+      ]}
+    >
+      {withSurface(node.fg, children)}
+    </RNView>
+  );
+});
+FooterImpl.displayName = 'Footer';
+
+export const Footer = withKeys(FooterImpl, [
+  'safeAreaBottom',
+  ...FIXED_REGION_STYLE_KEYS,
+]);
+
+const FOOTER_STYLE: ViewStyle = {
+  flexShrink: 0,
+  alignSelf: 'stretch',
+};

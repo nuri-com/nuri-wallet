@@ -1,0 +1,16 @@
+{
+  "development_baseline": "f18ccc51df8925223233c88a7851c0c2cf752c77",
+  "recorded_deployment_source": "1ef9850af9b05b2e58b8bd7054e3828c3c11a1a5",
+  "recorded_release": "pwa-20260926-001001",
+  "history": "Fresh repository; no private Git history imported",
+  "omitted_coordination_files": [
+    ".codex_known_hosts",
+    ".github/ISSUE_TEMPLATE/agent-ready.yml",
+    ".github/workflows/wf-issue-link.yml",
+    "CLAUDE.md",
+    "PROMPTLOG.md",
+    "RELEASE_POLICY.md",
+    "SESSION_LOG.md"
+  ],
+  "note": "Application source is preserved. Documentation, repository guidance and offline integrity tooling are preparation changes, not a deployed release. GitHub Actions must remain disabled during preparation."
+}

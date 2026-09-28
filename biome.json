@@ -1,0 +1,68 @@
+{
+  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "organizeImports": {
+    "enabled": false
+  },
+  "files": {
+    "ignore": [
+      "node_modules",
+      "android",
+      "ios",
+      "deprecated",
+      "experimental",
+      "config-plugins/build",
+      ".expo",
+      ".claude",
+      "dist",
+      "tools/vendor",
+      "public/vendor",
+      "web-build",
+      "ds"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "trailingCommas": "all",
+      "semicolons": "always"
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "suspicious": {
+        "noExplicitAny": "warn",
+        "noArrayIndexKey": "warn",
+        "noAssignInExpressions": "warn",
+        "noDoubleEquals": "warn"
+      },
+      "complexity": {
+        "noForEach": "off",
+        "useOptionalChain": "off",
+        "noUselessFragments": "warn",
+        "noStaticOnlyClass": "warn"
+      },
+      "style": {
+        "noNonNullAssertion": "warn",
+        "useImportType": "off",
+        "noParameterAssign": "warn",
+        "useDefaultParameterLast": "warn",
+        "noUnusedTemplateLiteral": "warn",
+        "useConst": "warn"
+      },
+      "correctness": {
+        "noUnusedVariables": "warn",
+        "noUnusedImports": "warn",
+        "useExhaustiveDependencies": "warn"
+      },
+      "nursery": {}
+    }
+  }
+}

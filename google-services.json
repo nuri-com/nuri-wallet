@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "485707775906",
+    "project_id": "nuri-3c516",
+    "storage_bucket": "nuri-3c516.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:485707775906:android:87134af55bde47a1fb7cfb",
+        "android_client_info": {
+          "package_name": "com.nuri.mobileios"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC-tjEOO_mx6Gil7ArgtZ_P7k5wnLHPWHg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:485707775906:android:d90995db7082f879fb7cfb",
+        "android_client_info": {
+          "package_name": "com.nuri.mobileios.dev"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC-tjEOO_mx6Gil7ArgtZ_P7k5wnLHPWHg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:485707775906:android:f1353b1cc5d94827fb7cfb",
+        "android_client_info": {
+          "package_name": "com.nuri.mobileios.preview"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC-tjEOO_mx6Gil7ArgtZ_P7k5wnLHPWHg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

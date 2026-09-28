@@ -1,0 +1,63 @@
+/* ──────────────────────────────────────────────────────────────
+ * NURI · COMPONENT · ICON-BUTTON · GENERATED RN API ADAPTER · DO NOT EDIT BY HAND
+ *
+ * The exact public export for `icon-button` (Path C component-API). `{Name}Props`
+ * is emitted from the descriptor's `api` (packages/spec/components/icon-button.ts);
+ * the component adapter normalizes public props into selection, content,
+ * behaviour, and optional accent scope before calling the shared descriptor renderer.
+ *
+ * Source · the authored descriptor `api`+`variants`. Emitter · scripts/parsers/
+ * components-api.js — run `npm run build`. Committed (decision 35) · the re-emit
+ * `git diff --exit-code` gate covers it. NEVER hand-edit — edit the descriptor's `api`.
+ * ────────────────────────────────────────────────────────────── */
+
+import * as React from 'react';
+import { nuriNames, renderDescriptorInstance } from '../../runtime/renderer';
+import type { NuriBehaviour } from '../../runtime/renderer';
+import { iconButtonDescriptor } from '../../../spec/components/icon-button';
+import { recipes } from '../data/recipes';
+import { scopedByAccent } from '../../primitives/shared';
+import type { Accent } from '../data/tokens';
+import type { IconName } from '../data/icons';
+
+export type IconButtonProps = {
+  variant?: 'solid' | 'soft' | 'ghost';
+  accent?: Accent;
+  onPress?: () => void;
+  disabled?: boolean;
+  accessibilityLabel?: string;
+  icon: IconName;
+  children?: never;
+};
+
+type IconButtonPart = 'root' | 'icon';
+
+const iconButtonDisplayName = nuriNames('icon-button').rn;
+
+const IconButtonInner: React.FC<IconButtonProps> = (props) => {
+  const selection: Record<string, string> = {
+    "variant": props.variant ?? "soft",
+  };
+  const content: Partial<Record<IconButtonPart, React.ReactNode>> = {};
+  if (props.icon !== undefined) content["icon"] = props.icon;
+  const behaviour: NuriBehaviour<IconButtonPart> = {};
+  behaviour.pressable = {
+    target: "root",
+    onPress: props.onPress,
+    disabled: props.disabled,
+    accessibilityLabel: props.accessibilityLabel,
+  };
+
+  return renderDescriptorInstance({
+    descriptor: iconButtonDescriptor,
+    recipe: recipes["icon-button"],
+    displayName: iconButtonDisplayName,
+    selection,
+    content,
+    behaviour,
+  });
+};
+IconButtonInner.displayName = `${iconButtonDisplayName}Inner`;
+
+export const IconButton = scopedByAccent(IconButtonInner);
+IconButton.displayName = iconButtonDisplayName;

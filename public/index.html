@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+
+    <!--
+      Content-Security-Policy. The wallet holds private keys in localStorage
+      (no Secure Enclave in a browser), so any injected script = full drain.
+      `script-src 'self'` is the primary defense: the Expo export ships a single
+      external `/_expo/*.js` (defer, no inline script), so no hashes/nonces are
+      needed and injected inline/remote script simply cannot execute.
+      `connect-src` is an allow-list of every backend the web build actually
+      talks to (same-origin `/api/*` proxy + the CORS-open direct backends +
+      RPC + Nostr relays) so a stolen key cannot be POSTed to an attacker host.
+      A host reached only by a FAILOVER path (blockstream.info, the second
+      Esplora) must be listed too: the fallback is invisible until the primary
+      breaks, and a missing entry turns a working failover into a dead one at
+      exactly the moment it is needed.
+      LNURL is the flow that would otherwise force this wide open — a Lightning
+      address lives on any domain (nuri@cake.cash) and its `callback` host is
+      whatever that domain answers with — so web LNURL fetches go through the
+      same-origin `/api/lnurl` forwarder instead (lib/web/apiProxy.ts). For the
+      same reason `img-src` stays off `https:`: every image the web build
+      renders is a bundled asset, so an image URL cannot become the leak channel
+      connect-src closes.
+      `frame-ancestors` is set at the nginx layer (meta ignores it) — see
+      docs/server-infrastructure.md.
+      NOTE: connect-src must be shaken out in Report-Only on the nginx side
+      before trusting it — a missing host here silently breaks that flow.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        base-uri 'self';
+        object-src 'none';
+        form-action 'self';
+        script-src 'self';
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' data: blob:;
+        font-src 'self' data:;
+        manifest-src 'self';
+        worker-src 'self' blob:;
+        frame-src 'self' https:;
+        connect-src 'self'
+          https://nuri.com
+          https://swapkit.nuri.com https://banking.nuri.com https://wirex.nuri.com
+          https://arkade.nuri.com https://arkade.computer
+          https://buybitcoin.nuri.com https://update.nuri.com
+          https://notifications.nuri.com
+          https://remit.nuri.com
+          https://*.g.alchemy.com
+          https://mempool.space https://mutinynet.com
+          https://blockstream.info
+          https://api.boltz.exchange https://li.quest
+          https://api.satora.io
+          https://base-rpc.publicnode.com https://base-sepolia.publicnode.com
+          https://ethereum-rpc.publicnode.com https://arbitrum-one-rpc.publicnode.com
+          https://polygon-bor-rpc.publicnode.com https://optimism-rpc.publicnode.com
+          https://gnosis-rpc.publicnode.com
+          wss://mempool.space wss://mutinynet.com
+          https://mainnet.base.org https://sepolia.base.org
+          https://eth.llamarpc.com https://polygon-rpc.com https://arb1.arbitrum.io
+          https://api.coingecko.com https://api.frankfurter.dev
+          https://api.kraken.com https://www.bitstamp.net https://api64.ipify.org
+          https://mercuryo.io
+          wss://relay.damus.io wss://relay.primal.net wss://nos.lol
+          wss://relay.snort.social wss://nostr.mom wss://relay.nostr.net;
+      "
+    />
+    <!-- viewport-fit=cover exposes env(safe-area-inset-*) to SafeAreaProvider on web -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+
+    <title>Nuri</title>
+    <meta name="description" content="Nuri — your Bitcoin and Euro wallet." />
+
+    <!-- PWA: install + full-screen standalone -->
+    <meta name="theme-color" content="#fffdf2" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- black-translucent makes the web view full-bleed behind the status bar
+         (full height). The app pads env(safe-area-inset-top) via SafeAreaProvider,
+         so content stays clear of the status bar while the screen bg fills behind it. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Nuri" />
+
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+
+    <style id="nuri-web-base">
+      /*
+       * react-native-web root reset. Expo injects this automatically ONLY when
+       * there is no custom index.html — since this file replaces the default
+       * template, we carry the reset ourselves.
+       * https://necolas.github.io/react-native-web/docs/setup/#root-element
+       */
+      html,
+      body {
+        height: 100%;
+        /* Backdrop behind the app. On iOS Safari the content is inset by the
+         * safe-area (notch / home indicator); without a solid color here the
+         * transparent document exposes whatever is behind it, which renders as
+         * a foreign-colored frame around the app. Must match the DS canvas
+         * surface (chrome="canvas") so the safe-area strips read as part of the
+         * app — that surface is the warm off-white below, NOT a neutral grey. */
+        background-color: #fffdf2;
+      }
+      body {
+        overflow: hidden;
+        margin: 0;
+        /* App-like feel: no browser pull-to-refresh / rubber-band scroll */
+        overscroll-behavior: none;
+      }
+      #root {
+        display: flex;
+        /* Browser tab: size to the SMALL viewport (svh) — the height Safari
+         * leaves when its bottom URL bar is at its largest. This keeps the fixed
+         * bottom tab bar from ever being overlapped by that bar, in any state
+         * (docked or floating). `100vh` is the pre-svh fallback. The installed
+         * PWA overrides this below (it has no browser chrome). */
+        height: 100vh;
+        height: 100svh;
+        /* Then the height the app MEASURES (lib/web/appViewportHeight), which
+         * wins over both. `svh` is a STATIC unit, and on the engines that
+         * resolve the small viewport to the large one (WebKit's small-viewport
+         * units are not spec compliant, and the non-Safari iOS browsers never
+         * set the min/max viewport insets) it is ~50px TALLER than the space
+         * Safari's toolbar leaves. `body` below is overflow:hidden, so that
+         * difference can never be panned back: the bottom of every screen-sized
+         * scroller — the home's above all — stays under the toolbar (#1372).
+         * The property is only ever written by the app, so a script-less load
+         * keeps the svh value, and the standalone block below only swaps that
+         * fallback for one that spans its screen — it does not override the
+         * measurement. */
+        height: var(--nuri-viewport-height, 100svh);
+        flex: 1;
+        /* Mobile-first app: cap the width and center it on wide (desktop)
+         * viewports so the phone layout doesn't stretch edge to edge. Below the
+         * cap (phones, the installed PWA) it stays full-width. The body backdrop
+         * fills the gutters. */
+        width: 100%;
+        max-width: 480px;
+        margin-inline: auto;
+      }
+
+      /* Installed PWA (standalone): no browser chrome, so fill the entire screen
+       * height. On iOS the small/dynamic viewport units stop ~47px short of the
+       * screen and leave a dead canvas strip at the bottom; `vh`/`lvh` span the
+       * full screen, so that is this context's fallback. The MEASURED height still
+       * wins here (the same property the app writes), for one reason of its own:
+       * the visual viewport is also what the keyboard shrinks, so a frame that
+       * ignored it would leave a bottom-anchored control — the onboarding footer,
+       * with Continue — behind the keyboard. */
+      @media all and (display-mode: standalone) {
+        html,
+        body {
+          height: 100vh;
+        }
+        #root {
+          height: var(--nuri-viewport-height, 100vh);
+        }
+      }
+
+      /* Desktop browsers render a full-screen DesktopGate ("scan to open on your
+       * phone"). Drop the phone-width cap so that gate covers the whole window
+       * instead of sitting in the centered 480px column. */
+      @media (hover: hover) and (pointer: fine) {
+        #root {
+          max-width: none;
+        }
+      }
+
+      /* Touch device in landscape renders a full-screen LandscapeGate ("rotate
+       * to portrait"). Drop the phone-width cap so it covers the whole window. */
+      @media (orientation: landscape) and (pointer: coarse) {
+        #root {
+          max-width: none;
+        }
+      }
+
+      /*
+       * On web, react-native-web renders every TextInput as <input> and every
+       * Pressable/Button as <button>/<div role="button">. Browsers draw a default
+       * focus ring and tap-highlight on those that RN StyleSheet cannot override.
+       * The app supplies its own focus feedback (input bg + indicator bar, button
+       * color states), so we strip the browser defaults globally.
+       */
+      * {
+        -webkit-tap-highlight-color: transparent;
+        /* Native RN Text isn't selectable; on web it is, so a long-press pops
+         * the iOS text-selection UI (Copy / Look Up / Translate) over the app.
+         * Disable selection + the long-press callout to match native — copying
+         * is done through the app's own tap-to-copy affordances. Re-enabled for
+         * real text fields below so typing/selection still works there. */
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      input,
+      textarea,
+      [contenteditable="true"] {
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      input,
+      textarea,
+      select,
+      button,
+      a,
+      [role="button"],
+      [tabindex],
+      [contenteditable] {
+        outline: none !important;
+      }
+      :focus,
+      :focus-visible {
+        outline: none !important;
+      }
+    </style>
+  </head>
+
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>

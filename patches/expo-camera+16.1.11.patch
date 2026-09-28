@@ -1,0 +1,17 @@
+diff --git a/node_modules/expo-camera/build/web/useWebQRScanner.js b/node_modules/expo-camera/build/web/useWebQRScanner.js
+index ae13c40..3934529 100644
+--- a/node_modules/expo-camera/build/web/useWebQRScanner.js
++++ b/node_modules/expo-camera/build/web/useWebQRScanner.js
+@@ -60,7 +60,11 @@ const createWorkerAsyncFunction = (fn, deps) => {
+     };
+ };
+ const decode = createWorkerAsyncFunction(qrWorkerMethod, [
+-    'https://cdn.jsdelivr.net/npm/jsqr@1.2.0/dist/jsQR.min.js',
++    // Self-hosted (public/vendor/jsQR.js) instead of the jsdelivr CDN so the
++    // worker's importScripts stays same-origin under the CSP (script-src 'self').
++    // Absolute URL off the page origin so it resolves inside the blob: worker
++    // and works on any host (localhost, pwa2, prod).
++    `${self.location.origin}/vendor/jsQR.js`,
+ ]);
+ export function useWebQRScanner(video, { isEnabled, captureOptions, interval, onScanned, onError, }) {
+     const isRunning = React.useRef(false);

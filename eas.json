@@ -1,0 +1,68 @@
+{
+  "cli": {
+    "version": "18.11.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "autoIncrement": true,
+      "env": {
+        "APP_VARIANT": "development",
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+      },
+      "ios": {
+        "simulator": false
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "autoIncrement": true,
+      "env": {
+        "APP_VARIANT": "preview",
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+      },
+      "ios": {
+        "simulator": false,
+        "buildConfiguration": "Release",
+        "image": "macos-sequoia-15.6-xcode-26.2"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "channel": "production",
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "ios": {
+        "image": "macos-sequoia-15.6-xcode-26.2"
+      },
+      "env": {
+        "APP_VARIANT": "production",
+        "EXPO_DEBUG": "1",
+        "EXPO_METRO_CONCURRENCY": "1",
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
+        "NODE_OPTIONS": "--max-old-space-size=8192"
+      }
+    }
+  },
+  "submit": {
+    "preview": {
+      "android": {
+        "track": "internal"
+      }
+    },
+    "internal": {
+      "android": {
+        "track": "internal"
+      }
+    },
+    "production": {
+      "android": {
+        "track": "production"
+      }
+    }
+  }
+}

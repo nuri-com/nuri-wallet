@@ -1,0 +1,207 @@
+name: Deploy PWA
+run-name: Deploy PWA ${{ inputs.commit_sha || github.ref_name }} to app.nuri.com
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Optional exact 40-character commit SHA; leave blank to deploy the selected branch head"
+        required: false
+        type: string
+      initial_cutover:
+        description: "Initial app.nuri.com cutover after removing the legacy DNS record"
+        required: true
+        default: false
+        type: boolean
+      rollback:
+        description: "Explicitly deploy an older known-good commit (bypasses forward-only ancestry guards)"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write # release tag + GitHub Release
+
+concurrency:
+  group: pwa-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build, verify, deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: production
+      url: https://app.nuri.com/
+    env:
+      BRANCH: ${{ github.ref_name }}
+      REQUESTED_SHA: ${{ inputs.commit_sha }}
+      INITIAL_CUTOVER: ${{ inputs.initial_cutover }}
+      ROLLBACK: ${{ inputs.rollback }}
+      CLOUDFLARE_ACCOUNT_ID: f1b10562ebc61894a559e51b08e02262
+    steps:
+      - name: Check out workflow ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Resolve selected branch and commit
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF" in
+            refs/heads/main|refs/heads/dev) ;;
+            *) echo "::error::Deploy PWA may run only from main or dev"; exit 1 ;;
+          esac
+          git check-ref-format --branch "$BRANCH" >/dev/null || { echo "::error::invalid selected branch"; exit 1; }
+          git fetch --no-tags origin "+refs/heads/$BRANCH:refs/remotes/origin/__pwa_selected_branch"
+          if [[ -n "$REQUESTED_SHA" ]]; then
+            [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::commit_sha must be 40 lowercase hexadecimal characters"; exit 1; }
+            SOURCE_SHA="$REQUESTED_SHA"
+            git cat-file -e "$SOURCE_SHA^{commit}"
+          else
+            SOURCE_SHA="$(git rev-parse origin/__pwa_selected_branch)"
+          fi
+          git checkout --detach "$SOURCE_SHA"
+          printf 'SOURCE_SHA=%s\n' "$SOURCE_SHA" >> "$GITHUB_ENV"
+
+      - name: Verify selected commit and freshness guards
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/$BRANCH:refs/remotes/origin/__pwa_selected_branch"
+          git fetch --no-tags origin "+refs/heads/dev:refs/remotes/origin/dev"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/__pwa_selected_branch || { echo "::error::selected SHA is not on origin/$BRANCH"; exit 1; }
+          if [[ "$ROLLBACK" != "true" ]]; then
+            git merge-base --is-ancestor origin/dev "$SOURCE_SHA" || {
+              echo "::error::selected SHA does not contain current origin/dev"; exit 1;
+            }
+          else
+            echo "::warning::explicit rollback requested for $SOURCE_SHA"
+          fi
+          grep -q '<UnifiedHomeScreen' App.tsx || { echo "::error::one-screen app marker is missing"; exit 1; }
+          live_manifest="$(curl --fail --silent --show-error --retry 3 --retry-all-errors https://app.nuri.com/deployment.json || true)"
+          if [[ -n "$live_manifest" ]]; then
+            [[ "$INITIAL_CUTOVER" != "true" ]] || { echo "::error::initial_cutover requires the legacy DNS record to be removed"; exit 1; }
+            live_sha="$(printf '%s' "$live_manifest" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).source_sha||""))')"
+            [[ "$live_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::live manifest source_sha is invalid"; exit 1; }
+            git cat-file -e "$live_sha^{commit}"
+            if [[ "$ROLLBACK" != "true" ]]; then
+              git merge-base --is-ancestor "$live_sha" "$SOURCE_SHA" || {
+                echo "::error::candidate would overwrite newer/diverged live source"; exit 1;
+              }
+            fi
+          else
+            [[ "$INITIAL_CUTOVER" == "true" ]] || { echo "::error::app.nuri.com manifest is unreachable; select initial_cutover only after deliberately removing the legacy DNS record"; exit 1; }
+            live_sha=""
+            echo "::warning::initial cutover: legacy app.nuri.com manifest is intentionally unavailable"
+          fi
+          printf '%s\n' "$live_sha" > "$RUNNER_TEMP/live-source-before"
+          printf 'upstream_dev_sha=%s\n' "$(git rev-parse origin/dev)" >> "$GITHUB_ENV"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Run checks
+        run: |
+          npm run check
+          node --test cloudflare/test/worker.test.mjs
+
+      - name: Build web export and stage assets
+        run: |
+          set -euo pipefail
+          APP_NETWORK=mainnet NODE_OPTIONS=--max-old-space-size=6144 \
+            npx expo export --platform web --output-dir web-build-cf --clear
+          bundle="$(find web-build-cf/_expo/static/js/web -name 'index-*.js' -size +1M -print -quit)"
+          test -n "$bundle"
+          grep -qF 'appNetwork\":\"mainnet' "$bundle"
+          asset="${bundle#web-build-cf/}"
+          asset_sha256="$(sha256sum "$bundle" | cut -d' ' -f1)"
+          rsync -a --delete --exclude='*.test.ts' web-build-cf/ cloudflare/assets/
+          rm -rf web-build-cf
+          app_version="$(node -e 'const s=require("fs").readFileSync("app.config.ts","utf8");const m=s.match(/const appVersion = "([^"]+)"/);if(!m)process.exit(1);process.stdout.write(m[1])')"
+          previous_source_sha="$(cat "$RUNNER_TEMP/live-source-before")"
+          release_id="pwa-${SOURCE_SHA:0:12}"
+          deployed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          node -e 'const fs=require("fs");const [release_id,app_version,source_ref,source_sha,upstream_dev_sha,previous_source_sha,asset,asset_sha256,deployed_at]=process.argv.slice(1);fs.writeFileSync("cloudflare/assets/deployment.json",JSON.stringify({schema_version:1,release_id,app_version,source_ref,source_sha,upstream_dev_sha,previous_source_sha,asset,asset_sha256,deployed_at},null,2)+"\n")' "$release_id" "$app_version" "origin/$BRANCH" "$SOURCE_SHA" "$upstream_dev_sha" "$previous_source_sha" "$asset" "$asset_sha256" "$deployed_at"
+          printf 'asset=%s\nasset_sha256=%s\nrelease_id=%s\napp_version=%s\nprevious_source_sha=%s\ndeployed_at=%s\n' "$asset" "$asset_sha256" "$release_id" "$app_version" "$previous_source_sha" "$deployed_at" >> "$GITHUB_ENV"
+
+      - name: Recheck freshness and live compare-and-swap guard
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/dev:refs/remotes/origin/dev"
+          if [[ "$ROLLBACK" != "true" ]]; then
+            test "$(git rev-parse origin/dev)" = "$upstream_dev_sha" || { echo "::error::origin/dev changed while exporting"; exit 1; }
+            git merge-base --is-ancestor origin/dev "$SOURCE_SHA" || { echo "::error::selected SHA no longer contains origin/dev"; exit 1; }
+          fi
+          current_live_manifest="$(curl --fail --silent --show-error --retry 3 --retry-all-errors https://app.nuri.com/deployment.json || true)"
+          if [[ -n "$current_live_manifest" ]]; then
+            current_live_sha="$(printf '%s' "$current_live_manifest" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).source_sha||""))')"
+          else
+            current_live_sha=""
+          fi
+          if [[ "$INITIAL_CUTOVER" == "true" ]]; then
+            test -z "$current_live_sha" || { echo "::error::legacy app.nuri.com became reachable during initial cutover"; exit 1; }
+          else
+            test "$current_live_sha" = "$(cat "$RUNNER_TEMP/live-source-before")" || { echo "::error::app.nuri.com advanced while exporting"; exit 1; }
+          fi
+
+      - name: Validate bundle (dry-run)
+        run: (cd cloudflare && npx -y wrangler@4.59.2 deploy --dry-run --strict)
+
+      - name: Deploy exact commit
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd cloudflare
+          npx -y wrangler@4.59.2 deploy \
+            | tee /tmp/deploy.log
+          version_id="$(node -e 'const s=require("fs").readFileSync("/tmp/deploy.log","utf8"); const m=s.match(/Current Version ID:\s*([0-9a-f-]{36})/i); if(!m) process.exit(1); process.stdout.write(m[1])')"
+          echo "version_id=$version_id" >> "$GITHUB_OUTPUT"
+
+      - name: Verify production manifest and asset hash
+        run: |
+          set -euo pipefail
+          # A deploy reaches Cloudflare's edge PoPs over several seconds, so
+          # every probe has to retry — not just the manifest. Deploy 92a8f39a
+          # went red on a correct production state: the manifest had already
+          # flipped while "/" still served the previous entry point, and the
+          # homepage check ran once, outside the loop. The three checks are
+          # retried together because they must agree on the same moment.
+          why="no attempt ran"
+          for attempt in $(seq 1 24); do
+            why=""
+            manifest="$(curl --fail --silent --show-error https://app.nuri.com/deployment.json || true)"
+            if ! printf '%s' "$manifest" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let m;try{m=JSON.parse(s)}catch{process.exit(1)}const e=process.env;process.exit(m.source_sha===e.SOURCE_SHA&&m.asset===e.asset&&m.asset_sha256===e.asset_sha256&&m.release_id===e.release_id?0:1)})'; then
+              why="manifest does not match candidate"
+            fi
+            if [[ -z "$why" ]]; then
+              live_asset="$(curl --fail --silent --show-error https://app.nuri.com/ | grep -oE '_expo/static/js/web/index-[a-f0-9]+\.js' | head -1 || true)"
+              [[ "$live_asset" == "$asset" ]] || why="homepage serves ${live_asset:-nothing}, candidate is $asset"
+            fi
+            if [[ -z "$why" ]]; then
+              live_hash="$(curl --fail --silent --show-error "https://app.nuri.com/$asset" | sha256sum | cut -d' ' -f1 || true)"
+              [[ "$live_hash" == "$asset_sha256" ]] || why="served asset hash ${live_hash:-none} != $asset_sha256"
+            fi
+            if [[ -z "$why" ]]; then
+              echo "production matches candidate on attempt $attempt"
+              break
+            fi
+            test "$attempt" -lt 24 || { echo "::error::production never matched candidate after 24 attempts — $why"; exit 1; }
+            echo "attempt $attempt: $why — retrying in 5s"
+            sleep 5
+          done
+
+      - name: Create release tag pinned to commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release-pwa.sh

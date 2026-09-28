@@ -1,0 +1,62 @@
+import type { ImageSourcePropType } from "react-native";
+
+// ISO 3166-1 alpha-2 → bundled flag asset. Metro requires static string
+// literals in require(), so this map is exhaustive by hand rather than built
+// from a template. Keys mirror lib/phone/eea.ts EEA_COUNTRIES; the PNG files
+// are named by ISO alpha-3.
+const COUNTRY_FLAGS: Record<string, ImageSourcePropType> = {
+  AE: require("../assets/flags/are.png"),
+  AR: require("../assets/flags/arg.png"),
+  AT: require("../assets/flags/aut.png"),
+  AU: require("../assets/flags/aus.png"),
+  BE: require("../assets/flags/bel.png"),
+  BG: require("../assets/flags/bgr.png"),
+  BO: require("../assets/flags/bol.png"),
+  BR: require("../assets/flags/bra.png"),
+  CH: require("../assets/flags/che.png"),
+  CO: require("../assets/flags/col.png"),
+  HR: require("../assets/flags/hrv.png"),
+  CY: require("../assets/flags/cyp.png"),
+  CZ: require("../assets/flags/cze.png"),
+  GB: require("../assets/flags/gbr.png"),
+  DK: require("../assets/flags/dnk.png"),
+  EE: require("../assets/flags/est.png"),
+  FI: require("../assets/flags/fin.png"),
+  FR: require("../assets/flags/fra.png"),
+  DE: require("../assets/flags/deu.png"),
+  GH: require("../assets/flags/gha.png"),
+  GR: require("../assets/flags/grc.png"),
+  HU: require("../assets/flags/hun.png"),
+  IE: require("../assets/flags/irl.png"),
+  IT: require("../assets/flags/ita.png"),
+  JP: require("../assets/flags/jpn.png"),
+  KE: require("../assets/flags/ken.png"),
+  LV: require("../assets/flags/lva.png"),
+  LT: require("../assets/flags/ltu.png"),
+  LU: require("../assets/flags/lux.png"),
+  MY: require("../assets/flags/mys.png"),
+  MT: require("../assets/flags/mlt.png"),
+  MX: require("../assets/flags/mex.png"),
+  NG: require("../assets/flags/nga.png"),
+  NL: require("../assets/flags/nld.png"),
+  PY: require("../assets/flags/pry.png"),
+  PH: require("../assets/flags/phl.png"),
+  PL: require("../assets/flags/pol.png"),
+  PT: require("../assets/flags/prt.png"),
+  RO: require("../assets/flags/rou.png"),
+  SG: require("../assets/flags/sgp.png"),
+  SK: require("../assets/flags/svk.png"),
+  SI: require("../assets/flags/svn.png"),
+  ZA: require("../assets/flags/zaf.png"),
+  ES: require("../assets/flags/esp.png"),
+  SE: require("../assets/flags/swe.png"),
+  TZ: require("../assets/flags/tza.png"),
+  TH: require("../assets/flags/tha.png"),
+  TR: require("../assets/flags/tur.png"),
+  IS: require("../assets/flags/isl.png"),
+  LI: require("../assets/flags/lie.png"),
+  NO: require("../assets/flags/nor.png"),
+};
+
+export const flagForIso2 = (iso2: string): ImageSourcePropType | undefined =>
+  COUNTRY_FLAGS[iso2.toUpperCase()];

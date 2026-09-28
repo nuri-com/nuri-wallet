@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitAny": true,
+    "typeRoots": ["./types/lib", "./node_modules/@types"],
+    "paths": { "@ds": ["./ds/nuri/index.ts"] }
+  },
+  "extends": "expo/tsconfig.base",
+  "exclude": [
+    "android/**",
+    "ios/**",
+    "deprecated/**",
+    "experimental/**",
+    "config-plugins/build/**",
+    ".expo/**",
+    ".claude/**",
+    "dist/**",
+    "tools/vendor/**",
+    "ds/nuri/**/test/**"
+  ]
+}

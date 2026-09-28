@@ -1,0 +1,13 @@
+{
+  "nuri_server_api": "v4",
+  "nuri_server_version": "nuri-server-api-v4.2.0-one-server-test",
+  "nuri_contract_version": "nuri-client-recovery-v1",
+  "nuri_contract_type": "nuri_client_recovery_v1",
+  "arkade_sdk_version": "0.4.38",
+  "bitcoin_tx_version": "2",
+  "arkade_csv": "from_arkade",
+  "nuri_csv": {
+    "type": "seconds",
+    "value": 6674432
+  }
+}

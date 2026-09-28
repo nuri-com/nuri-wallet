@@ -1,0 +1,18 @@
+[Unit]
+Description=LNURL forwarder for app.nuri.com (SSRF-guarded, same-origin /api/lnurl)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/node /opt/lnurl-proxy/server.js
+Environment=PORT=8795
+Restart=always
+RestartSec=2
+User=www-data
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

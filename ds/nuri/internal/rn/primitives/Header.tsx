@@ -1,0 +1,97 @@
+import * as React from 'react';
+import { View as RNView } from 'react-native';
+import type { LayoutChangeEvent, ViewStyle } from 'react-native';
+import type { BoxNS, PaletteNS, StackNS } from '../contract';
+import { size } from '../generated/data/tokens';
+import { useFixedRegionLayout } from './FixedRegionLayout';
+import { FIXED_REGION_STYLE_KEYS, numericPadding, useResolvedNode, withKeys, withSurface } from './shared';
+import { useAssertNotBandContent } from './Bleed';
+
+type HeaderStyleProps =
+  Pick<PaletteNS, 'chrome'> &
+  Pick<StackNS, 'direction' | 'align' | 'justify' | 'gap'> &
+  Pick<BoxNS, 'paddingX' | 'paddingY' | 'paddingTop' | 'paddingBottom'>;
+
+export type HeaderProps = HeaderStyleProps & {
+  safeAreaTop?: boolean;
+  safeAreaChrome?: PaletteNS['chrome'];
+  children?: React.ReactNode;
+  testID?: string;
+  onLayout?: (event: LayoutChangeEvent) => void;
+  ref?: React.Ref<React.ElementRef<typeof RNView>>;
+};
+
+const HeaderImpl = React.forwardRef<React.ElementRef<typeof RNView>, HeaderProps>(({
+  safeAreaTop = false,
+  safeAreaChrome,
+  children,
+  testID,
+  onLayout,
+  ...props
+}, ref) => {
+  useAssertNotBandContent('Header');
+  const { headerPresentation, safeAreaTop: hostSafeAreaTop } = useFixedRegionLayout();
+  const { node } = useResolvedNode(props);
+  const { node: safeAreaNode } = useResolvedNode({ chrome: safeAreaChrome });
+  const resolvedViewStyle = node.view as ViewStyle;
+  const authoredPaddingTop =
+    props.paddingTop !== undefined
+      ? numericPadding(resolvedViewStyle, 'paddingTop')
+      : numericPadding(resolvedViewStyle, 'paddingVertical');
+  const effectiveSafeAreaTop = safeAreaTop ? hostSafeAreaTop : 0;
+  const composedPaddingTop =
+    authoredPaddingTop > 0 || effectiveSafeAreaTop > 0
+      ? { paddingTop: authoredPaddingTop + effectiveSafeAreaTop }
+      : null;
+
+  return (
+    <RNView
+      ref={ref}
+      testID={testID}
+      onLayout={onLayout}
+      style={[
+        HEADER_STYLE,
+        headerPresentation === 'overlay' ? MODAL_OVERLAY_HEADER_STYLE : null,
+        node.view,
+        composedPaddingTop,
+      ]}
+    >
+      {effectiveSafeAreaTop > 0 && safeAreaChrome !== undefined ? (
+        <RNView
+          pointerEvents="none"
+          style={[SAFE_AREA_CHROME_STYLE, safeAreaNode.view, { height: effectiveSafeAreaTop }]}
+        />
+      ) : null}
+      {withSurface(node.fg, children)}
+    </RNView>
+  );
+});
+HeaderImpl.displayName = 'Header';
+
+export const Header = withKeys(HeaderImpl, [
+  'safeAreaTop',
+  'safeAreaChrome',
+  ...FIXED_REGION_STYLE_KEYS,
+]);
+
+const HEADER_STYLE: ViewStyle = {
+  flexShrink: 0,
+  alignSelf: 'stretch',
+};
+
+// An opted-in Modal lets content scroll beneath its fixed 2xl Topbar while
+// safe-area padding remains structural. The negative margin removes only the
+// authored Topbar block from Yoga flow; Scroll restores that token as initial
+// content padding and Header keeps its full hit-test bounds.
+const MODAL_OVERLAY_HEADER_STYLE: ViewStyle = {
+  position: 'relative',
+  zIndex: 2,
+  marginBottom: -size['2xl'],
+};
+
+const SAFE_AREA_CHROME_STYLE: ViewStyle = {
+  position: 'absolute',
+  left: 0,
+  right: 0,
+  top: 0,
+};

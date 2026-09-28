@@ -1,0 +1,267 @@
+// ════════════════════════════════════════════════════════════
+// Modal — the single public blocking presented surface.
+// `mode` is presentation, not identity: the registered layer, animated host,
+// region provider, panel, and consumer subtree remain one stable tree.
+// ════════════════════════════════════════════════════════════
+import * as React from 'react';
+import {
+  Animated,
+  Easing,
+  Keyboard,
+  Platform,
+  Pressable as RNPressable,
+  StyleSheet,
+  View as RNView,
+  useWindowDimensions,
+} from 'react-native';
+import type { KeyboardEvent, LayoutChangeEvent, ViewStyle } from 'react-native';
+import { blackAlpha } from '../../spec/tokens/colours';
+import { bottomSheetChrome } from '../../spec/components/bottom-sheet-chrome';
+
+import {
+  ModalPanel as GeneratedModalPanel,
+} from '../generated/components/modal-panel';
+import { usePresentedLayer } from '../presented-layer';
+import { useNuriSafeAreaInsets } from '../safe-area';
+import { useNuriTheme } from '../theme';
+import { FixedRegionLayoutProvider, useFixedRegionLayout } from './FixedRegionLayout';
+import {
+  isTopmostOpenModal,
+  removeOpenModal,
+  upsertOpenModal,
+  useIsTopmostFullModal,
+} from './modal-stack';
+
+export type ModalMode = 'sheet' | 'full';
+export type ModalScrim = 'none' | 'dim';
+
+export type ModalProps = {
+  open?: boolean;
+  mode: ModalMode;
+  scrollUnderTopbar?: boolean;
+  scrim?: ModalScrim;
+  dismissible?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  onOpenComplete?: () => void;
+  children?: React.ReactNode;
+};
+
+export type ModalPanelProps = {
+  children?: React.ReactNode;
+};
+
+const CONTENT_MAX_FRACTION = 0.82;
+
+const SHEET_ENTER_TIMING: Omit<Animated.TimingAnimationConfig, 'toValue'> = {
+  duration: 280,
+  easing: Easing.out(Easing.cubic),
+  useNativeDriver: true,
+};
+const SHEET_EXIT_TIMING: Omit<Animated.TimingAnimationConfig, 'toValue'> = {
+  duration: 220,
+  easing: Easing.in(Easing.cubic),
+  useNativeDriver: true,
+};
+const FULL_ENTER_TIMING: Omit<Animated.TimingAnimationConfig, 'toValue'> = {
+  duration: 220,
+  easing: Easing.out(Easing.cubic),
+  useNativeDriver: true,
+};
+const FULL_EXIT_TIMING: Omit<Animated.TimingAnimationConfig, 'toValue'> = {
+  duration: 180,
+  easing: Easing.in(Easing.cubic),
+  useNativeDriver: true,
+};
+
+const RN_SCRIM = {
+  transparent: 'transparent',
+  'blackAlpha.7': blackAlpha[7].value,
+} as const;
+
+const AnimatedPressable = Animated.createAnimatedComponent(RNPressable);
+const ModalModeContext = React.createContext<ModalMode | null>(null);
+
+type ModalSurfaceProps = {
+  children?: React.ReactNode;
+  onLayout: (event: LayoutChangeEvent) => void;
+  surfaceStyle: ViewStyle;
+  animatedStyle: React.ComponentProps<typeof Animated.View>['style'];
+};
+
+const ModalSurface: React.FC<ModalSurfaceProps> = ({
+  children,
+  onLayout,
+  surfaceStyle,
+  animatedStyle,
+}) => {
+  const { frameKeyboardInset } = useFixedRegionLayout();
+  const keyboardStyle = frameKeyboardInset > 0 ? { paddingBottom: frameKeyboardInset } : null;
+  return (
+    <Animated.View onLayout={onLayout} style={[surfaceStyle, animatedStyle, keyboardStyle]}>
+      {children}
+    </Animated.View>
+  );
+};
+ModalSurface.displayName = 'ModalSurface';
+
+let warnedFullScrim = false;
+let warnedSheetKeyboard = false;
+
+function isDev(): boolean {
+  return typeof __DEV__ !== 'undefined' && __DEV__;
+}
+
+export const Modal: React.FC<ModalProps> = ({
+  open = false,
+  mode,
+  scrollUnderTopbar = false,
+  scrim,
+  dismissible = true,
+  onOpenChange,
+  onOpenComplete,
+  children,
+}) => {
+  const modalId = React.useId();
+  const isSheet = mode === 'sheet';
+  const safeAreaInsets = useNuriSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const [sheetHeight, setSheetHeight] = React.useState<number | null>(null);
+  const measuredHeight = React.useRef<number | null>(null);
+  const isTopmostOpenFull = useIsTopmostFullModal(isSheet ? null : modalId);
+
+  const handleSurfaceLayout = React.useCallback((event: LayoutChangeEvent) => {
+    const next = Math.round(event.nativeEvent.layout.height);
+    if (measuredHeight.current === next) return;
+    measuredHeight.current = next;
+    setSheetHeight(next);
+  }, []);
+
+  React.useEffect(() => {
+    if (!isDev() || mode !== 'full' || scrim === undefined || warnedFullScrim) return;
+    warnedFullScrim = true;
+    console.warn('[nuri] <Modal mode="full"> ignores `scrim`; full modals paint edge to edge.');
+  }, [mode, scrim]);
+
+  // Open membership follows presentation intent, not the presented-layer
+  // mount latch. Updating an existing entry preserves mount order so a lower
+  // modal re-render cannot jump above a later modal.
+  React.useLayoutEffect(() => {
+    if (!open) {
+      removeOpenModal(modalId);
+      return;
+    }
+    upsertOpenModal(modalId, mode);
+  }, [modalId, mode, open]);
+  React.useLayoutEffect(
+    () => () => removeOpenModal(modalId),
+    [modalId],
+  );
+
+  React.useEffect(() => {
+    if (!isDev() || !open || mode !== 'sheet') return;
+    const event = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const subscription = Keyboard.addListener(event, (_keyboardEvent: KeyboardEvent) => {
+      if (warnedSheetKeyboard || !isTopmostOpenModal(modalId, 'sheet')) return;
+      warnedSheetKeyboard = true;
+      console.warn('[nuri] The keyboard opened over <Modal mode="sheet">. Inputs belong in mode="full".');
+    });
+    return () => subscription.remove();
+  }, [modalId, mode, open]);
+
+  const sheetMaxHeight = Math.round(windowHeight * CONTENT_MAX_FRACTION);
+  // Full modals must paint an opaque backdrop on every platform. Web renders
+  // the DS chrome:canvas as CSS; native's colour-free recipe leaves the
+  // absolute-fill surface transparent, so the home screen shows through.
+  // This is the single point where full modals get their backdrop. The color
+  // comes from the ACTIVE theme (chrome.canvas.bg: #fffdf2 light / #12110b
+  // dark, generated tokens.ts) so dark NuriScope flows keep their canvas.
+  const theme = useNuriTheme();
+  const surfaceStyle: ViewStyle = isSheet
+    ? { width: '100%', maxHeight: sheetMaxHeight }
+    : { ...StyleSheet.absoluteFillObject, backgroundColor: theme.chrome.canvas.bg };
+
+  usePresentedLayer({
+    open,
+    ready: !isSheet || sheetHeight !== null,
+    blocking: true,
+    dismissible,
+    onRequestClose: dismissible ? () => onOpenChange?.(false) : undefined,
+    onEnterComplete: () => {
+      onOpenChange?.(true);
+      onOpenComplete?.();
+    },
+    onExitComplete: () => {
+      measuredHeight.current = null;
+      setSheetHeight(null);
+    },
+    enterTiming: isSheet ? SHEET_ENTER_TIMING : FULL_ENTER_TIMING,
+    exitTiming: isSheet ? SHEET_EXIT_TIMING : FULL_EXIT_TIMING,
+    renderLayer: ({ progress, requestClose }) => {
+      const translateY = progress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [sheetHeight ?? windowHeight, 0],
+      });
+      const scale = progress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.985, 1],
+      });
+      const animatedStyle = isSheet
+        ? { transform: [{ translateY }] }
+        : { opacity: progress, transform: [{ scale }] };
+
+      return (
+        <RNView pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+          {isSheet && (scrim ?? 'dim') === 'dim' ? (
+            <AnimatedPressable
+              accessibilityRole={dismissible ? 'button' : undefined}
+              disabled={!dismissible}
+              onPress={dismissible ? requestClose : undefined}
+              style={[styles.scrim, { opacity: progress }]}
+            />
+          ) : null}
+          <RNView pointerEvents="box-none" style={styles.host}>
+            <FixedRegionLayoutProvider
+              keyboardEnabled={!isSheet && isTopmostOpenFull}
+              hostGeometry={isSheet ? 'content' : 'fill'}
+              headerPresentation={scrollUnderTopbar ? 'overlay' : 'structural'}
+              safeAreaTop={isSheet ? 0 : safeAreaInsets.top}
+              safeAreaBottom={safeAreaInsets.bottom}
+              viewportFallbackHeight={isSheet ? sheetMaxHeight : windowHeight}
+              windowHeight={windowHeight}
+            >
+              <ModalSurface
+                onLayout={handleSurfaceLayout}
+                surfaceStyle={surfaceStyle}
+                animatedStyle={animatedStyle}
+              >
+                <ModalModeContext.Provider value={mode}>
+                  {children}
+                </ModalModeContext.Provider>
+              </ModalSurface>
+            </FixedRegionLayoutProvider>
+          </RNView>
+        </RNView>
+      );
+    },
+  });
+
+  return null;
+};
+Modal.displayName = 'Modal';
+
+export const ModalPanel: React.FC<ModalPanelProps> = (props) => {
+  const mode = React.useContext(ModalModeContext) ?? 'sheet';
+  return <GeneratedModalPanel {...props} mode={mode} />;
+};
+ModalPanel.displayName = 'ModalPanel';
+
+const styles = StyleSheet.create({
+  scrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: RN_SCRIM[bottomSheetChrome.scrim.dim],
+  },
+  host: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-end',
+  },
+});
