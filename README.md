@@ -7,10 +7,12 @@ It is not the development repository, a demo, or a copy of the native applicatio
 checked on **2026-09-29**. Building the reduced web source reproduced all **287
 application files byte for byte**. The remaining file is deployment metadata.
 
-**Security status:** matching bytes does not mean safe code. The web client persists
-private keys in unencrypted browser storage. The repository also still has an
-unreviewed earlier import in its Git history. See [security and publication](#security-and-publication)
-before using a funded wallet or making this preparation repository public.
+**Security model:** persistent browser-readable wallet keys are an intentional part
+of this web implementation, not a newly discovered storage malfunction. Bitcoin
+cosigned paths and direct EVM signing have different protection boundaries. The
+[risk map](#risk-map) documents those boundaries and their assumptions. Separately,
+the repository's earlier import still needs publication review; known runtime
+trade-offs and private material in Git history are different questions.
 
 ## Contents
 
@@ -231,19 +233,15 @@ npm run check
 
 ```mermaid
 flowchart TB
-    subgraph Delivered["Hash-checked static release"]
-        H["HTML, CSS and assets"]
-        J["Expo application and JavaScript chunks"]
-        SW["Push service worker"]
-    end
-    H --> Browser["Browser at app.nuri.com"]
-    J --> Browser
-    SW --> Browser
-    Browser --> Storage["Origin storage and in-memory wallet state"]
-    Browser --> Edge["Hosting and same-origin proxy: implementation not verified by file hashes"]
-    Browser --> Providers["Configured direct provider requests"]
-    Edge --> Backends["Cosigner, indexer and other proxied services"]
-    Providers --> Services["Swap, banking, RPC, Nostr and other services"]
+    Operator["Deployment operator and hosting"] --> Release["R1: delivered HTML, JS chunks, assets and service worker"]
+    Release --> Browser["Application JavaScript at app.nuri.com"]
+    Authenticator["Passkey provider or authenticator"] -->|"PRF at bootstrap; assertions for authorization"| Browser
+    Browser <--> Storage["R2: derived keys in localStorage and active session memory"]
+    Browser -->|"Approval requests and client signing contributions"| Cosigner["R3: arkade.nuri.com v4; remote signature and server policy"]
+    Browser -->|"Locally signed EOA transactions"| EVM["R4: EVM RPC and blockchain; no Bitcoin cosigner on this path"]
+    Browser -->|"Orders, queries and diagnostics; direct or proxied"| Services["R5: swaps, banking, RPCs, indexers, Nostr and support"]
+    Reference["Independently trusted repository revision"] --> Checker["R6: external file verifier"]
+    Release -->|"Fresh HTTP responses"| Checker
 ```
 
 This diagram describes trust boundaries, not an exhaustive packet capture. Some
@@ -305,49 +303,117 @@ The storage adapter uses `nuri.sks.` localStorage entries and base64url for priv
 keys and HTLC roots. Base64url is reversible encoding, **not encryption**. Some web
 lock/cache methods are no-ops. The [web keychain adapter](source/lib/web/ReactNativeKeychainWeb.ts)
 also uses localStorage; it does not inherit native keychain/biometric guarantees.
+The storage adapter also persists authentication-related state through `storeAuthData`
+and `storeAuthKey`. Its exposure boundary is therefore not limited to coin keys;
+the permissions and lifetime of each credential depend on its protocol and backend.
+
+### Intended lifecycle: derive once, retain keys, authorize signing separately
+
+The [storage implementation's own comments](source/lib/secureKeyStorage.web.ts#L1-L14)
+explicitly describe this persistence decision and cite the cosigner as the second
+factor. This is not an accidental fallback to plaintext storage. The important
+question is which signing paths actually have that second factor.
+
+For the current Bitcoin/Arkade client,
+[`SigningKeyVault`](source/services/arkade/internal/signingKeyVault.ts#L224-L305)
+distinguishes two operations:
+
+1. **Bootstrap/recovery:** a PRF ceremony derives wallet material, which is persisted.
+2. **Signing authorization:** a standard WebAuthn assertion is obtained when required,
+   and the held Bitcoin key is loaded. The code explicitly does not request the PRF
+   again for that assertion. It checks that the held key matches the expected public key.
+
+Temporary signing-key copies are scoped and cleared when that operation ends. This
+reduces the lifetime of those copies; it does not erase the persisted localStorage
+entry or make JavaScript memory reliably inaccessible to a compromised runtime.
+
+The client also supports scoped approval/session reuse for selected receive,
+boarding and recovery operations. For example,
+[`requestBoardingSweepApprovalToken`](source/services/arkade/ArkadeRemoteIdentity.ts#L1451-L1545)
+can request an approval using an existing session token without another assertion.
+Consequently, this architecture must not be described as "a fresh biometric prompt
+for every signature." Session scope, expiry and server enforcement matter.
+
+### Two different signing boundaries
+
+```mermaid
+flowchart LR
+    subgraph Bitcoin["Bitcoin cosigned path"]
+        BK["Held client Bitcoin key"] --> CP["Client signing contribution"]
+        WA["WebAuthn authorization or allowed scoped session"] --> AP["Approval token and approved request scope"]
+        AP --> CP
+        AP --> Server["v4 cosigner and server-side policy"]
+        Server --> SP["Server signing contribution"]
+        CP --> Combined["Combined signature"]
+        SP --> Combined
+    end
+    subgraph Ethereum["Direct EVM EOA path"]
+        EK["Held Ethereum key"] --> ES["Local EVM signer"]
+        ES --> RPC["Signed transaction broadcast to RPC"]
+    end
+```
+
+This diagram shows the client protocol, not an independent audit of the cosigner.
+[`ArkadeRemoteIdentity`](source/services/arkade/ArkadeRemoteIdentity.ts#L2050-L2205)
+requires an approval token in this signing path and obtains the server's signing
+contribution. A copied client key alone is not equivalent to both cosigning keys.
+The direct EVM path in
+[`BaseTokenTransferService`](source/services/base/BaseTokenTransferService.ts#L69-L77)
+constructs an EOA signer from the held Ethereum key and does not use that Bitcoin
+cosigner. Smart accounts, HTLCs and other asset paths require their own policy analysis.
 
 ## Security and publication
 
-### Assessment: do not treat this as cleared for public release
+### Known design, residual risk, and publication hygiene
 
-Open source is not the cause of the main wallet weakness below. Browser code and
-client configuration are already delivered to visitors, and publishing readable
-source makes existing behavior easier to audit. It can also make weaknesses easier
-to find. Keeping the source private is not a remedy for insecure key handling.
+Persistent browser-readable derived keys are **intended behavior in this snapshot**.
+The source comments state that choice, and the signing code deliberately reuses
+held key material after separate authorization. Documenting that decision is not a finding that storage
+has unexpectedly malfunctioned. It also does not establish that every asset is
+protected by a cosigner or that browser compromise is harmless.
 
-This is a **scoped source and publication review**, not a penetration test, a
+Browser code and client configuration are already delivered to visitors. Publishing
+readable source makes their behavior easier to inspect; it does not newly upload a
+user's locally generated wallet keys. Known architectural trade-offs can be documented
+honestly in an open-source release. They are separate from inadvertently publishing
+private history, personal data or credentials that were never intended to be public.
+
+This is a **scoped architecture and publication review**, not a penetration test, a
 complete transaction-policy audit, or confirmation that every dependency is safe.
 No funded wallet, real private key or provider credential was used to test an exploit.
 
-### High: persisted web keys are readable by same-origin JavaScript
+### Risk map
 
-**Confirmed implementation behavior.** [`storePrivateKey`](source/lib/secureKeyStorage.web.ts#L155-L159)
-stores encoded private keys in localStorage; [`getPrivateKey`](source/lib/secureKeyStorage.web.ts#L162-L179)
-decodes them. Nostr keys and swap roots have
-similar persistence. This remains true after the application has initially obtained
-the material through a passkey ceremony.
+The identifiers below correspond to the architecture diagram. The table separates
+observed mechanisms from the assumptions needed for those mechanisms to protect users.
 
-If an attacker obtains script execution on that origin, compromises delivered
-application code, or gains relevant browser-profile access, this storage does not
-provide cryptographic confidentiality. An operator who controls delivered JavaScript
-can also change what that JavaScript reads. This review does **not** demonstrate an
-unauthenticated remote XSS exploit or claim that an ordinary unrelated website can
-read another origin's localStorage.
+| Boundary | Intended protection / observed mechanism | Concrete residual risk and condition |
+| --- | --- | --- |
+| **R1 — code delivery** | HTTPS and the browser origin load the app. The [CSP](source/public/index.html) restricts script sources; the independent checker compares received static bytes with a trusted release. | A compromised deployer, hosting account, allowed script or exploitable injection can change code executed on the wallet origin. Legitimate-origin malicious code can read its origin's storage. A hash check only detects changed bytes in the responses actually checked. |
+| **R2 — local key persistence** | [`secureKeyStorage.web.ts`](source/lib/secureKeyStorage.web.ts#L155-L179) intentionally retains derived keys. The browser's same-origin policy separates unrelated websites. | Same-origin script execution or access to relevant browser-profile data can expose persisted key material. Base64url does not encrypt it. Scoped zeroization does not remove the persistent entry. Nostr identity and swap roots have their own consequences if exposed. |
+| **R3 — Bitcoin/Arkade cosigning** | Client and server signing contributions, WebAuthn authorization and approval scopes form an additional boundary. See [`SigningKeyVault`](source/services/arkade/internal/signingKeyVault.ts) and [`ArkadeRemoteIdentity`](source/services/arkade/ArkadeRemoteIdentity.ts). | Client-key theft is not automatically theft of the server key. Protection still depends on server-side request binding, scope/expiry enforcement and the actual protocol. An active compromised browser may have session material or mislead a user into authorizing an action. This snapshot does not independently prove the server's policy or availability. |
+| **R4 — direct EVM EOA signing** | The local Ethereum key creates a signer in [`BaseTokenTransferService`](source/services/base/BaseTokenTransferService.ts#L69-L77); UI and client code validate the intended operation. | If that private key is stolen, an attacker can sign for the EOA outside the UI. A Bitcoin cosigner is not required on this path. Exposure of funds or allowances depends on that account's holdings and onchain permissions. This is a potentially high-impact browser-compromise consequence, not proof of an existing remote exploit. |
+| **R5 — providers and diagnostics** | HTTPS, protocol-specific validation and recipient encryption protect particular exchanges. Swap actions have client checks; support reports use encryption for support. | Providers still receive their intended addresses, orders, transactions or account data. Support can read reports encrypted to it. Provider outages, erroneous responses, counterparty/contract behavior, logging and privacy retention are not resolved by static-file hashes. |
+| **R6 — verification reference** | A separately trusted repository revision supplies the checker, source and manifest; rebuilding checks correspondence to the recorded files. | If the reference or verifier is replaced, internally matching hashes do not prove authenticity. A server can serve different code to another session, and an already-open tab may run older code. No independent backend attestation or universal-delivery proof is claimed. |
 
-The EVM impact is concrete: `loadBaseAccount` in
-[BaseTokenTransferService.ts](source/services/base/BaseTokenTransferService.ts#L69-L77) loads
-the Ethereum private key and constructs a `privateKeyToAccount` signer for token
-transfers. A Bitcoin cosigner is not an additional signer on that EOA path. Bitcoin
-and swap paths need their own protocol-specific review; do not infer that stealing
-one client share necessarily defeats every cosigned transaction.
+An unrelated website cannot normally read another origin's localStorage merely
+because this source is public. The relevant conditions are origin/runtime compromise,
+relevant device/profile access, or control of the delivered application. No working
+XSS exploit or cosigner-policy bypass is demonstrated in this review.
 
-**Required engineering response:** review the web signing/key-storage model before
-representing it as protected by passkeys or biometrics. Simply changing localStorage
-to IndexedDB, or encrypting with a key stored beside the ciphertext, does not solve
-same-origin script access. Encryption with separately protected unlock material can
-reduce at-rest exposure, but a malicious frontend while unlocked remains a distinct
-threat. Stronger signer isolation and transaction-bound authorization require their
-own design, compatibility and recovery tests. No such remediation is claimed here.
+A WebAuthn user-verification ceremony also is not, by itself, a trusted display of
+the transaction's destination and amount. Transaction binding and what the user
+actually approved must be assessed separately. Existing scoped sessions are part of
+that assessment; they must not be described as unrestricted approvals or as a fresh
+passkey prompt for each internal signature without inspecting the applicable policy.
+
+**What is and is not changed here:** this repository documents the current model;
+it does not silently replace it with another storage or signing architecture. Moving
+keys to IndexedDB would not by itself create a new same-origin isolation boundary.
+At-rest encryption and stronger signer isolation address different threats and would
+require a separately reviewed release with recovery/compatibility checks and new
+artifact hashes. Their absence is a design boundary to disclose, not a reason to
+pretend the current source differs from the deployed application.
 
 ### Publication blocker: the old import remains in Git history
 
@@ -398,8 +464,9 @@ reviewed. Source licensing does not automatically relicense all bundled material
 
 This preparation repository remains private, with GitHub Actions disabled. Keep
 production credentials, wallet data, support exports and identity documents out of
-public issues and commits. The client-side storage problem is not fixed by making
-the repository public, nor by passing the hash checker.
+public issues and commits. Documenting the intended storage model does not extend
+cosigner protection to unrelated signing paths. Publishing source and checking hashes
+improve inspectability; they do not change the runtime's trust boundaries.
 
 ## Updates and verification limits
 
