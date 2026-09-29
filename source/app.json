@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "Nuri.com",
+    "slug": "nuricom",
+    "owner": "nuri-com",
+    "version": "0.100.0",
+    "orientation": "portrait",
+    "icon": "./assets/app-variants/production/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "scheme": [
+      "nuri",
+      "nuriwallet",
+      "lightning",
+      "bitcoin",
+      "btc",
+      "ln"
+    ],
+    "splash": {
+      "image": "./assets/app-variants/production/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#ffffff"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/094b337a-d639-434e-8231-170d02bcb66a",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "094b337a-d639-434e-8231-170d02bcb66a"
+      },
+      "appVariant": "production",
+      "appNetwork": "mainnet"
+    },
+    "sdkVersion": "53.0.0",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ]
+  }
+}

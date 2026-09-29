@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "release_id": "pwa-746be77ad6c0",
+  "app_version": "0.100.0",
+  "source_ref": "origin/dev",
+  "source_sha": "746be77ad6c0b4599835262a3c36a48779b0e7c2",
+  "upstream_dev_sha": "746be77ad6c0b4599835262a3c36a48779b0e7c2",
+  "previous_source_sha": "ee30e608157d18505bf883fc8f9bce96bf470c90",
+  "asset": "_expo/static/js/web/index-aa0c395b1e97a9a6fb9af9040d4bc72a.js",
+  "asset_sha256": "705b03e3e202d06ac76c00df5ac64e6b379380ab4081abf8f5ab49b0b27463d7",
+  "deployed_at": "2026-09-29T04:05:14Z"
+}
