@@ -339,7 +339,10 @@ export function enablePushNotifications(): Promise<PushRegistrationState> {
  * subscription is retired (server unregister → its bindings cascade away) and a
  * fresh one is registered and bound for the categories still on. The choice is
  * stored first, so a failed server call cannot leave the category coming back
- * on the next sign-in.
+ * on the next sign-in. Only a confirmed unregister retires the local handle: if
+ * the server did not confirm, the old subscription may still deliver that
+ * category, so it is kept, the stored choice is put back (Settings shows it
+ * still On) and an error is returned for the user to retry.
  */
 export function setNotificationCategory(
   category: NotificationCategory,
@@ -348,12 +351,22 @@ export function setNotificationCategory(
   // Bumped before queueing, so binds already started stand down at once.
   preferencesGeneration += 1;
   return serialized(async () => {
-    const next = { ...(await getNotificationPreferences()), [category]: enabled };
+    const previous = await getNotificationPreferences();
+    const next = { ...previous, [category]: enabled };
     try {
       await AsyncStorage.setItem(PUSH_CATEGORIES_STORAGE_KEY, JSON.stringify(next));
     } catch {}
     if (!enabled) {
-      await unregisterPushDevice();
+      // Nothing registered means nothing on the server to retire.
+      if ((await readCache()) !== null) {
+        const unregistered = await unregisterPushDevice();
+        if (!unregistered.ok) {
+          try {
+            await AsyncStorage.setItem(PUSH_CATEGORIES_STORAGE_KEY, JSON.stringify(previous));
+          } catch {}
+          return { kind: "error", message: `unregister failed: ${unregistered.detail}` };
+        }
+      }
       await clearPushNotificationStorage();
       if (!anyNotificationEnabled(next)) return { kind: "disabled", reason: "opted-out" };
     }

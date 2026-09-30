@@ -72,7 +72,11 @@ export type WalletSendStablecoinProps = {
     /** Accessibility/copy code, e.g. "EUR" / "USD". */
     code: string;
   };
-  onSuccess?: (payload: { amount: number; txHash?: string | null; confirmed: boolean }) => void;
+  onSuccess?: (payload: {
+    amount: number;
+    txHash?: string | null;
+    confirmed: boolean;
+  }) => void;
 };
 
 export type WalletIbanRecipientProps = {

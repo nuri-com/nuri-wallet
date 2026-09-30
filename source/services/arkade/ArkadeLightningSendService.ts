@@ -26,6 +26,7 @@ import {
 import {
   ARKADE_INTENTS_LIGHTNING_ROUTE_ID,
   createArkadeIntentsLightningSend,
+  prefetchArkadeIntentsLightningQuote,
 } from "../swapkit/SwapKitArkadeLightningSendService";
 import { asSwapKitV2OrderId } from "../swapkit/SwapKitV2Service";
 import { executeAndSubmitV2Action } from "../swapkit/SwapKitV2ActionService";
@@ -146,6 +147,26 @@ export type ArkadeLightningSendAuthenticatedPayload = {
 function emitLightningSendSubmitted(payload: ArkadeLightningSendSubmittedPayload): void {
   try {
     EventBus.emit("bitcoin:sendSubmitted", payload);
+  } catch {}
+}
+
+/**
+ * Warm the corridor quote for a BOLT11 invoice while the user is still on the
+ * review screen. Read-only: no order, no intent, no signature, no prompt. The
+ * refund address comes from the same refund key the send provisions, so the
+ * quote is only reused if the send asks for exactly the same thing. Any error
+ * is swallowed; the send then quotes as before.
+ */
+export async function prefetchArkadeLightningQuote(invoice: string): Promise<void> {
+  try {
+    const request = normalizeLightningInput(String(invoice || ""));
+    if (!request || isLnurlPaymentInput(request)) return;
+    const wallet = await getOrCreateWallet();
+    const refundKey = await provisionRefundKey(wallet);
+    await prefetchArkadeIntentsLightningQuote({
+      invoice: request,
+      refundAddress: refundKey.address,
+    });
   } catch {}
 }
 
@@ -295,8 +316,18 @@ export async function payArkadeLightningInvoice(_params: {
   // answers an out-of-bounds request with a SwapRefusal carrying the reason.
   // A second copy here would go stale the moment the solver ramps its limits.
   const wallet = await getOrCreateWallet();
-  await assertArkadeRecoveryCsvCompatible(wallet, "ln_pay");
-  const balanceRaw: unknown = await wallet.getBalance();
+  // The recovery-CSV check, the balance read and the refund key are
+  // independent reads, so they run together. Every one of them still has to
+  // pass before anything below runs: a failed CSV check throws here exactly as
+  // it did when it ran alone, and nothing is quoted, committed or signed first.
+  // The refund key is provisioned BEFORE the quote: it is bound into the
+  // lockup covenant as its `sender`, so the server cannot default it, and its
+  // descriptor is how the refund signer is found again later.
+  const [, balanceRaw, refundKey] = await Promise.all([
+    assertArkadeRecoveryCsvCompatible(wallet, "ln_pay"),
+    wallet.getBalance() as Promise<unknown>,
+    provisionRefundKey(wallet),
+  ]);
   const balance: WalletBalance = isRecord(balanceRaw) ? balanceRaw : {};
   const availableSats = asNumber(balance.available);
   const boardingSats = asNumber(isRecord(balance.boarding) ? balance.boarding.total : 0);
@@ -308,7 +339,9 @@ export async function payArkadeLightningInvoice(_params: {
       `insufficient offchain funds: available=${availableSats || 0} required=${invoiceSats} boarding=${boardingSats || 0}`,
     );
   }
-  await emitOutgoingPayWalletSnapshot(wallet, "pre_send", payTrace, [
+  // Diagnostics only (it catches every error of its own), so it must not hold
+  // the send up: it re-reads the balance and coins the check above just read.
+  void emitOutgoingPayWalletSnapshot(wallet, "pre_send", payTrace, [
     `kind=${requestKind}`,
     `sats=${invoiceSats}`,
   ]);
@@ -341,11 +374,11 @@ export async function payArkadeLightningInvoice(_params: {
       reason: "browser_approval_wraps_wallet_send",
       expected_next: "server_intent_then_wallet_send",
     });
-    // The refund key is provisioned BEFORE the quote: it is bound into the
-    // lockup covenant as its `sender`, so the server cannot default it, and its
-    // descriptor is how the refund signer is found again later.
-    const refundKey = await provisionRefundKey(wallet);
-    const refundAddress = await wallet.getAddress();
+    // Refund key provisioned above, before the quote. Its address comes from
+    // the same single getAddress() read as its pkScript, so the quote-time
+    // refund address and the covenant's refund script cannot name different
+    // scripts (a second read of a rotating receive address could).
+    const refundAddress = refundKey.address;
     const payment = await createArkadeIntentsLightningSend({
       invoice,
       senderPublicKey: bytesToHex(refundKey.pubkey),
@@ -414,19 +447,24 @@ export async function payArkadeLightningInvoice(_params: {
     if (!sendOwnerKey) {
       throw new Error("lightning_send_owner_key_unavailable");
     }
-    await saveArkadeLightningSend(sendOwnerKey, sendRecord);
-    const swapIntentId = await createArkadeServerSwapIntent({
-      kind: requestKind === "lnurl" ? "lightning_lnurl" : "lightning_invoice",
-      finalRecipient: rawRequest,
-      finalAmountSats: invoiceSats,
-      fundingAddress,
-      fundingAmountSats,
-      paymentHash: payTrace.paymentHash,
-      invoice,
-      provider: "arkade_intents",
-      rfqId: swapId,
-      op: "ln_pay",
-    });
+    // The local record and the server intent are independent writes, so they
+    // run together. Both are awaited before the funding below is armed, so the
+    // record still exists before any sats can move, as before.
+    const [, swapIntentId] = await Promise.all([
+      saveArkadeLightningSend(sendOwnerKey, sendRecord),
+      createArkadeServerSwapIntent({
+        kind: requestKind === "lnurl" ? "lightning_lnurl" : "lightning_invoice",
+        finalRecipient: rawRequest,
+        finalAmountSats: invoiceSats,
+        fundingAddress,
+        fundingAmountSats,
+        paymentHash: payTrace.paymentHash,
+        invoice,
+        provider: "arkade_intents",
+        rfqId: swapId,
+        op: "ln_pay",
+      }),
+    ]);
     let submittedEventEmitted = false;
     const emitSubmittedEvent = (submittedTxid: string) => {
       const txid = String(submittedTxid || "").trim();
@@ -555,7 +593,9 @@ export async function payArkadeLightningInvoice(_params: {
     });
   } catch (error: unknown) {
     const raw = errMsg(error, "");
-    await emitOutgoingPayWalletSnapshot(wallet, "post_failure", payTrace, [
+    // Diagnostics only and never throws: the error reaches the user without
+    // waiting on another balance and coin read.
+    void emitOutgoingPayWalletSnapshot(wallet, "post_failure", payTrace, [
       `kind=${requestKind}`,
       `sats=${invoiceSats}`,
       `err=${truncateForLog(raw || "unknown", 120)}`,
@@ -606,7 +646,9 @@ export async function payArkadeLightningInvoice(_params: {
   const txid = funded?.txid ?? "";
   const preimage: string = "";
   const preimageStatus = "revealed_by_solver_claim_after_fill";
-  await emitOutgoingPayWalletSnapshot(wallet, "post_success", payTrace, [
+  // Diagnostics only and never throws: the funded result returns without
+  // waiting on another balance and coin read.
+  void emitOutgoingPayWalletSnapshot(wallet, "post_success", payTrace, [
     `kind=${requestKind}`,
     `sats=${invoiceSats}`,
     `funding=${fundingAmountSats}`,

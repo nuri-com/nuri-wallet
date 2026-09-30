@@ -1,8 +1,8 @@
 /**
  * The one thing a payer has to pay.
  *
- * Every rail ends here — a boarding address, an arkade address, an EVM address,
- * a BOLT11, a swap's deposit address — so the page renders one component and
+ * Every rail ends here — a bitcoin address, an EVM address, a swap's BOLT11 —
+ * so the page renders one component and
  * knows one shape. Phase 2's "connect wallet" toggle changes HOW this is paid,
  * never WHAT: it hangs off this value, so adding it needs no change to the
  * resolver or the rail selector.
@@ -111,6 +111,11 @@ export type PayTarget = {
    * after scanning.
    */
   expiresAtMs: number | null;
+  /**
+   * The SwapKit order behind a swap invoice (Lightning -> on-chain), polled so
+   * the page can say whether the money arrived. Null for a plain transfer.
+   */
+  trackOrderId?: string | null;
 };
 
 /**

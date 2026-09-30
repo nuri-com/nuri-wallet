@@ -11,14 +11,15 @@ import {
   type PayWalletDeps,
   type PayWalletProgress,
   type PayWalletQuote,
+  type PayWalletSettle,
   isPayWalletPayer,
+  matchesPayLinkIntent,
   isWalletRejection,
   payWithWallet,
   pendingPayWallet,
   quotePayWalletSwap,
   resumePayWithWallet,
 } from "../../../services/pay/PayWalletSwapService";
-import type { BaseStableAssetId } from "../../../services/swapkit/SwapKitStableAssets";
 import {
   fetchPayWalletHoldings,
   type PayWalletHolding,
@@ -60,6 +61,8 @@ export type PayWalletState =
   | { step: "busy"; account: `0x${string}`; chainId: number }
   | { step: "quoted"; account: `0x${string}`; chainId: number; quote: PayWalletQuote }
   | { step: "no-route"; account: `0x${string}`; chainId: number }
+  /** Fixed-amount link: the route needs more of the token than the wallet holds. */
+  | { step: "insufficient"; account: `0x${string}`; chainId: number; quote: PayWalletQuote }
   // `otherAccount`: the connected account is not the one that accepted it;
   // only the original payer may continue it.
   | { step: "pending"; pending: PayWalletQuote; otherAccount: boolean }
@@ -73,7 +76,12 @@ export type PayWalletHoldingsState =
   | { status: "ready"; holdings: PayWalletHolding[] }
   | { status: "failed" };
 
-export function usePayWalletSwap(recipient: `0x${string}` | null, settle: BaseStableAssetId) {
+export function usePayWalletSwap(
+  recipient: string | null,
+  settle: PayWalletSettle,
+  /** A link's fixed amount, in `settle`: quoted on the recipient's side. */
+  fixedAmount: string | null = null,
+) {
   // The wallet the payer picked in RainbowKit (EIP-6963 extension or
   // WalletConnect), never `window.ethereum`.
   const wallet = usePayWalletConnection();
@@ -126,6 +134,14 @@ export function usePayWalletSwap(recipient: `0x${string}` | null, settle: BaseSt
         );
         return;
       }
+      // Another side or figure than this link asks for: shown, never driven
+      // on its own — the payer continues it explicitly or not at all.
+      if (!matchesPayLinkIntent(pending, fixedAmount)) {
+        setState((current) =>
+          current.step === "paying" ? current : { step: "pending", pending, otherAccount: false },
+        );
+        return;
+      }
       const provider = await getProvider();
       if (!provider || cancelled) return;
       setState({ step: "paying", progress: { state: "waiting", orderStatus: "RESUMING" } });
@@ -138,7 +154,7 @@ export function usePayWalletSwap(recipient: `0x${string}` | null, settle: BaseSt
     return () => {
       cancelled = true;
     };
-  }, [recipient, settle, run, account, getProvider]);
+  }, [recipient, settle, run, account, getProvider, fixedAmount]);
 
   // The picked wallet and chain drive the panel: connecting (or switching
   // account/network in the wallet) moves it to "connected" for that pair,
@@ -200,10 +216,22 @@ export function usePayWalletSwap(recipient: `0x${string}` | null, settle: BaseSt
    * the one SwapKit's `SYMBOL_CHAIN` id resolves to — and the amount at most
    * the balance, both exact.
    */
+  /**
+   * Quote a token the payer holds (picked from their balances). Without a
+   * fixed amount, `amount` is what they spend (at most the balance). On a
+   * fixed-amount link the recipient's figure is quoted instead and the spend
+   * the route asks for must fit the balance. Either way the token must be the
+   * canonical contract for its symbol on that chain.
+   */
   const quote = useCallback(
     async (holding: PayWalletHolding, amount: string) => {
       if (!recipient) return;
-      if (state.step !== "connected" && state.step !== "quoted" && state.step !== "no-route")
+      if (
+        state.step !== "connected" &&
+        state.step !== "quoted" &&
+        state.step !== "no-route" &&
+        state.step !== "insufficient"
+      )
         return;
       const { account, chainId } = state;
       // An unfinished payment on this link comes first: it is shown and
@@ -213,8 +241,10 @@ export function usePayWalletSwap(recipient: `0x${string}` | null, settle: BaseSt
         setState({ step: "pending", pending, otherAccount: !isPayWalletPayer(pending, account) });
         return;
       }
-      const units = exactBaseUnits(amount, holding.decimals);
-      if (units === null || units <= 0n || units > holding.units) return;
+      if (!fixedAmount) {
+        const units = exactBaseUnits(amount, holding.decimals);
+        if (units === null || units <= 0n || units > holding.units) return;
+      }
       const id = ++requestId.current;
       setState({ step: "busy", account, chainId });
       try {
@@ -233,9 +263,22 @@ export function usePayWalletSwap(recipient: `0x${string}` | null, settle: BaseSt
               }
             : null;
         const accepted = token
-          ? await quotePayWalletSwap({ token, amount, payer: account, settle, recipient }, deps)
+          ? await quotePayWalletSwap(
+              fixedAmount
+                ? { token, amount: fixedAmount, side: "settle", payer: account, settle, recipient }
+                : { token, amount, payer: account, settle, recipient },
+              deps,
+            )
           : null;
         if (requestId.current !== id) return;
+        // On a fixed-amount link the route decides the spend: it must fit.
+        const spend = accepted
+          ? exactBaseUnits(accepted.option.depositAmount, holding.decimals)
+          : null;
+        if (accepted && fixedAmount && (spend === null || spend > holding.units)) {
+          setState({ step: "insufficient", account, chainId, quote: accepted });
+          return;
+        }
         setState(
           accepted
             ? { step: "quoted", account, chainId, quote: accepted }
@@ -245,7 +288,7 @@ export function usePayWalletSwap(recipient: `0x${string}` | null, settle: BaseSt
         if (requestId.current === id) setState({ step: "no-route", account, chainId });
       }
     },
-    [recipient, settle, state],
+    [recipient, settle, state, fixedAmount],
   );
 
   const pay = useCallback(async () => {

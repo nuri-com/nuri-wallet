@@ -45,11 +45,32 @@ export type ExportAllTransactionsResult =
   /** Some accounts could not be read; no file was shared. */
   | { ok: false; reason: "incomplete"; missing: ExportAccount[] };
 
-function liveSources(): AllTransactionsSources {
+/**
+ * The per-account reads. Exported for the source-discovery tests only.
+ *
+ * `null` means the account is confirmed absent. A snapshot that is still
+ * loading, or whose last read failed, says nothing about the account, so it
+ * throws: the rail is reported missing (`incomplete`) instead of being
+ * silently left out of a file that promises every transaction.
+ */
+export function liveSources(): AllTransactionsSources {
   // Read once: the whole file states its fiat column in one currency.
   const homeFiat = homeCurrencyService.getHomeFiatCode();
-  const wirexAccount = () => {
-    const snap = wirexAccountService.getSnapshot();
+  // Settled once per export: a snapshot still on its first read is awaited
+  // (joining the load in flight, within the status cache) rather than read as
+  // "no account".
+  let wirexSettled: Promise<ReturnType<typeof wirexAccountService.getSnapshot>> | null = null;
+  const wirexAccount = async () => {
+    wirexSettled ??= (async () => {
+      if (!wirexAccountService.getSnapshot().loading) return wirexAccountService.getSnapshot();
+      await wirexAccountService.refresh(false);
+      return wirexAccountService.getSnapshot();
+    })();
+    const snap = await wirexSettled;
+    // "no_wallet": there is no key to hold a Wirex account with, so none exists.
+    if (snap.loading || (snap.error !== null && snap.error !== "no_wallet")) {
+      throw new Error("wirex account not loaded");
+    }
     return snap.isApproved && snap.wallet ? snap : null;
   };
   // Every page. The user asked for the export, so a missing read session is
@@ -72,7 +93,9 @@ function liveSources(): AllTransactionsSources {
       const snapshot = walletService.getAddressSnapshot();
       const boarding = snapshot.currentAddress.trim();
       const musig2 = snapshot.musig2Address.trim();
-      if (!boarding && !musig2) return null;
+      // Every wallet has an Arkade account, so no address is never "no Bitcoin
+      // account": it is an address load still running or one that failed.
+      if (!boarding && !musig2) throw new Error("bitcoin address not loaded");
       // Same choice the history sheet makes: incremental once a full history
       // is cached, a full read otherwise.
       const fullCached = await getCacheValue<boolean>(
@@ -112,17 +135,17 @@ function liveSources(): AllTransactionsSources {
       };
     },
     wirexCard: async () => {
-      const account = wirexAccount();
+      const account = await wirexAccount();
       if (!account?.wallet) return null;
       return wirexPages("card", account.wallet);
     },
     wirexBank: async () => {
-      const account = wirexAccount();
+      const account = await wirexAccount();
       if (!account?.wallet || !isWirexBankReady(account)) return null;
       return wirexPages("bank", account.wallet);
     },
     wirexDeposits: async () => {
-      const aa = wirexAccount()?.smartAccountAddress?.trim();
+      const aa = (await wirexAccount())?.smartAccountAddress?.trim();
       // Both tokens or neither: a card with only its euro deposits is incomplete.
       return aa ? fetchWirexDepositRows(aa, { requireAll: true }) : null;
     },

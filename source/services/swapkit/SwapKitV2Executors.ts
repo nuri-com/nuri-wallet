@@ -303,7 +303,8 @@ export function makeV2ExecuteEvmCall(options?: {
  * The signature is a spend authorisation in its own right (a CoW order sells
  * the deposit; a permit grants an allowance), so it is held to the same
  * binding as a raw EVM call: only a CoW Order whose every money field matches
- * the order the user accepted may be signed.
+ * the order the user accepted, or an EIP-2612 Permit on the source token to a
+ * route contract for at most the accepted deposit, may be signed.
  * Without a binding the executor refuses outright — there is no unbound
  * signing path.
  */

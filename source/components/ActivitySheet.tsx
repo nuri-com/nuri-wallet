@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { StyleSheet } from "react-native";
 
 import {
@@ -21,6 +21,11 @@ import {
 import type { IconName } from "@ds";
 
 import DsSheetHost from "./DsSheetHost";
+import ChoiceSheet from "./ChoiceSheet";
+import { useAddressBookContacts } from "./AddressBookSuggestions";
+import { isRecipientSaved } from "../lib/addressBook/contact";
+import { EventBus } from "../services/events/AppEventBusService";
+import { destinationHint, type SaveOffer } from "../screens/addressBook/addressBookModel";
 import { i18n, t } from "../lib/i18n";
 import PullToRefresh from "./PullToRefresh";
 
@@ -48,6 +53,13 @@ export type ActivityItem = {
   /** Trailing secondary line (e.g. the sats or ≈-EUR value). */
   amountSecondary?: string;
   onPress?: () => void;
+  /** What `onPress` does, named in the row's action list ("View in explorer"). */
+  onPressLabel?: string;
+  /**
+   * The recipient of an outgoing row. When it is not in the address book yet,
+   * tapping the row lists "Add to address book" next to its own action.
+   */
+  saveOffer?: SaveOffer | null;
   /** Pending rows sort into a leading "Pending" section. */
   pending?: boolean;
   /** ISO timestamp used for the month grouping. */
@@ -123,6 +135,22 @@ const ActivitySheet: React.FC<Props> = ({
   emptyText,
 }) => {
   const sections = useMemo(() => buildSections(items), [items]);
+  // The row whose actions are open (only rows with an unsaved recipient).
+  const [actionsFor, setActionsFor] = useState<ActivityItem | null>(null);
+  const contacts = useAddressBookContacts(visible);
+  const canSave = useCallback(
+    (item: ActivityItem) =>
+      Boolean(item.saveOffer) &&
+      !isRecipientSaved(contacts, (item.saveOffer as SaveOffer).destination),
+    [contacts],
+  );
+  const pressRow = useCallback(
+    (item: ActivityItem) => {
+      if (canSave(item)) setActionsFor(item);
+      else item.onPress?.();
+    },
+    [canSave],
+  );
 
   return (
     <DsSheetHost visible={visible} onClose={onClose} mode="full">
@@ -204,7 +232,10 @@ const ActivitySheet: React.FC<Props> = ({
                 {section.items.map((item, index) => (
                   <React.Fragment key={item.key}>
                     {index > 0 ? <ListSeparator /> : null}
-                    <ListAction accessibilityLabel={item.label} onPress={item.onPress}>
+                    <ListAction
+                      accessibilityLabel={item.label}
+                      onPress={item.onPress || canSave(item) ? () => pressRow(item) : undefined}
+                    >
                       <ListActionLeadingAvatar
                         name={item.pending ? "spinner" : item.icon}
                         variant="outline"
@@ -229,6 +260,38 @@ const ActivitySheet: React.FC<Props> = ({
           ))}
         </View>
       </PullToRefresh>
+
+      <ChoiceSheet<"open" | "save">
+        visible={actionsFor !== null}
+        onClose={() => setActionsFor(null)}
+        title={actionsFor?.label ?? ""}
+        subtitle={
+          actionsFor?.saveOffer ? destinationHint(actionsFor.saveOffer.destination) : undefined
+        }
+        items={[
+          ...(actionsFor?.onPress
+            ? [
+                {
+                  key: "open" as const,
+                  label: actionsFor.onPressLabel ?? t("component.ActivityRowActions.open"),
+                  icon: "chevron-right" as const,
+                },
+              ]
+            : []),
+          {
+            key: "save" as const,
+            label: t("component.ActivityRowActions.addToAddressBook"),
+            icon: "plus" as const,
+          },
+        ]}
+        onSelect={(key) => {
+          const item = actionsFor;
+          setActionsFor(null);
+          if (!item) return;
+          if (key === "open") item.onPress?.();
+          else if (item.saveOffer) EventBus.emit("addressBook:saveDestination", item.saveOffer);
+        }}
+      />
     </DsSheetHost>
   );
 };

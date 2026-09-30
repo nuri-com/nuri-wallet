@@ -13,6 +13,8 @@
 //   Currency      the display (home) currency, EUR or USD, for every converted
 //                 figure in the app.
 //   Export        one CSV of every transaction across every account.
+//   Address book  saved recipients (screens/addressBook), plus copying the
+//                 address-book-only key for the desktop CLI/MCP.
 //   Support       the support chat, with its unread count.
 //   The version of the running bundle closes the page as plain text.
 //
@@ -45,6 +47,7 @@ import {
   View,
 } from "@ds";
 import ChoiceSheet from "../../components/ChoiceSheet";
+import PayLinkCreateSheet from "../../components/PayLinkCreateSheet";
 import { Layer } from "../../components/LayerHost";
 import { PAY_LINK_ORIGIN } from "../../config/endpoints";
 import { copyToClipboard } from "../../lib/copyToClipboard";
@@ -91,6 +94,9 @@ type Props = {
   email: string | null;
   verification: { state: VerificationRowState; action: "start" | "resume" | null };
   onVerify: () => void;
+  onOpenAddressBook: () => void;
+  /** The address-book-only key (nsec) for the desktop CLI/MCP. */
+  exportAddressBookKey: () => Promise<string>;
 };
 
 // What the notification rows show: the stored choice per category, which of
@@ -152,20 +158,26 @@ const SettingsScreen: React.FC<Props> = ({
   email,
   verification,
   onVerify,
+  onOpenAddressBook,
+  exportAddressBookKey,
 }) => {
   const insets = useSafeAreaInsets();
   const locale = useAppLocale();
   const currency = useHomeCurrency();
   const supportUnread = useSupportUnreadCount();
   const [picker, setPicker] = useState<"language" | "currency" | null>(null);
+  const [creatingPayLink, setCreatingPayLink] = useState(false);
   const [notifications, setNotifications] = useState<NotificationsView>(null);
   const [exportState, setExportState] = useState<ExportState>({ kind: "idle" });
+  const [keyCopied, setKeyCopied] = useState(false);
 
   // Read fresh on every open: the OS permission can change while away.
   useEffect(() => {
     if (!visible) {
       setPicker(null);
+      setCreatingPayLink(false);
       setExportState({ kind: "idle" });
+      setKeyCopied(false);
       return;
     }
     let cancelled = false;
@@ -268,6 +280,15 @@ const SettingsScreen: React.FC<Props> = ({
                           <ListActionTrailIcon name="copy" />
                         </ListAction>
                       ) : null}
+                      {payLink && username ? (
+                        <ListAction
+                          accessibilityLabel={t(`${K}.createPayLink`)}
+                          onPress={() => setCreatingPayLink(true)}
+                        >
+                          <ListActionText>{t(`${K}.createPayLink`)}</ListActionText>
+                          <ListActionTrailIcon name="chevron-right" />
+                        </ListAction>
+                      ) : null}
                       {email ? (
                         <ListAction accessibilityLabel={email}>
                           <ListActionText>{email}</ListActionText>
@@ -352,6 +373,30 @@ const SettingsScreen: React.FC<Props> = ({
                   </View>
 
                   <Section title={t(`${K}.data`)}>
+                    <ListAction
+                      accessibilityLabel={t(`${K}.addressBook`)}
+                      onPress={onOpenAddressBook}
+                    >
+                      <ListActionText>{t(`${K}.addressBook`)}</ListActionText>
+                      <ListActionTrailIcon name="chevron-right" />
+                    </ListAction>
+                    <ListAction
+                      accessibilityLabel={t(`${K}.addressBookKey`)}
+                      onPress={() =>
+                        void exportAddressBookKey()
+                          .then((nsec) => copyToClipboard(nsec))
+                          .then((ok) => setKeyCopied(Boolean(ok)))
+                      }
+                    >
+                      <ListActionText>{t(`${K}.addressBookKey`)}</ListActionText>
+                      {keyCopied ? (
+                        <ListActionTrailingText>
+                          {t(`${K}.addressBookKeyCopied`)}
+                        </ListActionTrailingText>
+                      ) : (
+                        <ListActionTrailIcon name="copy" />
+                      )}
+                    </ListAction>
                     <ListAction accessibilityLabel={t(`${K}.export`)} onPress={runExport}>
                       <ListActionText>{t(`${K}.export`)}</ListActionText>
                       {exportLabel ? (
@@ -384,6 +429,14 @@ const SettingsScreen: React.FC<Props> = ({
         </NuriSafeAreaProvider>
       </Layer>
 
+      {username ? (
+        <PayLinkCreateSheet
+          visible={visible && creatingPayLink}
+          onClose={() => setCreatingPayLink(false)}
+          origin={origin}
+          username={username}
+        />
+      ) : null}
       <ChoiceSheet<AppLocale>
         visible={visible && picker === "language"}
         onClose={() => setPicker(null)}

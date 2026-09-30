@@ -24,24 +24,27 @@ export function usePayLinkTarget() {
     setBusy(false);
   }, []);
 
-  const request = useCallback(async (rail: PayRail, amount: string | null) => {
-    const id = requestIdRef.current + 1;
-    requestIdRef.current = id;
-    setFailed(false);
-    setBusy(true);
-    try {
-      const next = await buildPayTarget(rail, amount);
-      if (requestIdRef.current !== id) return;
-      setTarget(next);
-      setFailed(next === null);
-    } catch {
-      if (requestIdRef.current !== id) return;
-      setTarget(null);
-      setFailed(true);
-    } finally {
-      if (requestIdRef.current === id) setBusy(false);
-    }
-  }, []);
+  const request = useCallback(
+    async (rail: PayRail, amount: string | null, side: "deposit" | "settle" = "deposit") => {
+      const id = requestIdRef.current + 1;
+      requestIdRef.current = id;
+      setFailed(false);
+      setBusy(true);
+      try {
+        const next = await buildPayTarget(rail, amount, side);
+        if (requestIdRef.current !== id) return;
+        setTarget(next);
+        setFailed(next === null);
+      } catch {
+        if (requestIdRef.current !== id) return;
+        setTarget(null);
+        setFailed(true);
+      } finally {
+        if (requestIdRef.current === id) setBusy(false);
+      }
+    },
+    [],
+  );
 
   // A target with a deadline stops being payable the moment it passes it. A
   // page left open is the normal case here — the payer is switching to another

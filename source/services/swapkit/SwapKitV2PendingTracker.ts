@@ -39,6 +39,7 @@ import { getSwapKitV2RecoveryKey } from "./SwapKitV2RecoveryKey";
 import { DIRECT_SWAP_SETTLED_EVENT } from "./SwapKitDirectEvmSwapService";
 import { SwapKitV2OrderStore } from "./SwapKitV2OrderStore";
 import { finishInFlight } from "../money/announce";
+import { MoneyInFlightStore } from "../money/MoneyInFlightStore";
 import {
   applyV2TerminalBalances,
   holdV2ArkadeFunding,
@@ -149,6 +150,13 @@ function reconcileV2TerminalOrder(id: string, result: SwapKitV2OrderView): void 
   // this is a no-op for orders (e.g. sweep, card) that created none.
   try {
     EventBus.emit("wallet:clearPendingTransfer", { txHash: null, orderId: id });
+  } catch {}
+  // How it ended, for anything held on this order (an address-book save).
+  try {
+    EventBus.emit(MoneyInFlightStore.OUTCOME, {
+      id,
+      outcome: String(result.status || "").toUpperCase() === "COMPLETED" ? "completed" : "failed",
+    });
   } catch {}
   // The one call that retires BOTH ends of the move. There are not two rows to
   // keep in step — there is one record — so a half-cleared move cannot happen.

@@ -1376,6 +1376,22 @@ class WirexService {
     placedAt: string,
     amount?: number | null,
   ): Promise<boolean | null> {
+    const status = await this.sepaTransferStatus(transferId, placedAt, amount);
+    if (status === null) return null;
+    if (status === "unlisted") return false;
+    return status !== "Pending";
+  }
+
+  /**
+   * The bank feed's status of a SEPA transfer: its row's own status, or
+   * "unlisted" when the feed does not list it (yet). Null when the feed cannot
+   * be read, or two rows could be it.
+   */
+  async sepaTransferStatus(
+    transferId: string,
+    placedAt: string,
+    amount?: number | null,
+  ): Promise<"Pending" | "Completed" | "Failed" | "unlisted" | null> {
     const wallet = await getEthereumAddress();
     if (!wallet) return null;
     let rows: WirexActivityItem[];
@@ -1403,8 +1419,8 @@ class WirexService {
       if (candidates.length > 1) return null;
       match = candidates[0] ?? null;
     }
-    if (!match) return false;
-    return match.status !== "Pending";
+    if (!match) return "unlisted";
+    return match.status;
   }
 
   async withdrawToWallet(

@@ -22,11 +22,15 @@ import {
 } from "@ds";
 
 import AmountKeypad from "../../../components/AmountKeypad";
+import { useKeypadFit } from "../../../lib/useKeypadFit";
 import DsSheetHost from "../../../components/DsSheetHost";
 import { BASE_EURC } from "../../../config/network";
 import { STABLECOIN_MIN_SEND_AMOUNT } from "../../../config/constants";
 import { t } from "../../../lib/i18n";
 import { isEnsName, resolveEnsName } from "../../../lib/qr/resolveEns";
+import { toNuriUsername } from "../../../lib/pay/nuriUsername";
+import { resolvePayRecipient } from "../../../lib/pay/resolvePayRecipient";
+import { createRecipientLookupGate } from "../../../lib/pay/recipientLookupGate";
 import { isValidEvmAddress } from "../../../lib/validation";
 import { truncateDecimalString } from "../../../lib/amounts";
 import { useFiatAmountInput } from "../../../lib/useFiatAmountInput";
@@ -36,6 +40,12 @@ import { sendEuroToCard } from "../../../services/wallet/CardTransferService";
 import { startCardTopUpInFlight, startSendInFlight } from "../../../services/money/announce";
 
 import type { WalletSendStablecoinProps } from "../../../types/wallet";
+import AddressBookSuggestions, {
+  useAddressBookContacts,
+} from "../../../components/AddressBookSuggestions";
+import { recipientWithName, savedContactFor } from "../../../lib/addressBook/contact";
+import { acceptsWalletSend } from "../../addressBook/addressBookModel";
+import { startMovePill } from "../../../services/wallet/CardTransferPill";
 import { reportErrorToSupport } from "../../../lib/support/reportErrorToSupport";
 
 type Props = WalletSendStablecoinProps;
@@ -66,6 +76,8 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
     minAmount: STABLECOIN_MIN_SEND_AMOUNT,
   });
   const [isRequesting, setIsRequesting] = useState(false);
+  // A short screen compacts the keypad before it scrolls.
+  const keypadFit = useKeypadFit();
   // A failed transfer used to only reach console.warn: the spinner stopped and
   // the user was left unable to tell "sent", "failed" and "still going" apart
   // (issue #893). On a money screen that silence is the worst of the three.
@@ -84,8 +96,15 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   const [resolvedRecipient, setResolvedRecipient] = useState<string | null>(null);
   const [resolvingRecipient, setResolvingRecipient] = useState(false);
   const [recipientUnresolvable, setRecipientUnresolvable] = useState(false);
+  // The lookup itself failed (directory/RPC unreachable) — retryable, and not
+  // the same as "no such name".
+  const [recipientLookupFailed, setRecipientLookupFailed] = useState(false);
+  const lookupGate = useRef(createRecipientLookupGate());
   const recipientFieldRef = useRef<React.ComponentRef<typeof TextField>>(null);
   const typedRecipient = manualRecipient.trim();
+  // What the field holds right now, for a lookup that lands long after it began.
+  const typedRecipientRef = useRef(typedRecipient);
+  typedRecipientRef.current = typedRecipient;
   const recipient = (prefilledAddress || resolvedRecipient || typedRecipient).trim();
   const manualEntry = !prefilledAddress && !toCard;
   const onRecipientStep = manualEntry && !recipientConfirmed;
@@ -100,6 +119,8 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   // amountEditable: the CTA toggles isRequesting (=> amountEditable), which would
   // re-fire this and blank the field mid-transfer.
   useEffect(() => {
+    // Opening or closing the sheet abandons any lookup still in flight.
+    lookupGate.current.invalidate();
     if (!visible) return;
     // A failure belongs to the attempt that produced it — reopening the sheet
     // must not greet the user with a stale "Try again".
@@ -109,6 +130,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
     setResolvedRecipient(null);
     setResolvingRecipient(false);
     setRecipientUnresolvable(false);
+    setRecipientLookupFailed(false);
     const prefilledNumeric = prefilledAmount != null ? Number(prefilledAmount) : 0;
     if (prefilledAmount != null && Number.isFinite(prefilledNumeric) && prefilledNumeric > 0) {
       const max = maxStablecoinAvailable ?? 0;
@@ -128,6 +150,16 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   }, [visible, prefilledAmount, maxStablecoinAvailable, setAmount]);
 
   const validAddress = useMemo(() => isValidEvmAddress(recipient), [recipient]);
+  const acceptsSavedDestination = useMemo(
+    () => acceptsWalletSend(token?.code === "USD" ? "USDC" : "EURC"),
+    [token?.code],
+  );
+  // A recipient that is a saved contact shows by name (picked, scanned or pasted).
+  const savedContacts = useAddressBookContacts(visible && !toCard);
+  const savedRecipient = useMemo(
+    () => savedContactFor(savedContacts, recipient, acceptsSavedDestination),
+    [savedContacts, recipient, acceptsSavedDestination],
+  );
 
   // A manual keypad edit is its own intent — it drops the exact scan string.
   const handleDigit = (digit: string) => {
@@ -248,8 +280,16 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
         }
       }
 
+      // A send to someone else is reported by the status pill: Completed when
+      // it confirmed, else Processing until its receipt, then Completed or
+      // failed. A card top-up keeps its own reporting.
+      if (!toCard) startMovePill().settleByRows(confirmed ? null : txHash);
       try {
-        onSuccess?.({ amount: parsedAmount, txHash, confirmed });
+        onSuccess?.({
+          amount: parsedAmount,
+          txHash,
+          confirmed,
+        });
       } catch {}
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to submit EUR transfer";
@@ -269,40 +309,67 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
       setRecipientConfirmed(true);
       return;
     }
-    if (!isEnsName(typedRecipient)) return;
+    // `lennard`, `lennard.nuri.eth` and `lennard@nuri.com` are one Nuri user:
+    // read their EVM address from the Nuri directory. Any other `.eth` name is
+    // an ordinary ENS lookup.
+    const nuriUsername = toNuriUsername(typedRecipient);
+    if (!nuriUsername && !isEnsName(typedRecipient)) return;
+    const submitted = typedRecipient;
+    const ticket = lookupGate.current.begin(submitted);
+    // Apply nothing unless this is still the lookup for what is on screen.
+    const stillCurrent = () => lookupGate.current.isCurrent(ticket, typedRecipientRef.current);
     setResolvingRecipient(true);
     setRecipientUnresolvable(false);
+    setRecipientLookupFailed(false);
     try {
-      const address = await resolveEnsName(typedRecipient);
-      if (!address) {
+      const address = nuriUsername
+        ? ((await resolvePayRecipient(nuriUsername))?.evmAddress ?? null)
+        : await resolveEnsName(submitted);
+      if (!stillCurrent()) return;
+      if (!address || !isValidEvmAddress(address)) {
         setRecipientUnresolvable(true);
         return;
       }
       setResolvedRecipient(address);
       setRecipientConfirmed(true);
     } catch {
-      setRecipientUnresolvable(true);
+      // The directory or RPC could not be reached: that says nothing about
+      // whether the user exists, so it must not read as "no such name".
+      if (stillCurrent()) setRecipientLookupFailed(true);
     } finally {
-      setResolvingRecipient(false);
+      if (stillCurrent()) setResolvingRecipient(false);
     }
   };
 
+  // Any edit to the recipient abandons a lookup still in flight for the old one.
+  const resetRecipientLookup = () => {
+    lookupGate.current.invalidate();
+    setResolvedRecipient(null);
+    setResolvingRecipient(false);
+    setRecipientUnresolvable(false);
+    setRecipientLookupFailed(false);
+  };
+
   const handlePasteRecipient = async () => {
+    // Invalidate before awaiting the clipboard: a lookup landing during that
+    // wait must not advance the sheet for the recipient being replaced.
+    lookupGate.current.invalidate();
+    setResolvingRecipient(false);
     try {
       const clip = (await Clipboard.getStringAsync()).trim();
       if (clip) {
         setManualRecipient(clip);
-        setResolvedRecipient(null);
-        setRecipientUnresolvable(false);
+        resetRecipientLookup();
       }
     } catch {
       // Clipboard refused (permission, empty) — the field stays typable.
     }
   };
 
-  // An ENS name is a legitimate recipient here: Next resolves it. Only a value
-  // that is neither a 0x address nor a name blocks the step.
-  const recipientEntryUsable = validAddress || isEnsName(typedRecipient);
+  // An ENS name or a Nuri username is a legitimate recipient here: Next
+  // resolves it. Only a value that is none of those blocks the step.
+  const recipientEntryUsable =
+    validAddress || isEnsName(typedRecipient) || toNuriUsername(typedRecipient) !== null;
 
   const isCtaDisabled = onRecipientStep
     ? !recipientEntryUsable || resolvingRecipient
@@ -323,11 +390,13 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
 
   // No below-minimum hint here: the CTA label carries the exact same
   // "Minimum €X" text (minimumLabel) whenever that state is active.
-  const recipientHint = recipientUnresolvable
-    ? t("screen.WalletSendStablecoinModal.ensNotFound")
-    : typedRecipient.length > 0 && !recipientEntryUsable
-      ? t("screen.WalletSendStablecoinModal.invalidAddressError")
-      : null;
+  const recipientHint = recipientLookupFailed
+    ? t("screen.WalletSendStablecoinModal.lookupFailed")
+    : recipientUnresolvable
+      ? t("screen.WalletSendStablecoinModal.ensNotFound")
+      : typedRecipient.length > 0 && !recipientEntryUsable
+        ? t("screen.WalletSendStablecoinModal.invalidAddressError")
+        : null;
 
   // Amount-step only. The recipient step has its own hint (recipientHint) and
   // owns the address message — carrying it here too printed it twice.
@@ -379,8 +448,9 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
         </Topbar>
       </Header>
 
-      <Scroll>
+      <Scroll onLayout={keypadFit.onViewportLayout}>
         <View
+          onLayout={keypadFit.onContentLayout}
           direction="column"
           align="stretch"
           justify="between"
@@ -398,8 +468,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
                 value={manualRecipient}
                 onChangeText={(next) => {
                   setManualRecipient(next);
-                  setResolvedRecipient(null);
-                  setRecipientUnresolvable(false);
+                  resetRecipientLookup();
                 }}
                 autoCapitalize="none"
                 accessibilityLabel={t("screen.WalletSendStablecoinModal.recipientLabel")}
@@ -417,10 +486,24 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
             ) : (
               <View variant="soft" radius="md" paddingX="lg" paddingY="md" align="stretch">
                 <Text size="sm" mono muted flow="truncate" lines={1}>
-                  {recipient}
+                  {savedRecipient
+                    ? recipientWithName(savedRecipient.label, recipient)
+                    : resolvedRecipient && typedRecipient
+                      ? `${typedRecipient} (${resolvedRecipient.slice(0, 6)}…${resolvedRecipient.slice(-4)})`
+                      : recipient}
                 </Text>
               </View>
             )}
+            {/* Saved recipients matching what is typed; nothing when none match. */}
+            <AddressBookSuggestions
+              active={visible && onRecipientStep && !toCard}
+              query={manualRecipient}
+              accepts={acceptsSavedDestination}
+              onPick={({ destination }) => {
+                setManualRecipient(destination.raw);
+                resetRecipientLookup();
+              }}
+            />
           </View>
 
           <View direction="column" align="center" justify="center" gap="sm" fill="grow">
@@ -448,6 +531,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
           <View direction="column" align="stretch" justify="end" gap="lg">
             {onRecipientStep ? null : (
               <AmountKeypad
+                compact={keypadFit.compact}
                 onDigit={handleDigit}
                 onDecimal={handleDecimal}
                 onDelete={handleDelete}
@@ -457,7 +541,14 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
         </View>
       </Scroll>
 
-      <Footer safeAreaBottom direction="column" align="stretch" paddingBottom="sm" paddingX="lg">
+      <Footer
+        safeAreaBottom
+        direction="column"
+        align="stretch"
+        paddingBottom="sm"
+        paddingX="lg"
+        gap="sm"
+      >
         <Button
           size="lg"
           variant="solid"

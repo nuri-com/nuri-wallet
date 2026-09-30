@@ -24,6 +24,7 @@ import { useLiveBtcPrice } from "../lib/bitcoin/useLiveBtcPrice";
 import { btcSpotPriceService } from "../services/pricing/BtcSpotPriceService";
 import AddressQrTile from "./AddressQrTile";
 import AmountKeypad from "./AmountKeypad";
+import { useKeypadFit } from "../lib/useKeypadFit";
 import DsSheetHost from "./DsSheetHost";
 import { groupCount } from "../lib/formatting";
 import {
@@ -64,6 +65,8 @@ const LightningInvoiceSheet: React.FC<Props> = ({
   const fiatSymbol = useHomeCurrency();
   const [state, setState] = useState<SheetState>({ kind: "entering" });
   const [secondsLeft, setSecondsLeft] = useState(0);
+  // A short screen compacts the keypad before it scrolls.
+  const keypadFit = useKeypadFit();
   const [copied, setCopied] = useState(false);
   const [failureCount, setFailureCount] = useState(0);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -299,6 +302,7 @@ const LightningInvoiceSheet: React.FC<Props> = ({
       </View>
 
       <AmountKeypad
+        compact={keypadFit.compact}
         onDigit={handleDigit}
         onDecimal={isSatsMode ? undefined : handleDecimal}
         onDelete={handleDelete}
@@ -468,8 +472,9 @@ const LightningInvoiceSheet: React.FC<Props> = ({
         </Topbar>
       </Header>
 
-      <Scroll>
+      <Scroll onLayout={keypadFit.onViewportLayout}>
         <View
+          onLayout={keypadFit.onContentLayout}
           direction="column"
           align="stretch"
           justify="start"

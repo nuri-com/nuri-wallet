@@ -15,6 +15,7 @@ import {
   View,
 } from "@ds";
 import AmountKeypad from "../../../components/AmountKeypad";
+import { useKeypadFit } from "../../../lib/useKeypadFit";
 import DsSheetHost from "../../../components/DsSheetHost";
 import { log } from "../../../services/logging/LoggerService";
 import { bytesToHex, randomBytes } from "../../../lib/bytes";
@@ -69,6 +70,8 @@ const openWebCheckoutTab = (url: string): WebCheckoutTab | null => {
 
 const MercuryoBuyBitcoinModal: React.FC<Props> = ({ visible, onClose, bitcoinAddress }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // A short screen compacts the keypad before it scrolls.
+  const keypadFit = useKeypadFit();
   const [fiatPerBtc, setFiatPerBtc] = useState<number | null>(null);
   const [loadingPrice, setLoadingPrice] = useState(false);
   const minFiatAmount = MERCURYO_MIN_EUR;
@@ -265,8 +268,9 @@ const MercuryoBuyBitcoinModal: React.FC<Props> = ({ visible, onClose, bitcoinAdd
         </Topbar>
       </Header>
 
-      <Scroll>
+      <Scroll onLayout={keypadFit.onViewportLayout}>
         <View
+          onLayout={keypadFit.onContentLayout}
           direction="column"
           align="stretch"
           justify="between"
@@ -289,7 +293,7 @@ const MercuryoBuyBitcoinModal: React.FC<Props> = ({ visible, onClose, bitcoinAdd
             ) : null}
           </View>
 
-          <AmountKeypad onDigit={handleDigit} onDelete={handleDelete} />
+          <AmountKeypad compact={keypadFit.compact} onDigit={handleDigit} onDelete={handleDelete} />
         </View>
       </Scroll>
 

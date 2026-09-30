@@ -4,7 +4,8 @@ import { getBundleAppVersion } from "../services/app/AppUpdateService";
 
 // Compiled into this JS release. Never read deployment.json: an open tab may
 // still run an older bundle after the server has deployed a newer release.
-export const JS_RELEASE_VERSION = "0.97.0";
+// Kept equal to app.config.ts's appVersion by scripts/bump-version.mjs.
+export const JS_RELEASE_VERSION = "0.101.0";
 
 /**
  * The version the user is running: the manifest of the JS bundle actually

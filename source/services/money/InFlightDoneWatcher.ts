@@ -40,8 +40,24 @@ const young = (record: MoneyInFlight): boolean => {
   return Number.isFinite(at) && Date.now() - at < SETTLE_GRACE_MS;
 };
 
+/**
+ * How a finished in-flight action ended, announced as it leaves the board
+ * (MoneyInFlightStore.OUTCOME), so a pill or a held follow-up (an address-book
+ * save) can tell success from failure. "unknown" when the rule only knows it
+ * is over; nothing is announced then.
+ */
+export type InFlightOutcome = "completed" | "failed" | "unknown";
+
 /** True when the record's action is finished. Null when it cannot tell yet. */
 export async function isInFlightDone(record: MoneyInFlight): Promise<boolean | null> {
+  return (await judgeInFlight(record)).done;
+}
+
+/** Whether the record's action is finished, and how it ended when it is. */
+export async function judgeInFlight(
+  record: MoneyInFlight,
+): Promise<{ done: boolean | null; outcome: InFlightOutcome }> {
+  const unknown = (done: boolean | null) => ({ done, outcome: "unknown" as const });
   const rule = inFlightDoneRule(record);
   switch (rule.type) {
     case "order": {
@@ -51,47 +67,53 @@ export async function isInFlightDone(record: MoneyInFlight): Promise<boolean | n
       if (rule.orderId.startsWith("pending:")) {
         const key = rule.orderId.slice("pending:".length);
         const intent = SwapKitV2OrderStore.get(`ord_pending:${key}`);
-        if (intent && intent.status === "COMMITTING") return false;
-        return young(record) ? null : true;
+        if (intent && intent.status === "COMMITTING") return unknown(false);
+        return unknown(young(record) ? null : true);
       }
       const order = SwapKitV2OrderStore.get(rule.orderId);
-      if (!order) return young(record) ? null : true;
-      return SWAPKIT_V2_TERMINAL_STATUSES.has(String(order.status || "").toUpperCase());
+      if (!order) return unknown(young(record) ? null : true);
+      const status = String(order.status || "").toUpperCase();
+      if (!SWAPKIT_V2_TERMINAL_STATUSES.has(status)) return unknown(false);
+      return { done: true, outcome: status === "COMPLETED" ? "completed" : "failed" };
     }
     case "baseTx": {
-      if (!/^0x[0-9a-fA-F]{64}$/.test(rule.hash)) return true;
+      if (!/^0x[0-9a-fA-F]{64}$/.test(rule.hash)) return unknown(true);
       const outcome = await getBaseTransactionOutcome(rule.hash as `0x${string}`);
-      return outcome !== "pending";
+      if (outcome === "pending") return unknown(false);
+      return { done: true, outcome: outcome === "success" ? "completed" : "failed" };
     }
     case "bitcoinSend": {
       // The send store's reconciler owns confirmation (arkade settled, or the
       // on-chain tx confirmed); the row lives exactly as long as its entry.
       const sends = await PendingBitcoinSendsStore.list();
       const id = rule.txid.trim().toLowerCase();
-      if (sends.some((send) => String(send.txid).trim().toLowerCase() === id)) return false;
-      return young(record) ? null : true;
+      if (sends.some((send) => String(send.txid).trim().toLowerCase() === id))
+        return unknown(false);
+      return unknown(young(record) ? null : true);
     }
     case "purchase": {
       // The purchase store removes a purchase when its sats arrive.
       await PendingPurchasesStore.hydrate();
-      if (PendingPurchasesStore.list().some((p) => p.id === rule.id)) return false;
-      return young(record) ? null : true;
+      if (PendingPurchasesStore.list().some((p) => p.id === rule.id)) return unknown(false);
+      return unknown(young(record) ? null : true);
     }
     case "cardWithdraw": {
       const unresolved = await wirexService.hasUnresolvedWithdrawal();
-      if (unresolved) return false;
-      return young(record) ? null : true;
+      if (unresolved) return unknown(false);
+      return unknown(young(record) ? null : true);
     }
     case "sepa": {
-      const settled = await wirexService.isSepaTransferSettled(
+      const status = await wirexService.sepaTransferStatus(
         rule.transferId,
         record.createdAt,
         record.from?.amount ?? null,
       );
+      if (status === null) return unknown(null);
+      if (status === "Pending") return unknown(false);
       // A transfer the bank feed never lists under its id or amount is not
       // left pending forever: SEPA settles within days.
-      if (settled === false && ageMs(record) > SEPA_UNLISTED_MAX_MS) return true;
-      return settled;
+      if (status === "unlisted") return unknown(ageMs(record) > SEPA_UNLISTED_MAX_MS);
+      return { done: true, outcome: status === "Completed" ? "completed" : "failed" };
     }
   }
 }
@@ -105,14 +127,24 @@ export async function checkInFlightOnce(): Promise<void> {
     await MoneyInFlightStore.hydrate();
     await adoptLegacyInFlight();
     for (const record of MoneyInFlightStore.list()) {
-      let done: boolean | null = null;
+      let verdict: { done: boolean | null; outcome: InFlightOutcome } = {
+        done: null,
+        outcome: "unknown",
+      };
       try {
-        done = await isInFlightDone(record);
+        verdict = await judgeInFlight(record);
       } catch {
         // An answer that could not be had is not a verdict.
-        done = null;
       }
-      if (done === true) await MoneyInFlightStore.finish(record.id);
+      if (verdict.done !== true) continue;
+      // How it ended goes out before the row does, so anything waiting on the
+      // outcome hears it no later than the row leaving.
+      if (verdict.outcome !== "unknown") {
+        try {
+          EventBus.emit(MoneyInFlightStore.OUTCOME, { id: record.id, outcome: verdict.outcome });
+        } catch {}
+      }
+      await MoneyInFlightStore.finish(record.id);
     }
   } finally {
     scanning = false;

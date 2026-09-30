@@ -17,6 +17,7 @@
     ".claude/**",
     "dist/**",
     "tools/vendor/**",
+    "lib/vendor/**/*.js",
     "ds/nuri/**/test/**"
   ]
 }

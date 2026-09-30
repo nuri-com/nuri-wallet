@@ -11,7 +11,14 @@
 // same ones the server uses (nuri-mcp-bitcoin-swapkit src/providers/lifi.mjs,
 // src/providers/cow.mjs). The LI.FI Diamond and the CoW Vault Relayer are
 // deployed at the same address on every EVM chain.
-import { decodeAbiParameters, decodeFunctionData, isAddressEqual, parseAbi } from "viem";
+import {
+  decodeAbiParameters,
+  decodeFunctionData,
+  isAddressEqual,
+  keccak256,
+  parseAbi,
+  toHex,
+} from "viem";
 import { swapKitStableToken } from "./SwapKitStableAssets";
 
 /** LI.FI Diamond: both the approval spender and the swap/bridge-call target. */
@@ -19,6 +26,28 @@ const LIFI_DIAMOND = "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE" as const;
 /** CoW Protocol Vault Relayer: approval spender only; the order is a signature. */
 const COW_VAULT_RELAYER = "0xC92E8bdf79f0507f65a392b0ab4667716BFE0110" as const;
 const APPROVAL_SPENDERS = [LIFI_DIAMOND, COW_VAULT_RELAYER] as const;
+
+/**
+ * LI.FI Permit2Proxy per chain: the target of the EIP-2612 permit option
+ * (callDiamondWithEIP2612Signature) and the spender its permit names. Taken
+ * from GET https://li.quest/v1/chains, field `permit2Proxy`, for every chain
+ * this wallet signs EVM calls on (the sweep chains, which include every pay
+ * link chain). A chain missing here has no permit option.
+ */
+const LIFI_PERMIT2_PROXY: Readonly<Record<number, `0x${string}`>> = {
+  1: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
+  10: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
+  56: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
+  100: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
+  137: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
+  8453: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
+  42161: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
+  43114: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
+};
+
+const LIFI_PERMIT2_PROXY_ABI = parseAbi([
+  "function callDiamondWithEIP2612Signature(address tokenAddress,uint256 amount,uint256 deadline,uint8 v,bytes32 r,bytes32 s,bytes diamondCalldata) payable returns (bytes)",
+]);
 
 const ERC20_APPROVE_ABI = parseAbi([
   "function approve(address spender,uint256 amount) returns (bool)",
@@ -84,6 +113,10 @@ function same(a: string, b: string): boolean {
  *   approve on the SOURCE token  → spender is a route provider, amount is at
  *                                  most the accepted deposit
  *   call to the LI.FI Diamond    → pays the committed recipient (decoded)
+ *   call to the LI.FI            → only callDiamondWithEIP2612Signature, on
+ *   Permit2Proxy                   the source token, at most the accepted
+ *                                  deposit, wrapping a Diamond call that
+ *                                  passes the Diamond rule above
  *   anything else                → refused (raw transfers, calls on other
  *                                  tokens, unknown contracts)
  */
@@ -125,7 +158,66 @@ export function assertEvmCallBoundToRoute(
     return;
   }
 
+  const proxy = LIFI_PERMIT2_PROXY[binding.chainId];
+  if (proxy && same(call.to, proxy)) {
+    assertLifiPermitCallBound(call.data, binding, acceptedDepositUnits, wallet);
+    return;
+  }
+
   throw new Error(`EVM call targets ${call.to}, which is not a contract of the accepted route.`);
+}
+
+/**
+ * The LI.FI permit option: one transaction to the Permit2Proxy, which uses the
+ * signed EIP-2612 permit to pull `amount` of `tokenAddress` and then calls the
+ * Diamond with `diamondCalldata`. Only that one function is accepted (any
+ * other, e.g. callDiamondWithPermit2, is refused); it must pull this order's
+ * source token, at most the accepted deposit, and the inner Diamond call must
+ * pass exactly the same check a direct Diamond call does.
+ */
+function assertLifiPermitCallBound(
+  data: string,
+  binding: SwapKitV2EvmRouteBinding,
+  ceiling: bigint,
+  wallet: `0x${string}`,
+): void {
+  let args: readonly [
+    `0x${string}`,
+    bigint,
+    bigint,
+    number,
+    `0x${string}`,
+    `0x${string}`,
+    `0x${string}`,
+  ];
+  try {
+    const decoded = decodeFunctionData({
+      abi: LIFI_PERMIT2_PROXY_ABI,
+      data: data as `0x${string}`,
+    });
+    args = decoded.args;
+  } catch {
+    throw new Error(
+      "Only callDiamondWithEIP2612Signature may be called on the LI.FI Permit2Proxy; refusing this calldata.",
+    );
+  }
+  const [tokenAddress, amount, , , , , diamondCalldata] = args;
+  if (!same(tokenAddress, binding.sourceToken)) {
+    throw new Error(`LI.FI permit call pulls ${tokenAddress}, not this order's source token.`);
+  }
+  if (amount > ceiling) {
+    throw new Error(
+      `LI.FI permit call pulls more than the accepted deposit: ${amount} > ${ceiling}`,
+    );
+  }
+  // Permit2Proxy pulls `amount` into itself and hands the Diamond only what the inner call spends;
+  // it does not refund the rest. The two must be equal, or the difference is stranded.
+  const innerSpend = assertLifiCallBound(diamondCalldata, binding, ceiling, wallet);
+  if (innerSpend !== amount) {
+    throw new Error(
+      `LI.FI permit call pulls ${amount} but its swap spends ${innerSpend}; refusing a call that strands the difference.`,
+    );
+  }
 }
 
 // ── LI.FI Diamond calldata ──────────────────────────────────────────
@@ -253,7 +345,7 @@ function assertLifiSpendBound(
   bridge: LifiBridgeData | null,
   sourceToken: `0x${string}`,
   ceiling: bigint,
-): void {
+): bigint {
   const pulls: { asset: string; amount: bigint }[] =
     steps.length > 0
       ? steps
@@ -273,6 +365,7 @@ function assertLifiSpendBound(
   if (total > ceiling) {
     throw new Error(`LI.FI call spends more than the accepted deposit: ${total} > ${ceiling}`);
   }
+  return total;
 }
 
 function assertLifiCallBound(
@@ -280,7 +373,7 @@ function assertLifiCallBound(
   binding: SwapKitV2EvmRouteBinding,
   ceiling: bigint,
   _wallet: `0x${string}`,
-): void {
+): bigint {
   const settle = binding.settle;
   if (!settle) throw new Error("This order has no committed recipient to bind a LI.FI call to.");
 
@@ -299,12 +392,12 @@ function assertLifiCallBound(
     }
     const raw = decoded.args[5] as LifiSwapStep | readonly LifiSwapStep[];
     const steps = Array.isArray(raw) ? (raw as readonly LifiSwapStep[]) : [raw as LifiSwapStep];
-    assertLifiSpendBound(steps, null, binding.sourceToken, ceiling);
+    const spent = assertLifiSpendBound(steps, null, binding.sourceToken, ceiling);
     const last = steps[steps.length - 1];
     if (!last || !same(last.receivingAssetId, settle.token)) {
       throw new Error("LI.FI swap buys a token other than the committed settlement token.");
     }
-    return;
+    return spent;
   }
 
   // Every other LI.FI entry point is a bridge: ILiFi.BridgeData first, optional
@@ -323,8 +416,7 @@ function assertLifiCallBound(
     if (BigInt(bridge.destinationChainId) !== LIFI_BITCOIN_CHAIN_ID) {
       throw new Error(`LI.FI bridge pays out on chain ${bridge.destinationChainId}, not Bitcoin.`);
     }
-    assertLifiSpendBound(steps, bridge, binding.sourceToken, ceiling);
-    return;
+    return assertLifiSpendBound(steps, bridge, binding.sourceToken, ceiling);
   }
   if (Number(bridge.destinationChainId) !== settle.chainId) {
     throw new Error(
@@ -334,7 +426,7 @@ function assertLifiCallBound(
   if (!same(bridge.receiver, settle.receiver)) {
     throw new Error(`LI.FI bridge pays ${bridge.receiver}, not the committed recipient.`);
   }
-  assertLifiSpendBound(steps, bridge, binding.sourceToken, ceiling);
+  return assertLifiSpendBound(steps, bridge, binding.sourceToken, ceiling);
 }
 
 /** LI.FI's chain id for Bitcoin mainnet (its non-EVM chain registry). */
@@ -397,9 +489,20 @@ const COW_SETTLEMENT = "0x9008D19f58AAbD9eD0D60971565AA8510560ab41";
  * authorisation, so it must sell the accepted deposit (at most its amount),
  * buy the accepted token and pay the committed recipient (zero address = the
  * signer itself). The buy amount is the server's quote, not re-judged here.
+ *
+ * The second is an EIP-2612 `Permit` on the source token (the permit options:
+ * LI.FI through its Permit2Proxy, CoW through a pre-hook in the order's
+ * appData). It replaces the approve transaction, so it is held to the approve
+ * rules — see assertPermitBound.
  */
 export function assertTypedDataBoundToRoute(
-  request: { domain?: unknown; primaryType?: unknown; message?: unknown },
+  request: {
+    domain?: unknown;
+    types?: unknown;
+    primaryType?: unknown;
+    message?: unknown;
+    appData?: unknown;
+  },
   bounds: {
     chainId?: number | null;
     sourceToken?: `0x${string}` | null;
@@ -407,7 +510,7 @@ export function assertTypedDataBoundToRoute(
     settle: SwapKitV2SettleBinding | null;
     wallet?: `0x${string}` | null;
   },
-): "cow_order" {
+): "cow_order" | "permit" {
   const domain = (request.domain ?? {}) as Record<string, unknown>;
   const message = (request.message ?? {}) as Record<string, unknown>;
   const settle = bounds.settle;
@@ -418,6 +521,10 @@ export function assertTypedDataBoundToRoute(
       throw new Error(`Typed data carries an unreadable ${field}.`);
     }
   };
+  if (request.primaryType === "Permit") {
+    assertPermitBound(request, bounds);
+    return "permit";
+  }
   if (request.primaryType !== "Order") {
     throw new Error(
       `Typed data ${String(request.primaryType || "(none)")} is not an order this route may sign.`,
@@ -449,5 +556,208 @@ export function assertTypedDataBoundToRoute(
   if (!same(receiver, settle.receiver)) {
     throw new Error("CoW order pays a receiver other than the committed recipient.");
   }
+  assertCowAppDataBound(request.appData, message, {
+    chainId: Number(bounds.chainId ?? 8453),
+    sourceToken: bounds.sourceToken,
+    ceiling: bounds.ceiling,
+    wallet: bounds.wallet ?? null,
+    spend,
+  });
   return "cow_order";
+}
+
+const ZERO_APP_DATA = `0x${"00".repeat(32)}`;
+const PERMIT_CALL_ABI = parseAbi([
+  "function permit(address owner,address spender,uint256 value,uint256 deadline,uint8 v,bytes32 r,bytes32 s)",
+]);
+
+/**
+ * A CoW order commits to its appData only by hash. The zero hash (the approve
+ * route) carries nothing. Any other hash must come with the canonical JSON it
+ * hashes, and that JSON may hold exactly one thing: a pre-hook that calls
+ * permit() on the source token for this wallet, to the Vault Relayer, covering
+ * the order and not outliving the deadline rules. Anything else in it (post
+ * hooks, partner fees, other metadata) is refused, because the wallet cannot
+ * see what it would do.
+ */
+function assertCowAppDataBound(
+  appDataJson: unknown,
+  message: Record<string, unknown>,
+  bounds: {
+    chainId: number;
+    sourceToken: `0x${string}`;
+    ceiling: bigint;
+    wallet: `0x${string}` | null;
+    spend: bigint;
+  },
+): void {
+  // No appData field commits to nothing (an Order without it cannot even be
+  // EIP-712 encoded); the zero hash is the approve route's empty document.
+  if (message.appData == null) return;
+  const hash = String(message.appData).toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(hash)) throw new Error("CoW order carries an unreadable appData.");
+  if (hash === ZERO_APP_DATA) return;
+  if (typeof appDataJson !== "string" || appDataJson.length === 0) {
+    throw new Error("CoW order commits to appData the server did not show; refusing to sign it.");
+  }
+  if (keccak256(toHex(appDataJson)).toLowerCase() !== hash) {
+    throw new Error("CoW order appData does not hash to the JSON the server sent.");
+  }
+  let doc: Record<string, unknown>;
+  try {
+    doc = JSON.parse(appDataJson) as Record<string, unknown>;
+  } catch {
+    throw new Error("CoW order appData is not readable JSON.");
+  }
+  const metadata = (doc.metadata ?? {}) as Record<string, unknown>;
+  if (Object.keys(metadata).some((key) => key !== "hooks")) {
+    throw new Error("CoW order appData carries metadata other than the permit hook.");
+  }
+  const hooks = (metadata.hooks ?? {}) as Record<string, unknown>;
+  if (Object.keys(hooks).some((key) => key !== "version" && key !== "pre" && key !== "post")) {
+    throw new Error("CoW order appData carries an unknown hooks field.");
+  }
+  if (Array.isArray(hooks.post) ? hooks.post.length > 0 : hooks.post != null) {
+    throw new Error("CoW order appData carries a post-hook; refusing it.");
+  }
+  const pre = hooks.pre;
+  if (!Array.isArray(pre) || pre.length !== 1) {
+    throw new Error("CoW order appData must carry exactly one pre-hook (the permit).");
+  }
+  const hook = (pre[0] ?? {}) as Record<string, unknown>;
+  if (!same(String(hook.target || ""), bounds.sourceToken)) {
+    throw new Error("CoW pre-hook does not call this order's source token.");
+  }
+  let args: readonly [
+    `0x${string}`,
+    `0x${string}`,
+    bigint,
+    bigint,
+    number,
+    `0x${string}`,
+    `0x${string}`,
+  ];
+  try {
+    args = decodeFunctionData({
+      abi: PERMIT_CALL_ABI,
+      data: String(hook.callData || "") as `0x${string}`,
+    }).args;
+  } catch {
+    throw new Error("CoW pre-hook is not a permit() call; refusing it.");
+  }
+  const [owner, spender, value, deadline] = args;
+  if (!bounds.wallet || !same(owner, bounds.wallet)) {
+    throw new Error("CoW permit hook is not for this wallet.");
+  }
+  if (!same(spender, COW_VAULT_RELAYER)) {
+    throw new Error(`CoW permit hook names spender ${spender}, not the CoW Vault Relayer.`);
+  }
+  if (value > bounds.ceiling) {
+    throw new Error(
+      `CoW permit hook value ${value} is above the accepted deposit ${bounds.ceiling}.`,
+    );
+  }
+  if (value < bounds.spend) {
+    throw new Error(`CoW permit hook value ${value} does not cover the order's ${bounds.spend}.`);
+  }
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  if (deadline <= now) throw new Error("CoW permit hook deadline has already passed.");
+  if (deadline > now + BigInt(PERMIT_MAX_LIFETIME_SECONDS + PERMIT_CLOCK_SKEW_SECONDS)) {
+    throw new Error("CoW permit hook deadline is more than an hour away.");
+  }
+  const validTo = typedUint(message.validTo, "validTo");
+  if (validTo > deadline) {
+    throw new Error("CoW order outlives its permit hook; refusing it.");
+  }
+}
+
+/** An EIP-712 uint as an exact bigint (decimal or 0x hex), never via a float. */
+function typedUint(value: unknown, field: string): bigint {
+  const text = typeof value === "bigint" ? value.toString() : String(value ?? "").trim();
+  if (!/^(\d+|0x[0-9a-fA-F]+)$/.test(text)) {
+    throw new Error(`Typed data carries an unreadable ${field}.`);
+  }
+  return BigInt(text);
+}
+
+/** The EIP-2612 Permit struct, field for field. */
+const EIP2612_PERMIT_FIELDS = [
+  ["owner", "address"],
+  ["spender", "address"],
+  ["value", "uint256"],
+  ["nonce", "uint256"],
+  ["deadline", "uint256"],
+] as const;
+
+/** A permit is signed for a few minutes' use; one valid for longer than this
+ * (plus a little clock skew) is an allowance nobody asked for. */
+const PERMIT_MAX_LIFETIME_SECONDS = 60 * 60;
+const PERMIT_CLOCK_SKEW_SECONDS = 5 * 60;
+
+/**
+ * An EIP-2612 permit, bound like the approve it replaces:
+ *   - the struct is exactly EIP-2612 `Permit` (no extra types)
+ *   - domain.verifyingContract is this order's source token
+ *   - domain.chainId is this order's chain
+ *   - owner is this wallet
+ *   - spender is the LI.FI Permit2Proxy of this chain or the CoW Vault Relayer
+ *   - value is at most the accepted deposit
+ *   - the deadline is in the future and at most about an hour away
+ */
+function assertPermitBound(
+  request: { domain?: unknown; types?: unknown; message?: unknown },
+  bounds: {
+    chainId?: number | null;
+    sourceToken?: `0x${string}` | null;
+    ceiling?: bigint | null;
+    wallet?: `0x${string}` | null;
+  },
+): void {
+  const domain = (request.domain ?? {}) as Record<string, unknown>;
+  const types = (request.types ?? {}) as Record<string, unknown>;
+  const message = (request.message ?? {}) as Record<string, unknown>;
+
+  const fields = types.Permit;
+  const structOk =
+    Array.isArray(fields) &&
+    fields.length === EIP2612_PERMIT_FIELDS.length &&
+    EIP2612_PERMIT_FIELDS.every(([name, type], i) => {
+      const field = (fields[i] ?? {}) as Record<string, unknown>;
+      return field.name === name && field.type === type;
+    }) &&
+    Object.keys(types).every((key) => key === "Permit" || key === "EIP712Domain");
+  if (!structOk) throw new Error("Typed-data Permit is not the EIP-2612 permit struct.");
+
+  if (bounds.chainId == null || !bounds.sourceToken || bounds.ceiling == null) {
+    throw new Error(
+      "A permit needs the order's chain, source token and accepted deposit to bind it.",
+    );
+  }
+  if (!same(String(domain.verifyingContract || ""), bounds.sourceToken)) {
+    throw new Error("Permit is not on this order's source token.");
+  }
+  if (Number(domain.chainId) !== bounds.chainId) {
+    throw new Error(`Permit is for chain ${String(domain.chainId)}, not this order's chain.`);
+  }
+  if (!bounds.wallet || !same(String(message.owner || ""), bounds.wallet)) {
+    throw new Error("Permit owner is not this wallet.");
+  }
+  const spender = String(message.spender || "");
+  const proxy = LIFI_PERMIT2_PROXY[bounds.chainId];
+  if (!(proxy && same(spender, proxy)) && !same(spender, COW_VAULT_RELAYER)) {
+    throw new Error(
+      `Permit names spender ${spender}, which is not a contract of the accepted route.`,
+    );
+  }
+  const value = typedUint(message.value, "value");
+  if (value > bounds.ceiling) {
+    throw new Error(`Permit value ${value} is above the accepted deposit ${bounds.ceiling}.`);
+  }
+  typedUint(message.nonce, "nonce");
+  const deadline = typedUint(message.deadline, "deadline");
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  if (deadline <= now) throw new Error("Permit deadline has already passed.");
+  if (deadline > now + BigInt(PERMIT_MAX_LIFETIME_SECONDS + PERMIT_CLOCK_SKEW_SECONDS)) {
+    throw new Error("Permit deadline is more than an hour away; refusing a long-lived allowance.");
+  }
 }

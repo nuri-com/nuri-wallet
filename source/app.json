@@ -3,7 +3,7 @@
     "name": "Nuri.com",
     "slug": "nuricom",
     "owner": "nuri-com",
-    "version": "0.100.0",
+    "version": "0.101.0",
     "orientation": "portrait",
     "icon": "./assets/app-variants/production/icon.png",
     "userInterfaceStyle": "light",

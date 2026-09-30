@@ -32,15 +32,9 @@ export type NostrKeypair = {
   npub: string;
 };
 
-export type NostrEvent = {
-  id?: string;
-  sig?: string;
-  kind: number;
-  pubkey: string;
-  created_at: number;
-  tags: string[][];
-  content: string;
-};
+import { getEventHash, type NostrEvent, signEvent, verifyEvent } from "./event";
+
+export { getEventHash, type NostrEvent, signEvent, verifyEvent };
 
 const NIP44_INFO = utf8ToBytes("nip44-v2");
 const NIP44_EMPTY_SALT = new Uint8Array(0);
@@ -173,32 +167,6 @@ export function nip04Decrypt(sk: Uint8Array, senderPubkeyHex: string, content: s
   const cipher = cbc(key, iv);
   const plaintext = cipher.decrypt(ciphertext);
   return bytesToUtf8(plaintext);
-}
-
-function serializeEvent(event: NostrEvent): string {
-  return JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content]);
-}
-
-export function getEventHash(event: NostrEvent): string {
-  const payload = utf8ToBytes(serializeEvent(event));
-  return bytesToHex(sha256(payload));
-}
-
-export function signEvent(event: NostrEvent, sk: Uint8Array): NostrEvent {
-  const id = getEventHash(event);
-  const sig = bytesToHex(schnorr.sign(hexToBytes(id), sk));
-  return { ...event, id, sig };
-}
-
-export function verifyEvent(event: NostrEvent): boolean {
-  if (!event?.sig || !event?.pubkey) return false;
-  const id = getEventHash(event);
-  if (event.id && event.id !== id) return false;
-  try {
-    return schnorr.verify(hexToBytes(event.sig), hexToBytes(id), hexToBytes(event.pubkey));
-  } catch {
-    return false;
-  }
 }
 
 function randomizedTimestamp(): number {

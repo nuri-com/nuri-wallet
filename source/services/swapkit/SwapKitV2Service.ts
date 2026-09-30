@@ -238,6 +238,9 @@ export class SwapKitV2Error extends Error {
 }
 
 const ERROR_CODE_PATTERNS: Array<[RegExp, string]> = [
+  // Raised by the engine before any order exists (the accepted quote is gone
+  // or was for another request): definitive, nothing was created.
+  [/^quote expired\b/i, "quote_expired"],
   [/order_in_flight|already in flight/i, "order_in_flight"],
   [/unmapped_provider_state/i, "unmapped_provider_state"],
   [/missing_capability/i, "missing_capability"],
@@ -400,7 +403,30 @@ export async function quoteSwapKitV2(
   args: Omit<SwapKitV2SwapArgs, "mode">,
 ): Promise<SwapKitV2QuoteResponse> {
   await getSwapKitV2Capabilities();
-  return callSwapKitV2Tool<SwapKitV2QuoteResponse>("swap", { ...args, mode: "quote" });
+  const response = await callSwapKitV2Tool<SwapKitV2QuoteResponse>("swap", {
+    ...args,
+    mode: "quote",
+  });
+  return { ...response, options: preferPermitOptions(response.options ?? []) };
+}
+
+/**
+ * A provider's permit option (`<provider>:permit:<from>-><to>`) runs the same
+ * provider quote with an EIP-2612 signature instead of a separate approve()
+ * transaction: one on-chain transaction instead of two (LI.FI), or none at all
+ * (CoW). When the server offers it, the approve option of the SAME provider and
+ * pair (`<provider>:<provider>:<from>-><to>`) is never offered: it is the same
+ * swap, slower and paying more gas. Every other option is left untouched, and
+ * the approve option stays wherever no permit option exists for it.
+ */
+export function preferPermitOptions<T extends { optionId: string }>(options: T[]): T[] {
+  const permitted = new Set<string>();
+  for (const option of options) {
+    const match = /^([^:]+):permit:(.+)$/.exec(option.optionId);
+    if (match) permitted.add(`${match[1]}:${match[1]}:${match[2]}`);
+  }
+  if (permitted.size === 0) return options;
+  return options.filter((option) => !permitted.has(option.optionId));
 }
 
 export async function commitSwapKitV2(

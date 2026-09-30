@@ -31,7 +31,9 @@ import {
   TopbarTrailing,
   View,
 } from "@ds";
+import GotPaidIllustration from "../../assets/illustrations/gotpaid.svg";
 import AmountKeypad from "../../components/AmountKeypad";
+import BrandStatusView from "../../components/BrandStatusView";
 import ChoiceSheet from "../../components/ChoiceSheet";
 import PayTargetView from "../../components/PayTargetView";
 import PayLinkSummary from "../../components/PayLinkSummary";
@@ -46,24 +48,25 @@ import {
   type PayTarget,
   paySourceDecimals,
 } from "../../lib/pay/payTarget";
-import { parsePaySettle } from "../../lib/pay/payLinkPath";
+import { parsePayLink } from "../../lib/pay/payLinkPath";
 import { PAY_WALLET_AVAILABLE } from "../../lib/pay/payWallet";
 import { type PayRecipient, resolvePayRecipient } from "../../lib/pay/resolvePayRecipient";
 import { isValidEvmAddress } from "../../lib/validation";
 import {
   availablePaySources,
+  type PayBitcoinMethod,
   type PayRail,
   type PaySourceAsset,
   railRequiresAmount,
   selectPayRail,
 } from "../../lib/pay/selectPayRail";
 import { usePayLinkTarget } from "./hooks/usePayLinkTarget";
+import { usePayOrderStatus } from "./hooks/usePayOrderStatus";
 import { usePayWalletSwap } from "./hooks/usePayWalletSwap";
 
 const K = "screen.PayLink";
 
 const BTC_LOGO = require("../../assets/rails/btc.png");
-const LIGHTNING_LOGO = require("../../assets/rails/lightning.png");
 const EUR_FLAG = require("../../assets/flags/eur.png");
 const USD_FLAG = require("../../assets/flags/usa.png");
 
@@ -81,8 +84,6 @@ const SOURCE_LOOK: Record<
   { image?: number; glyph: string | null; decimals: boolean; unit: string }
 > = {
   BTC: { image: BTC_LOGO, glyph: null, decimals: false, unit: "sats" },
-  BTC_LN: { image: LIGHTNING_LOGO, glyph: null, decimals: false, unit: "sats" },
-  BTC_ARKADE: { image: BTC_LOGO, glyph: null, decimals: false, unit: "sats" },
   USDC_BASE: { image: USD_FLAG, glyph: "$", decimals: true, unit: "USDC" },
   EURC_BASE: { image: EUR_FLAG, glyph: "€", decimals: true, unit: "EURC" },
   // The payer names the token in the wallet panel; this card shows no figure.
@@ -93,9 +94,20 @@ const SOURCE_LOOK: Record<
 /** Sources the page pays without the keypad: the wallet panel or a bare address. */
 const NO_KEYPAD = new Set<PaySourceAsset>(["EVM_WALLET", "EVM_ANY"]);
 
-/** What the recipient receives from an in-page swap, from the link's `?to=`. */
-function initialSettle(): "EURC_BASE" | "USDC_BASE" {
-  return typeof window === "undefined" ? "EURC_BASE" : parsePaySettle(window.location.search);
+/** What the link asks for: its currency (`?to=`) and a fixed amount (`?amount=`). */
+function initialLink(): ReturnType<typeof parsePayLink> {
+  return parsePayLink(typeof window === "undefined" ? "" : window.location.search);
+}
+
+/**
+ * A fixed link amount written in a source's own keypad unit: sats for Bitcoin,
+ * the stable itself otherwise. Only sources that land in the link's currency
+ * are offered on such a link, so the unit always matches.
+ */
+function fixedKeypadAmount(amount: string, source: PaySourceAsset): string {
+  if (source !== "BTC") return amount;
+  const sats = exactBaseUnits(amount, 8);
+  return sats === null ? "" : sats.toString();
 }
 
 type SourceLook = (typeof SOURCE_LOOK)[PaySourceAsset];
@@ -126,10 +138,17 @@ type Props = { username: string };
 const PayLinkScreen: React.FC<Props> = ({ username }) => {
   const [lookup, setLookup] = useState<Lookup>({ state: "loading" });
   const [source, setSource] = useState<PaySourceAsset | null>(null);
+  // Bitcoin is one source; the payer then says whether they send it on-chain
+  // or over Lightning (swapped into the recipient's on-chain address).
+  const [bitcoinMethod, setBitcoinMethod] = useState<PayBitcoinMethod>("onchain");
   const [picking, setPicking] = useState(false);
   const [amount, setAmount] = useState("");
   const { target, busy, failed, request, reset } = usePayLinkTarget();
-  const [settle] = useState(initialSettle);
+  const [link] = useState(initialLink);
+  const { settle } = link;
+  // A link with an amount fixes it: no keypad, the recipient's figure is what
+  // is requested (a swap is quoted on the recipient's side).
+  const fixedAmount = link.amount;
 
   useEffect(() => {
     let cancelled = false;
@@ -155,7 +174,7 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
   const recipient = lookup.state === "found" ? lookup.value : null;
   // Without a wallet picker in this build (no WalletConnect project id), the
   // connect-wallet source is not offered at all.
-  const sources = (recipient ? availablePaySources(recipient) : []).filter(
+  const sources = (recipient ? availablePaySources(recipient, settle, link) : []).filter(
     (option) => option !== "EVM_WALLET" || PAY_WALLET_AVAILABLE,
   );
 
@@ -167,20 +186,25 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
   }, [source, sources]);
 
   const rail: PayRail | null =
-    recipient && source ? selectPayRail(source, recipient, settle) : null;
+    recipient && source ? selectPayRail(source, recipient, settle, bitcoinMethod) : null;
+  // The connect-wallet swap pays the recipient's address for the link's
+  // currency: their EVM address for a stable, their bitcoin address for BTC.
   const walletRecipient =
-    rail?.kind === "wallet-swap" && isValidEvmAddress(rail.settleTarget)
-      ? (rail.settleTarget as `0x${string}`)
+    rail?.kind === "wallet-swap" &&
+    (settle === "BTC" ? rail.settleTarget.length > 0 : isValidEvmAddress(rail.settleTarget))
+      ? rail.settleTarget
       : null;
-  const wallet = usePayWalletSwap(walletRecipient, settle);
-  const keypad = !(source && NO_KEYPAD.has(source));
+  const wallet = usePayWalletSwap(walletRecipient, settle, fixedAmount);
+  const keypad = !(source && NO_KEYPAD.has(source)) && !fixedAmount;
   const look = source ? SOURCE_LOOK[source] : null;
   const needsAmount = rail ? railRequiresAmount(rail) : false;
   // The typed figure has to be expressible in the asset's own smallest unit,
   // exactly. More decimals than the asset has is not a smaller payment — it is
   // a figure this page would have to round, and the rounded number is the one
   // the wallet would send. The CTA stays disabled instead.
-  const typedAmount = amount.replace(",", ".").trim();
+  const typedAmount = (fixedAmount && source ? fixedKeypadAmount(fixedAmount, source) : amount)
+    .replace(",", ".")
+    .trim();
   const amountStated = typedAmount !== "";
   const typedUnits =
     source && amountStated ? exactBaseUnits(typedAmount, paySourceDecimals(source)) : null;
@@ -189,14 +213,24 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
   // optional, an unrepresentable one used to fall back to an amountless QR, so
   // someone who entered `.5` got a request for nothing. Optional means "while
   // the field is empty", not "whenever it cannot be read".
-  const canSubmit = Boolean(rail) && (amountStated ? amountValid : !needsAmount);
+  const canSubmit =
+    Boolean(rail) && (fixedAmount ? amountValid : amountStated ? amountValid : !needsAmount);
 
   const pickSource = useCallback(
     (next: PaySourceAsset) => {
       reset();
       setAmount("");
       setSource(next);
+      setBitcoinMethod("onchain");
       setPicking(false);
+    },
+    [reset],
+  );
+
+  const pickBitcoinMethod = useCallback(
+    (next: PayBitcoinMethod) => {
+      reset();
+      setBitcoinMethod(next);
     },
     [reset],
   );
@@ -208,8 +242,14 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
 
   const submit = useCallback(() => {
     if (!rail) return;
-    void request(rail, amountStated ? typedAmount : null);
-  }, [rail, amountStated, typedAmount, request]);
+    void request(
+      rail,
+      amountStated ? typedAmount : null,
+      // The only swap behind a QR is Lightning: on a fixed link it is quoted on
+      // the recipient's side, so they get the link's amount.
+      fixedAmount ? "settle" : "deposit",
+    );
+  }, [rail, amountStated, typedAmount, request, fixedAmount]);
 
   // An address is funded by hand, so the amount has to be readable next to it.
   // An invoice carries its own amount and gets none.
@@ -224,7 +264,10 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
   // could change lives in the overlay, and the request that failed will fail
   // the same way — an amount outside the endpoint's bounds. `reset` keeps what
   // they typed, so they land back on it.
-  const stalled = failed;
+  // A Lightning payment funds a swap order; it is followed until the bitcoin
+  // lands on-chain, and a dead order withdraws its invoice.
+  const order = usePayOrderStatus(target?.trackOrderId ?? null);
+  const stalled = failed || order?.state === "failed";
   const overlay = stalled ? (
     <SwapTryAgainView onRetry={reset} retrying={busy} />
   ) : busy ? (
@@ -270,8 +313,17 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
 
             {overlay}
 
+            {order?.state === "settled" ? (
+              <View direction="column" align="stretch" fill="grow">
+                <BrandStatusView
+                  title={t(`${K}.orderSettled`)}
+                  illustration={<GotPaidIllustration width={241} height={213} />}
+                />
+              </View>
+            ) : null}
+
             {/* Summary stays visible when the keypad becomes a payment target. */}
-            {recipient && rail && look && !overlay ? (
+            {recipient && rail && look && !overlay && order?.state !== "settled" ? (
               <PayLinkSummary
                 username={username}
                 sourceLabel={t(`${K}.asset.${rail.source}`)}
@@ -279,14 +331,38 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
                   ? { image: look.image }
                   : { icon: "wallet" as const })}
                 amount={
-                  !keypad
+                  source && NO_KEYPAD.has(source)
                     ? null
                     : target?.amount !== null && target
                       ? amountFigure(exactAmountText(target) ?? "", look)
-                      : amountFigure(amount, look)
+                      : amountFigure(typedAmount, look)
                 }
                 onPickSource={() => setPicking(true)}
               />
+            ) : null}
+
+            {/* Bitcoin: on-chain straight to the recipient, or Lightning
+                swapped into their on-chain address. */}
+            {source === "BTC" && !target && !overlay ? (
+              <View direction="row" gap="sm" distribute="even">
+                {(["onchain", "lightning"] as const).map((method) => (
+                  <Button
+                    key={method}
+                    size="sm"
+                    variant={bitcoinMethod === method ? "solid" : "soft"}
+                    {...(bitcoinMethod === method ? { accent: "lilac" as const } : {})}
+                    onPress={() => pickBitcoinMethod(method)}
+                    accessibilityLabel={t(`${K}.bitcoinMethod.${method}`)}
+                  >
+                    <ButtonText>{t(`${K}.bitcoinMethod.${method}`)}</ButtonText>
+                  </Button>
+                ))}
+              </View>
+            ) : null}
+            {rail?.kind === "btc-lightning" && !target && !overlay ? (
+              <Text size="sm" muted align="center">
+                {t(`${K}.lightningHint`)}
+              </Text>
             ) : null}
 
             {/* Any token from the payer's own wallet, swapped in-page into what
@@ -294,6 +370,7 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
             {rail?.kind === "wallet-swap" && !overlay ? (
               <PayWalletSwapPanel
                 state={wallet.state}
+                fixedAmount={fixedAmount}
                 holdings={wallet.holdings}
                 settleLabel={t(`${K}.asset.${settle}`)}
                 onConnect={() => void wallet.connect()}
@@ -311,12 +388,20 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
               </Text>
             ) : null}
 
-            {rail && target && !overlay ? (
+            {rail && target && !overlay && order?.state !== "settled" ? (
               <PayTargetView
                 target={target}
-                label={t(`${K}.asset.${rail.source}`)}
+                label={
+                  rail.kind === "btc-lightning"
+                    ? t(`${K}.bitcoinMethod.lightning`)
+                    : t(`${K}.asset.${rail.source}`)
+                }
                 {...(exactAmount ? { exactAmount } : {})}
-                {...(rail.kind === "evm-any" ? { status: t(`${K}.anyTokenHint`) } : {})}
+                {...(order?.state === "waiting"
+                  ? { status: t(`${K}.orderWaiting`) }
+                  : rail.kind === "evm-any"
+                    ? { status: t(`${K}.anyTokenHint`) }
+                    : {})}
               />
             ) : null}
           </View>

@@ -32,6 +32,8 @@ import {
   unregisterPushDevice,
 } from "../notifications/NotificationRegistrationService";
 
+import { resetAddressBook } from "../addressBook/AddressBookService";
+
 type Options = {
   onClose?: () => void;
 };
@@ -53,6 +55,13 @@ export const wipeLocalWalletData = async ({ onClose }: Options = {}) => {
   // Stop this PR's background swap loops so none carries into the next
   // session. Immediate, nothing waits.
   stopAllSwapKitV2Tracking();
+  // The address book holds the wallet's derived keys in memory; a wallet
+  // replacement continues in this JS process, so close it before the wipe.
+  try {
+    await resetAddressBook();
+  } catch (e) {
+    console.warn("[FactoryReset] resetAddressBook failed:", e);
+  }
   const extraKeychainServers = walletForEmailWipe
     ? [
         ...WIPE_EXTRA_STORAGE_KEYS,

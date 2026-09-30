@@ -252,7 +252,7 @@ export function mapWirexBankActivity(
         bic: (subject?.bank_account?.bic || "").trim(),
         name: bankCounterpartyName(item),
       };
-      return wirexActivityRow(item, rates, home, {
+      const row = wirexActivityRow(item, rates, home, {
         title: counterparty.name || t("screen.WirexSendChoice.sepaTitle"),
         settledLabel: t("screen.WirexSendChoice.sepaTitle"),
         onPress:
@@ -260,6 +260,24 @@ export function mapWirexBankActivity(
             ? () => onCounterpartyPress(counterparty)
             : undefined,
       });
+      const iban = counterparty.iban.replace(/\s+/g, "").toUpperCase();
+      // Whoever the transfer went to or came from can be saved by its IBAN.
+      return iban
+        ? {
+            ...row,
+            onPressLabel: t("component.ActivityRowActions.sendAgain"),
+            saveOffer: {
+              destination: {
+                type: "bank" as const,
+                raw: iban,
+                iban,
+                ...(counterparty.bic ? { bic: counterparty.bic } : {}),
+                ...(counterparty.name ? { holder: counterparty.name } : {}),
+              },
+              ...(counterparty.name ? { name: counterparty.name } : {}),
+            },
+          }
+        : row;
     })
     .sort(byPendingThenNewest);
 }

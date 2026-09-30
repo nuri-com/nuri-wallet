@@ -8,11 +8,13 @@
 // screen while the sats were leaving for good.
 import { getBitcoinOnchainSendAddress, getBitcoinReceiveAddress } from "./BitcoinAddressService";
 
-export async function ownBitcoinDestinations(): Promise<{
+export async function ownBitcoinDestinations(known?: { arkade?: string }): Promise<{
   arkade: string | null;
   onchain: string | null;
 }> {
-  const arkade = await getBitcoinReceiveAddress().catch(() => "");
+  // A caller that already read the wallet's own receive address passes it in:
+  // the read is a full wallet summary, and the address it returns is the same.
+  const arkade = known?.arkade || (await getBitcoinReceiveAddress().catch(() => ""));
   let onchain = "";
   try {
     onchain = getBitcoinOnchainSendAddress();

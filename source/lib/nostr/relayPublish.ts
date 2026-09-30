@@ -1,4 +1,4 @@
-import type { NostrEvent } from "./nostr";
+import type { NostrEvent } from "./event";
 
 export type RelayPublishResult = { tried: number; opened: number; ackedOk: number };
 
@@ -67,8 +67,74 @@ export type NostrRelayFilter = {
   kinds?: number[];
   authors?: string[];
   "#d"?: string[];
+  "#t"?: string[];
   limit?: number;
+  until?: number;
 };
+
+/**
+ * Every event matching a filter from one relay, until EOSE or timeout.
+ * `complete` is true only when the relay sent EOSE, i.e. the answer is the
+ * relay's whole stored set rather than whatever arrived before the timeout.
+ */
+export function fetchNostrEventsFromRelay(
+  relayUrl: string,
+  filter: NostrRelayFilter,
+  timeoutMs: number,
+): Promise<{ events: NostrEvent[]; complete: boolean }> {
+  return new Promise((resolve) => {
+    const events: NostrEvent[] = [];
+    let finalized = false;
+    const ws = new WebSocket(relayUrl);
+    const subId = `nuri-${Math.random().toString(36).slice(2, 10)}`;
+
+    const finalize = (complete: boolean) => {
+      if (finalized) return;
+      finalized = true;
+      try {
+        ws.close();
+      } catch {}
+      resolve({ events, complete });
+    };
+
+    const timer = setTimeout(() => finalize(false), Math.max(500, timeoutMs));
+
+    ws.onopen = () => {
+      try {
+        ws.send(JSON.stringify(["REQ", subId, filter]));
+      } catch {
+        clearTimeout(timer);
+        finalize(false);
+      }
+    };
+    ws.onerror = () => {
+      clearTimeout(timer);
+      finalize(false);
+    };
+    ws.onclose = () => {
+      clearTimeout(timer);
+      finalize(false);
+    };
+    ws.onmessage = (event) => {
+      if (typeof event.data !== "string") return;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (!Array.isArray(parsed)) return;
+      if (parsed[0] === "EVENT" && parsed[1] === subId && parsed[2]) {
+        events.push(parsed[2] as NostrEvent);
+        return;
+      }
+      if (parsed[0] === "EOSE" && parsed[1] === subId) {
+        clearTimeout(timer);
+        finalize(true);
+      }
+    };
+  });
+}
 
 /** Fetch the newest event matching a filter from one relay (EOSE or timeout ends it). */
 export function fetchNewestNostrEventFromRelay(

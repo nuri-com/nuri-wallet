@@ -137,6 +137,10 @@ export type ExecuteV2ArkadeToBtcArgs = {
   quotedReceive: number;
   owner: string;
   refundAddress?: string;
+  /** This wallet's own arkade receive address, when the caller already read it
+   * from the wallet (never a user- or server-supplied value). Used as the
+   * refund address when none is given, and as the "ours" check for the move. */
+  ownReceiveAddress?: string;
   onStatus?: (text: string) => void;
   onOrderId?: (orderId: string) => void;
 };
@@ -165,7 +169,9 @@ export async function executeV2ArkadeToBtc(
     // A Lightning-funded order refunds on the Bitcoin chain, so the refund must
     // be a Bitcoin address (the server refuses an Arkade one for BTC_LN). The
     // wallet's Arkade boarding address is one: a refund lands back in Arkade.
-    const refundAddress = args.refundAddress ?? (await getBitcoinReceiveAddress());
+    const readOwnAddress =
+      args.ownReceiveAddress || (args.refundAddress ? null : await getBitcoinReceiveAddress());
+    const refundAddress = args.refundAddress ?? (readOwnAddress as string);
     const amountBtc = args.sats / 100_000_000;
 
     args.onStatus?.(t("swap.status.exchanging"));
@@ -198,8 +204,10 @@ export async function executeV2ArkadeToBtc(
       },
       // The same corridor serves an internal arkade -> on-chain move AND a send
       // to someone else's address; only these decide which it is, so a send can
-      // never draw an "arriving" row.
-      own: await ownBitcoinDestinations(),
+      // never draw an "arriving" row. When the refund address above was read
+      // here it IS the wallet's own arkade receive address, so it is reused
+      // rather than read again; a caller-supplied one is never trusted as ours.
+      own: await ownBitcoinDestinations(readOwnAddress ? { arkade: readOwnAddress } : undefined),
       // The funding leg is an Arkade VHTLC spend, which is exactly how
       // quoteV2ArkadeToBtc priced it. Committing under the EVM EOA default
       // created the order under a signer class this route never uses, and the
@@ -231,10 +239,15 @@ export async function sendArkadeToBitcoinViaLightning(args: {
   onStatus?: (text: string) => void;
   onOrderId?: (orderId: string) => void;
 }): Promise<{ orderId: string }> {
+  // One read of the wallet's own receive address serves the quote, the commit
+  // and the own-destination check: it is the same address each time, and each
+  // read is a full wallet summary.
+  const refundAddress = await getBitcoinReceiveAddress();
   const { options } = await quoteV2ArkadeToBtc({
     toAddress: args.toAddress,
     sats: args.sats,
     owner: args.owner,
+    refundAddress,
   });
   const option = options[0];
   if (!option) throw new Error("No Lightning route to Bitcoin is available.");
@@ -245,6 +258,7 @@ export async function sendArkadeToBitcoinViaLightning(args: {
     ...(option.quoteId ? { quoteId: option.quoteId } : {}),
     quotedReceive: option.settleAmount,
     owner: args.owner,
+    ownReceiveAddress: refundAddress,
     ...(args.onStatus ? { onStatus: args.onStatus } : {}),
     ...(args.onOrderId ? { onOrderId: args.onOrderId } : {}),
   });

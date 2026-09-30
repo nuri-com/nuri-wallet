@@ -21,7 +21,13 @@ import {
 } from "@ds";
 import type { TextFieldHandle } from "@ds";
 
+import AddressBookSuggestions, {
+  useAddressBookContacts,
+} from "../../../components/AddressBookSuggestions";
+import { recipientWithName, savedContactFor } from "../../../lib/addressBook/contact";
 import AmountKeypad from "../../../components/AmountKeypad";
+import { useKeypadFit } from "../../../lib/useKeypadFit";
+import { acceptsBitcoinSend } from "../../addressBook/addressBookModel";
 import DsSheetHost from "../../../components/DsSheetHost";
 import { btcSpotPriceService } from "../../../services/pricing/BtcSpotPriceService";
 import { log } from "../../../services/logging/LoggerService";
@@ -49,7 +55,11 @@ import type {
   ArkadeLightningSendAuthenticatedPayload,
   ArkadeLightningSendSubmittedPayload,
 } from "../../../services/arkade/ArkadeLightningSendService";
-import { isArkadeLightningLockupMismatchError } from "../../../services/arkade/ArkadeLightningSendService";
+import {
+  isArkadeLightningLockupMismatchError,
+  prefetchArkadeLightningQuote,
+} from "../../../services/arkade/ArkadeLightningSendService";
+import { clearPrefetchedArkadeIntentsLightningQuote } from "../../../services/swapkit/SwapKitArkadeLightningSendService";
 import { reportErrorToSupport } from "../../../lib/support/reportErrorToSupport";
 import { isUserCancelledAuth } from "../../../lib/support/isUserCancelledAuth";
 import { isArkadeMaxSendAmountError } from "../../../services/arkade/internal/maxSendAmount";
@@ -91,6 +101,10 @@ import {
   normalizeLightningInput,
   resolveLnurlPayRequest,
 } from "../../../services/bitcoin/LnurlService";
+import { toNuriUsername } from "../../../lib/pay/nuriUsername";
+import { resolvePayRecipient } from "../../../lib/pay/resolvePayRecipient";
+import { nuriUsernameDestination } from "../../../lib/pay/nuriUsernameDestination";
+import { createRecipientLookupGate } from "../../../lib/pay/recipientLookupGate";
 import type { BitcoinSendProps } from "../../../types/bitcoin";
 import { groupCount } from "../../../lib/formatting";
 
@@ -128,6 +142,8 @@ export default function BitcoinSendScreen({
 }: Props) {
   type InputMode = "sats" | "fiat";
   const [toAddress, setToAddress] = useState(presetAddress ?? "");
+  // A short screen compacts the keypad before it scrolls.
+  const keypadFit = useKeypadFit();
   const [busy, setBusy] = useState(false);
   // Confirming hands the send to the status pill, exactly like a move from the
   // Move sheet: the sheet steps away at once, the pill says "Preparing" (keep
@@ -173,6 +189,18 @@ export default function BitcoinSendScreen({
   // the system keyboard and the DS keypad never show together.
   const [recipientConfirmed, setRecipientConfirmed] = useState(false);
   const [recipientFocused, setRecipientFocused] = useState(false);
+  // A Nuri username typed as the recipient is being looked up (on Next).
+  const [resolvingUsername, setResolvingUsername] = useState(false);
+  const usernameLookupGate = useRef(createRecipientLookupGate());
+  // What the field holds right now, for a lookup that lands long after it began.
+  const toAddressRef = useRef(toAddress);
+  toAddressRef.current = toAddress;
+  // Any change to the recipient (typing, paste, preset) and any open/close
+  // abandons a username lookup still in flight for the old one.
+  useEffect(() => {
+    usernameLookupGate.current.invalidate();
+    setResolvingUsername(false);
+  }, [toAddress, visible]);
   const [lnurlMinSats, setLnurlMinSats] = useState<number | null>(null);
   // What is on screen RIGHT NOW, for the LNURL resolution to read when it
   // lands: it may answer long after it was started, and the state it captured
@@ -407,15 +435,6 @@ export default function BitcoinSendScreen({
     };
   }, [handleArkadeSendAuthenticated, handleArkadeSendSubmitted]);
 
-  const triggerSendSuccess = useCallback(() => {
-    const delay = Platform.OS === "ios" ? 400 : 0;
-    setTimeout(() => {
-      try {
-        EventBus.emit("ui:showGenericSuccess");
-      } catch {}
-    }, delay);
-  }, []);
-
   const scheduleSendSuccess = useCallback(
     (txId: string) => {
       if (!onSendSuccess) return;
@@ -564,6 +583,21 @@ export default function BitcoinSendScreen({
     return Number.isFinite(parsed) ? Math.floor(parsed) : 0;
   }, [tzsDigits]);
 
+  // A scanned or pasted invoice already fixes the amount and the payee, so the
+  // corridor quote can be fetched while the user reviews it instead of after
+  // they confirm. Read-only (no order, no signature, no prompt), used at most
+  // once and only for this exact invoice; dropped when the sheet closes.
+  useEffect(() => {
+    if (!visible || !isRecipientBolt11) return;
+    const handle = setTimeout(() => {
+      void prefetchArkadeLightningQuote(normalizedRecipient);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [visible, isRecipientBolt11, normalizedRecipient]);
+  useEffect(() => {
+    if (!visible) clearPrefetchedArkadeIntentsLightningQuote();
+  }, [visible]);
+
   // The recipient decides which figure caps the send. A Bitcoin address used to
   // be bound by what may be SETTLED, because the only way out was the offboard
   // and it can spend nothing else. The corridor changed that: it pays a BOLT11,
@@ -665,6 +699,11 @@ export default function BitcoinSendScreen({
   useLiveBtcPrice(visible, fiatCode, satsDigits, fiatDigits, setFiatPerBtc);
 
   const handlePasteRecipient = useCallback(async () => {
+    // Invalidate before awaiting the clipboard: a username lookup landing
+    // during that wait must not advance the sheet for the recipient being
+    // replaced.
+    usernameLookupGate.current.invalidate();
+    setResolvingUsername(false);
     try {
       const text = await Clipboard.getStringAsync();
       const raw = (text || "").trim();
@@ -918,7 +957,6 @@ export default function BitcoinSendScreen({
               source: "onchain",
             }).catch(() => {});
           }
-          triggerSendSuccess();
           await closeAndNotifyRefresh();
           scheduleSendSuccess(result.txid);
         } catch (e: unknown) {
@@ -977,7 +1015,6 @@ export default function BitcoinSendScreen({
         }
         // Committed: the tracked order owns it from here and raises the pill +
         // Bitcoin-rail pending row.
-        triggerSendSuccess();
         await closeAndNotifyRefresh();
         return;
       }
@@ -1146,7 +1183,6 @@ export default function BitcoinSendScreen({
           // because each listener is idempotent.
           movePillRef.current?.settleByRows(result.txid || null);
           movePillRef.current = null;
-          triggerSendSuccess();
           await closeAndNotifyRefresh();
           scheduleSendSuccess(result.txid || result.paymentHash || result.kind);
         }
@@ -1285,7 +1321,6 @@ export default function BitcoinSendScreen({
     closeAndNotifyRefresh,
     removeArkadePending,
     scheduleSendSuccess,
-    triggerSendSuccess,
     handOffToPill,
     takeBackFromPill,
   ]);
@@ -1616,20 +1651,60 @@ export default function BitcoinSendScreen({
     isRecipientBitcoinAddress ||
     isRecipientArk ||
     isRecipientTzPhone;
+  // `lennard` or `lennard.nuri.eth`: a Nuri user, paid at the address the Nuri
+  // directory lists for the rail this sheet pays from (on-chain or Arkade).
+  // Their `@nuri.com` Lightning address cannot receive yet, so it is never the
+  // destination picked here.
+  const recipientNuriUsername = recipientLooksValid ? null : toNuriUsername(trimmedToAddress);
   const manualEntryActive = presetRecipientEmpty && (!recipientConfirmed || recipientFocused);
+  // A recipient that is a saved contact shows by name (picked, scanned or pasted).
+  const savedContacts = useAddressBookContacts(visible);
+  const savedRecipient = useMemo(
+    () => savedContactFor(savedContacts, trimmedToAddress, acceptsBitcoinSend),
+    [savedContacts, trimmedToAddress],
+  );
   const headerTitle =
     availableSatsDisplay == null
       ? t("screen.BitcoinSendScreen.headline")
       : t("screen.BitcoinSendScreen.headlineWithBalance", {
           amount: groupCount(availableSatsDisplay),
         });
-  const handleRecipientNext = () => {
+  const handleRecipientNext = async () => {
     try {
       recipientFieldRef.current?.blur();
     } catch {}
     try {
       Keyboard.dismiss();
     } catch {}
+    if (recipientNuriUsername) {
+      const submitted = trimmedToAddress;
+      const ticket = usernameLookupGate.current.begin(submitted);
+      const stillCurrent = () => usernameLookupGate.current.isCurrent(ticket, toAddressRef.current);
+      setResolvingUsername(true);
+      setErrorMessage(null);
+      try {
+        const destination = nuriUsernameDestination(
+          await resolvePayRecipient(recipientNuriUsername),
+          sendSource,
+        );
+        // The user replaced the name (or closed the sheet) while this ran:
+        // this answer is for a recipient that is no longer on screen.
+        if (!stillCurrent()) return;
+        if (!destination) {
+          setErrorMessage(t("screen.BitcoinSendScreen.errorUsernameNotFound"));
+          return;
+        }
+        setToAddress(destination);
+      } catch {
+        // An outage is not an unknown user: say we could not check.
+        if (stillCurrent()) {
+          setErrorMessage(t("screen.BitcoinSendScreen.errorUsernameLookupFailed"));
+        }
+        return;
+      } finally {
+        if (stillCurrent()) setResolvingUsername(false);
+      }
+    }
     setRecipientConfirmed(true);
   };
 
@@ -1656,8 +1731,9 @@ export default function BitcoinSendScreen({
         </Topbar>
       </Header>
 
-      <Scroll>
+      <Scroll onLayout={keypadFit.onViewportLayout}>
         <View
+          onLayout={keypadFit.onContentLayout}
           direction="column"
           align="stretch"
           justify="between"
@@ -1691,10 +1767,22 @@ export default function BitcoinSendScreen({
                 <Text size="sm" mono muted flow="truncate" lines={1}>
                   {isRecipientTzPhone
                     ? formatTanzanianMobileNumber(trimmedToAddress)
-                    : trimmedToAddress}
+                    : savedRecipient
+                      ? recipientWithName(savedRecipient.label, trimmedToAddress)
+                      : trimmedToAddress}
                 </Text>
               </View>
             )}
+            {/* Saved recipients matching what is typed; nothing when none match. */}
+            <AddressBookSuggestions
+              active={visible && manualEntryActive}
+              query={toAddress}
+              accepts={acceptsBitcoinSend}
+              onPick={({ destination }) => {
+                setToAddress(destination.raw);
+                setErrorMessage(null);
+              }}
+            />
           </View>
 
           {manualEntryActive ? (
@@ -1751,6 +1839,7 @@ export default function BitcoinSendScreen({
 
               {amountEditable ? (
                 <AmountKeypad
+                  compact={keypadFit.compact}
                   onDigit={handleDigit}
                   onDecimal={isSatsMode ? undefined : handleDecimal}
                   onDelete={handleDelete}
@@ -1767,8 +1856,8 @@ export default function BitcoinSendScreen({
             size="lg"
             variant="solid"
             accent="lilac"
-            onPress={handleRecipientNext}
-            disabled={busy || !recipientLooksValid}
+            onPress={() => void handleRecipientNext()}
+            disabled={busy || resolvingUsername || (!recipientLooksValid && !recipientNuriUsername)}
           >
             <ButtonText>{t("screen.BitcoinSendScreen.ctaNext")}</ButtonText>
           </Button>

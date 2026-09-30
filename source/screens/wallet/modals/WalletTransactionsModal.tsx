@@ -28,6 +28,8 @@ import { fetchWalletTransactions } from "../../../services/balance/transactions/
 import { maskAddress } from "../../../lib/mask";
 import { resolveFiatCode } from "../../../lib/tokens";
 import { t } from "../../../lib/i18n";
+import { isValidEvmAddress } from "../../../lib/validation";
+import { wirexAccountService } from "../../../services/wirex/WirexAccountService";
 import { isEvmTxHash } from "../../../lib/validation";
 import type { WalletTransactionsProps, WalletTransactionRow } from "../../../types/wallet";
 import {
@@ -302,6 +304,31 @@ const WalletTransactionsModal: React.FC<Props> = ({
         sublabel: subtitle,
         label: title,
         onPress: handlePress,
+        onPressLabel:
+          kind === "swapkit_swap_pending"
+            ? undefined
+            : t("component.ActivityRowActions.viewInExplorer"),
+        // A send to someone else's address can be saved. Every outgoing
+        // on-chain transfer is a "wallet_transfer_out"; only the one to the
+        // card's own deposit address is the user's own move, never a card
+        // row, a swap or a pending one.
+        saveOffer:
+          !isIncoming &&
+          chainAddr &&
+          !isCard &&
+          !isPendingLocal &&
+          !isPendingBalance &&
+          isValidEvmAddress(chainAddr) &&
+          chainAddr.toLowerCase() !== (wirexAccountService.depositAddress() ?? "").toLowerCase()
+            ? {
+                destination: {
+                  type: "crypto",
+                  raw: chainAddr,
+                  network: "base",
+                  asset: /usd/i.test(String(o?.currency ?? "")) ? "USDC" : "EURC",
+                },
+              }
+            : null,
         amount: amountText,
         pending: (isPendingBalance || isPendingLocal || isPending) && !isRejected,
         createdAt: dateIso || undefined,

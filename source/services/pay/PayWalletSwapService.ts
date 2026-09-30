@@ -1,9 +1,9 @@
 /**
  * Paying a pay link from the payer's own browser wallet, in any token.
  *
- * The payer names a token on the chain their wallet is on; SwapKit v2 quotes
- * it into the recipient's settlement currency (EURC or USDC on Base), paid to
- * the recipient's address. The payer's wallet signs the route itself — there
+ * The payer picks a token their wallet holds; SwapKit v2 quotes it into the
+ * link's currency (EURC or USDC on Base, or on-chain bitcoin), paid to the
+ * recipient's matching address. The payer's wallet signs the route itself — there
  * is no deposit address, which is what makes routes like LI.FI (wNXM → EURC)
  * payable from this page at all. Hardware wallets (Trezor, Ledger) work through
  * any browser wallet that fronts them (MetaMask, Rabby, Frame).
@@ -12,7 +12,8 @@
  * typed-data order goes through the same route binding the signed-in wallet
  * uses (`SwapKitV2EvmRouteBinding`) — approvals only to a route provider and at
  * most the accepted deposit, router calls only paying the recipient, in the
- * accepted token, on Base. Anything else is refused before the wallet prompts.
+ * accepted token, on Base — or, for bitcoin, only bridging to Bitcoin. Anything
+ * else is refused before the wallet prompts.
  *
  * Everything that touches the wallet or the network is injected, so the flow
  * is tested without either.
@@ -21,9 +22,10 @@
 import {
   assertEvmCallBoundToRoute,
   assertTypedDataBoundToRoute,
+  settleBindingForOrder,
 } from "../swapkit/SwapKitV2EvmRouteBinding";
 import type { SwapKitV2SettleBinding } from "../swapkit/SwapKitV2EvmRouteBinding";
-import { baseStableToken, type BaseStableAssetId } from "../swapkit/SwapKitStableAssets";
+import type { BaseStableAssetId } from "../swapkit/SwapKitStableAssets";
 import { isSwapKitV2Terminal } from "../swapkit/SwapKitV2Service";
 import type {
   SwapKitV2Action,
@@ -103,13 +105,32 @@ export type PayWalletDeps = {
   };
 };
 
+/** What the recipient receives: a Base stable, or on-chain bitcoin. */
+export type PayWalletSettle = BaseStableAssetId | "BTC";
+
 export type PayWalletQuoteRequest = {
   token: PayWalletToken;
+  /**
+   * `side: "deposit"` (default): what the payer spends, in the token.
+   * `side: "settle"`: what the recipient must receive, in the link's currency
+   * (a link with a fixed amount) — the quote then states what the payer spends.
+   */
   amount: string;
+  side?: "deposit" | "settle";
   payer: `0x${string}`;
-  settle: BaseStableAssetId;
-  recipient: `0x${string}`;
+  settle: PayWalletSettle;
+  /** The recipient's EVM address for a stable, their bitcoin address for BTC. */
+  recipient: string;
 };
+
+/** Decimal places of what the recipient receives. */
+export const PAY_WALLET_SETTLE_DECIMALS: Record<PayWalletSettle, number> = {
+  EURC_BASE: 6,
+  USDC_BASE: 6,
+  BTC: 8,
+};
+
+const sideOf = (request: PayWalletQuoteRequest) => request.side ?? "deposit";
 
 export type PayWalletQuote = {
   request: PayWalletQuoteRequest;
@@ -124,7 +145,7 @@ function quoteArgs(request: PayWalletQuoteRequest, asset: string): Record<string
     from: asset,
     to: request.settle,
     amount: request.amount,
-    side: "deposit",
+    side: sideOf(request),
     owner: request.payer,
     settleTarget: request.recipient,
     refundAddress: request.payer,
@@ -145,7 +166,11 @@ export async function quotePayWalletSwap(
 ): Promise<PayWalletQuote | null> {
   const asset = payWalletAssetId(request.token.symbol, request.token.chainId);
   if (!asset) return null;
-  if (exactBaseUnits(request.amount, request.token.decimals) === null) return null;
+  const settleSide = sideOf(request) === "settle";
+  const amountDecimals = settleSide
+    ? PAY_WALLET_SETTLE_DECIMALS[request.settle]
+    : request.token.decimals;
+  if (exactBaseUnits(request.amount, amountDecimals) === null) return null;
   const response = await deps.quote(quoteArgs(request, asset));
   const usable = (response.options ?? []).filter(
     (option) =>
@@ -155,12 +180,26 @@ export async function quotePayWalletSwap(
       // A malformed or zero payout is never offered: the payer would be asked
       // to spend their token with that figure committed as the minimum.
       isPositiveDecimal(option.settleAmount) &&
-      isPositiveDecimal(option.depositAmount),
+      isPositiveDecimal(option.depositAmount) &&
+      // A payout the link's currency cannot state exactly is never offered:
+      // it would be committed as the minimum the recipient must receive.
+      exactBaseUnits(option.settleAmount, PAY_WALLET_SETTLE_DECIMALS[request.settle]) !== null &&
+      // A spend the token cannot state exactly is not payable.
+      exactBaseUnits(option.depositAmount, request.token.decimals) !== null &&
+      // A fixed-amount link: the recipient gets at least what it asks for.
+      (!settleSide || compareDecimals(option.settleAmount, request.amount) >= 0),
   );
   if (usable.length === 0) return null;
   // Exact decimal comparison: a float turns a long figure into Infinity.
+  // Deposit side: most arriving wins. Settle side: least spent wins.
   const best = usable.reduce((a, b) =>
-    compareDecimals(b.settleAmount, a.settleAmount) > 0 ? b : a,
+    settleSide
+      ? compareDecimals(b.depositAmount, a.depositAmount) < 0
+        ? b
+        : a
+      : compareDecimals(b.settleAmount, a.settleAmount) > 0
+        ? b
+        : a,
   );
   return { request, asset, option: best };
 }
@@ -185,6 +224,31 @@ export function displayDecimal(value: string, places = 2): string {
   const cut = fraction.slice(0, places).padEnd(places, "0");
   const grouped = (whole.replace(/^0+(?=\d)/, "") || "0").replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return places > 0 ? `${grouped}.${cut}` : grouped;
+}
+
+/**
+ * Whether an unfinished payment is the one THIS link asks for, so it may be
+ * resumed without the payer asking. Records are keyed by recipient + currency
+ * only: a fixed-amount link must not silently drive an older payment made on
+ * the plain link or for another figure (nor the other way round). A mismatch
+ * is still shown as pending — it is only never executed on its own.
+ */
+export function matchesPayLinkIntent(pending: PayWalletQuote, fixedAmount: string | null): boolean {
+  const side = pending.request.side ?? "deposit";
+  if (!fixedAmount) return side === "deposit";
+  return side === "settle" && compareDecimals(pending.request.amount, fixedAmount) === 0;
+}
+
+/**
+ * An authorized figure written out in full: every significant decimal kept,
+ * only trailing zeros dropped, the whole part grouped. Used wherever the payer
+ * reads what is spent or received, so what they see is what executes.
+ */
+export function exactDecimal(value: string): string {
+  const [whole = "0", fraction = ""] = String(value).split(".");
+  const grouped = (whole.replace(/^0+(?=\d)/, "") || "0").replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const kept = fraction.replace(/0+$/, "");
+  return kept ? `${grouped}.${kept}` : grouped;
 }
 
 /** A strictly positive plain decimal ("39641.85"), nothing else. */
@@ -223,7 +287,7 @@ export type PayWalletRecord = {
  * payment to one recipient is never resumed, shown or signed on another
  * recipient's page.
  */
-export function payWalletRecordKey(recipient: string, settle: BaseStableAssetId): string {
+export function payWalletRecordKey(recipient: string, settle: PayWalletSettle): string {
   return `pay:wallet:v2:${String(recipient).toLowerCase()}:${settle}`;
 }
 
@@ -233,6 +297,13 @@ const recordKeyFor = (accepted: PayWalletQuote) =>
 /** The ERC-20 approve selector: the one step safe to prompt again after an
  * interrupted attempt (re-approving the same exact amount changes nothing). */
 const APPROVE_SELECTOR = "0x095ea7b3";
+
+/** The engine's definitive pre-order refusal of an accepted quote. */
+export function isQuoteExpired(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  return code === "quote_expired" || /^(error:\s*)?quote expired\b/i.test(String(message ?? ""));
+}
 
 /** EIP-1193 user rejection (4001) — the wallet refused, nothing was sent. */
 export function isWalletRejection(error: unknown): boolean {
@@ -254,12 +325,24 @@ export async function payWithWallet(
 ): Promise<PayWalletProgress> {
   const { request, option } = accepted;
   const ceiling = exactBaseUnits(option.depositAmount, request.token.decimals);
-  const requested = exactBaseUnits(request.amount, request.token.decimals);
+  // Deposit side: the quote may not spend more than the payer asked to pay.
+  // Settle side (fixed-amount link): it must deliver at least the link's
+  // amount; what it spends is the quoted deposit, bounded as the ceiling.
+  const settleSide = sideOf(request) === "settle";
+  const bounded = settleSide
+    ? exactBaseUnits(request.amount, PAY_WALLET_SETTLE_DECIMALS[request.settle]) !== null &&
+      isPositiveDecimal(option.settleAmount) &&
+      compareDecimals(option.settleAmount, request.amount) >= 0
+    : (() => {
+        const requested = exactBaseUnits(request.amount, request.token.decimals);
+        return requested !== null && ceiling !== null && ceiling <= requested;
+      })();
   if (
     ceiling === null ||
-    requested === null ||
-    ceiling > requested ||
-    !isPositiveDecimal(option.settleAmount)
+    !bounded ||
+    !isPositiveDecimal(option.settleAmount) ||
+    // Committed as the recipient's minimum: it must be exact in their currency.
+    exactBaseUnits(option.settleAmount, PAY_WALLET_SETTLE_DECIMALS[request.settle]) === null
   ) {
     const failed: PayWalletProgress = {
       state: "failed",
@@ -304,7 +387,7 @@ export async function payWithWallet(
  * as the page showing it.
  */
 export async function resumePayWithWallet(
-  link: { recipient: string; settle: BaseStableAssetId },
+  link: { recipient: string; settle: PayWalletSettle },
   connectedAccount: string,
   provider: Eip1193Provider,
   deps: PayWalletDeps,
@@ -332,7 +415,7 @@ export function isPayWalletPayer(pending: PayWalletQuote, account: string | null
 
 /** The quote of the payment this browser has not finished on this link, or null. */
 export async function pendingPayWallet(
-  link: { recipient: string; settle: BaseStableAssetId },
+  link: { recipient: string; settle: PayWalletSettle },
   deps: Pick<PayWalletDeps, "store">,
 ): Promise<PayWalletQuote | null> {
   const record = (await deps.store.get(
@@ -355,6 +438,7 @@ export function isSamePayWallet(a: PayWalletQuote, b: PayWalletQuote): boolean {
     a.request.token.chainId === b.request.token.chainId &&
     lower(a.request.token.address) === lower(b.request.token.address) &&
     a.request.amount === b.request.amount &&
+    sideOf(a.request) === sideOf(b.request) &&
     a.option.optionId === b.option.optionId &&
     (a.option.quoteId ?? null) === (b.option.quoteId ?? null) &&
     a.option.depositAmount === b.option.depositAmount &&
@@ -371,13 +455,18 @@ async function drive(
 ): Promise<PayWalletProgress> {
   const { request, option, asset } = record.accepted;
   const ceiling = exactBaseUnits(option.depositAmount, request.token.decimals) as bigint;
-  const settleToken = baseStableToken(request.settle);
-  const settle: SwapKitV2SettleBinding = {
-    kind: "evm",
-    chainId: settleToken.chainId,
-    token: settleToken.token,
-    receiver: request.recipient,
-  };
+  // The same settle binding the signed-in wallet uses: a Base stable binds the
+  // token and receiver, bitcoin binds the payout to the Bitcoin chain.
+  const settle: SwapKitV2SettleBinding | null = settleBindingForOrder({
+    to: request.settle,
+    settleTarget: request.recipient,
+  });
+  if (!settle) {
+    await deps.store.set(key, null);
+    const refused: PayWalletProgress = { state: "failed", orderId: null, reason: "error" };
+    onProgress(refused);
+    return refused;
+  }
   const binding = { chainId: request.token.chainId, sourceToken: request.token.address, settle };
   const save = () => deps.store.set(key, record);
   const finish = async (progress: PayWalletProgress) => {
@@ -387,15 +476,34 @@ async function drive(
   };
 
   // Same idempotency key on every attempt: a retry adopts the existing order.
-  let view = await deps.commit({
-    ...quoteArgs(request, asset),
-    optionId: option.optionId,
-    ...(option.quoteId ? { quoteId: option.quoteId } : {}),
-    idempotencyKey: record.idempotencyKey,
-    recoveryKey: record.recoveryKey,
-    acceptedDepositAmount: option.depositAmount,
-    minimumSettleAmount: option.settleAmount,
-  });
+  let view: SwapKitV2OrderView;
+  try {
+    view = await deps.commit({
+      ...quoteArgs(request, asset),
+      optionId: option.optionId,
+      ...(option.quoteId ? { quoteId: option.quoteId } : {}),
+      idempotencyKey: record.idempotencyKey,
+      recoveryKey: record.recoveryKey,
+      acceptedDepositAmount: option.depositAmount,
+      minimumSettleAmount: option.settleAmount,
+    });
+  } catch (error) {
+    // The server refused the accepted quote itself (expired / not this
+    // request) before creating anything. Only then is the record dropped, so
+    // the payer can get a fresh quote; a record that already names an order,
+    // or any other failure (transport, 5xx, ambiguous), is kept for resume.
+    if (isQuoteExpired(error) && record.orderId === null) {
+      await deps.store.set(key, null);
+      const expired: PayWalletProgress = {
+        state: "failed",
+        orderId: null,
+        reason: "quote_expired",
+      };
+      onProgress(expired);
+      return expired;
+    }
+    throw error;
+  }
   const orderId = view.orderId;
   if (record.orderId !== orderId) {
     record.orderId = orderId;

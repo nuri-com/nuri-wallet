@@ -177,6 +177,13 @@ import {
 import { homeCarouselEligibleKey, sortByHomeValueDescending, ungroupedCount } from "./homeCarousel";
 import { applyVerifiedHomeHandle } from "./homeIdentity";
 import SettingsScreen from "../settings/SettingsScreen";
+import AddressBookScreen from "../addressBook/AddressBookScreen";
+import type { SaveOffer, SendRoute } from "../addressBook/addressBookModel";
+import { isValidEvmAddress } from "../../lib/validation";
+import {
+  exportAddressBookKey,
+  getAddressBook,
+} from "../../services/addressBook/AddressBookService";
 import { verificationRow, wirexActivationStep } from "../settings/settingsModel";
 import { closeSettings, openSettings, useSettingsOpen } from "../settings/settingsVisibility";
 import { homeOverviewGroups, orderHomeRails, overviewFigure } from "./homeOverview";
@@ -354,6 +361,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   const addressSnapshot = useSyncExternalStore(subscribeAddress, getAddressSnapshot);
   const wirex = useWirexCard();
   const settingsOpen = useSettingsOpen();
+  const [addressBookOpen, setAddressBookOpen] = useState(false);
   const supportUnread = useSupportUnreadCount();
   // The account email is pinned during Wirex onboarding; Settings lists it only
   // when there is one.
@@ -1244,6 +1252,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           setOpenRail(null);
           setCarouselNavigationRevision((revision) => revision + 1);
           closeSettings();
+          setAddressBookOpen(false);
           setReceiveRail(null);
           setHistoryRail(null);
           setScanVisible(false);
@@ -1339,6 +1348,90 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     },
     [wirexSend.startSepaTo],
   );
+
+  // Paying a saved contact: close Address book and Settings, then hand the
+  // destination to the flow a scan of it would open. Nothing new is sent here.
+  const payFromAddressBook = useCallback(
+    (route: Exclude<SendRoute, { kind: "unsupported" }>): string | undefined => {
+      // Same gate as a scanned IBAN: without a ready Wirex bank account the
+      // transfer would reach its confirmation with no account to debit.
+      if (route.kind === "sepa" && !wirexBankReady) {
+        return t("screen.HomeScreen.scanBankUnavailable");
+      }
+      // Checked before anything closes: a refused handoff keeps the contact open.
+      if (route.kind === "evm" && !isValidEvmAddress(route.address)) {
+        return t("screen.AddressBook.invalidAddress");
+      }
+      setAddressBookOpen(false);
+      closeSettings();
+      setTimeout(() => {
+        switch (route.kind) {
+          case "bitcoin": {
+            setBtcSendPrefill(route.target);
+            setBtcSendAmountSats(undefined);
+            if (route.rail === "auto") {
+              if (onchainActive && onchainSats > 0 && arkadeSats > 0) {
+                setScanChoice({ kind: "bitcoin", address: route.target });
+                return;
+              }
+              setBtcSendSource(onchainActive && onchainSats > 0 ? "onchain" : "arkade");
+              return;
+            }
+            setBtcSendSource(route.rail);
+            return;
+          }
+          case "evm":
+            // A general EVM address pays like a scanned 0x: euro or dollar,
+            // asking only when both hold money.
+            if (route.asset === null) {
+              openEvmSend(route.address, null);
+              return;
+            }
+            walletSend.handleWalletScanResult(
+              route.address,
+              null,
+              route.asset === "USDC" ? "dollar" : "wallet",
+            );
+            return;
+          case "sepa": {
+            const parts = route.holder.trim() ? route.holder.trim().split(/\s+/) : [];
+            wirexSend.startSepaTo({
+              iban: route.iban,
+              bic: route.bic,
+              firstName: parts[0] ?? "",
+              lastName: parts.slice(1).join(" "),
+            });
+            return;
+          }
+        }
+      }, MODAL_HANDOFF_DELAY_MS);
+      return undefined;
+    },
+    [
+      arkadeSats,
+      onchainActive,
+      onchainSats,
+      walletSend.handleWalletScanResult,
+      wirexBankReady,
+      wirexSend.startSepaTo,
+      openEvmSend,
+    ],
+  );
+
+  // "Add to address book" on an activity row: close the history and open the
+  // book's add form on that recipient.
+  const [addressBookSaveRequest, setAddressBookSaveRequest] = useState<SaveOffer | null>(null);
+  useEffect(
+    () =>
+      EventBus.on<SaveOffer>("addressBook:saveDestination", (offer) => {
+        if (!offer?.destination) return;
+        setHistoryRail(null);
+        setAddressBookSaveRequest(offer);
+        setAddressBookOpen(true);
+      }),
+    [],
+  );
+  const clearAddressBookSaveRequest = useCallback(() => setAddressBookSaveRequest(null), []);
 
   // "Add money" is one CTA over the four ways money reaches this app: the two
   // addresses the user already owns, a bank transfer, and a purchase. Each
@@ -1867,6 +1960,21 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
             else onboarding.start();
           }, MODAL_HANDOFF_DELAY_MS);
         }}
+        onOpenAddressBook={() => setAddressBookOpen(true)}
+        exportAddressBookKey={exportAddressBookKey}
+      />
+
+      {/* A saved destination opens the SAME send flow a scanned code does. */}
+      <AddressBookScreen
+        visible={addressBookOpen}
+        onClose={() => {
+          setAddressBookOpen(false);
+          setAddressBookSaveRequest(null);
+        }}
+        loadBook={getAddressBook}
+        onPay={payFromAddressBook}
+        saveRequest={addressBookSaveRequest}
+        onSaveRequestHandled={clearAddressBookSaveRequest}
       />
 
       <ReceiveModal
@@ -2042,6 +2150,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         lastName={wirexSend.recipient?.lastName ?? ""}
         reference={wirexSend.recipient?.reference}
         onSuccess={() => {
+          // The status pill reports the transfer (raised by the sheet).
           wirexSend.setAmountVisible(false);
           void wirex.silentRefetch();
         }}
@@ -2323,12 +2432,10 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           setBtcSendAmountSats(undefined);
         }}
         onSendSuccess={() => {
+          // The send's own status pill reports it.
           setBtcSendSource(null);
           setBtcSendPrefill(undefined);
           setBtcSendAmountSats(undefined);
-          try {
-            EventBus.emit("ui:showGenericSuccess");
-          } catch {}
         }}
       />
 
@@ -2435,16 +2542,9 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
               walletBalanceStore.applyOptimisticDebit(amount),
             );
           }
-          if (!wasCardTopup || amount <= 0) {
-            // A send to someone else is worth confirming; a move between the
-            // user's own two balances is not.
-            if (payload?.confirmed && !wasCardTopup) {
-              try {
-                EventBus.emit("ui:showGenericSuccess");
-              } catch {}
-            }
-            return;
-          }
+          // A send to someone else is reported by its status pill (raised by
+          // the sheet); only a card top-up has more to do here.
+          if (!wasCardTopup || amount <= 0) return;
           // The other side of the same move. The EURC still has to confirm on
           // Base and Wirex still has to swap it EURC↔WEUR before the card
           // balance really changes; the credit is held across all of that so the

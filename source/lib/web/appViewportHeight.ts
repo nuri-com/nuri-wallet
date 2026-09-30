@@ -26,7 +26,8 @@
  * three, with nothing device-sized in between.
  *
  * The visual viewport also shrinks with the keyboard, and the app follows it there
- * too: that is the same thing native does when it pads the frame by the keyboard
+ * too (the browser's own document scroll toward the focused field is undone and
+ * done inside the app's scroll view instead, see `pinDocument`): that is the same thing native does when it pads the frame by the keyboard
  * inset, and it is why the web no longer lifts a footer a second time by hand
  * (lib/useKeyboardHeight returns 0 on web). The scale factor is React Native Web's:
  * pinch zoom shrinks the visual viewport without meaning the layout should shrink
@@ -47,6 +48,9 @@ export type AppViewportTarget = {
     };
   };
   visualViewport?: AppViewportVisualViewport | null;
+  scrollY?: number;
+  scrollTo?: (x: number, y: number) => void;
+  requestAnimationFrame?: (callback: () => void) => number;
   addEventListener?: (type: string, listener: () => void) => void;
   removeEventListener?: (type: string, listener: () => void) => void;
 };
@@ -69,25 +73,34 @@ function usable(value: number | undefined): value is number {
 }
 
 /**
- * The visible window's extent from the document's top, in layout px, scaled the
- * way React Native Web scales it. Null when the browser reports nothing usable.
+ * The visible area's height in layout px, scaled the way React Native Web scales
+ * it. Null when the browser reports nothing usable.
  *
- * `offsetTop` is part of the measurement, not decoration: focusing an input makes
- * iOS pan the visual viewport (`offsetTop > 0`) so the visible interval starts
- * below the document's top. The app is anchored at the top, so a frame sized by
- * `height` alone would end `offsetTop` px above the visible bottom — a
- * bottom-anchored control (the onboarding footer with Continue) would float above
- * the keyboard, and the top would be clipped for nothing. Sized to the window's
- * END, the frame reaches the visible bottom exactly, which is what the pan is for:
- * the browser has already chosen which part of the document to show, and its
- * `scroll` event re-measures this.
+ * `offsetTop` is deliberately NOT part of it. A pan (iOS scrolls the document to
+ * bring a focused field above the keyboard) is undone by `pinDocument` below, so
+ * the app always starts at the visible top and its height is the visible height.
+ * Adding the pan instead made the frame taller than what shows, and the app then
+ * sat shifted up by the pan: header gone, an empty band above the keyboard.
  */
 function measureVisualViewport(target: AppViewportTarget | undefined): number | null {
   const viewport = target?.visualViewport;
   if (!viewport || !usable(viewport.height)) return null;
   const scale = usable(viewport.scale) ? viewport.scale : 1;
-  const offsetTop = usable(viewport.offsetTop) ? viewport.offsetTop : 0;
-  return viewport.height * scale + offsetTop;
+  return viewport.height * scale;
+}
+
+/**
+ * Scrolls the document back to its top. `body` is `overflow: hidden`, yet the
+ * browser still scrolls the document itself to show a focused field (iOS Safari
+ * by up to the keyboard height), which moves the whole app, header included. The
+ * app's own scroll view shows the field instead (lib/web/focusedFieldReveal).
+ */
+export function pinDocument(target: AppViewportTarget | undefined): boolean {
+  if (!target || typeof target.scrollTo !== "function") return false;
+  const scrolled = usable(target.scrollY) || usable(target.visualViewport?.offsetTop);
+  if (!scrolled) return false;
+  target.scrollTo(0, 0);
+  return true;
 }
 
 /**
@@ -124,16 +137,25 @@ export function applyAppViewportHeight(target: AppViewportTarget | undefined): n
  *
  * Both sources are needed: the bars' transition reaches `visualViewport` first
  * (and its `scroll` too, when the browser pans the page), while a window resize or
- * a rotation arrives on `window`.
+ * a rotation arrives on `window`. Each change also pins the document back to its
+ * top and, once the new height has laid out, brings the focused field into view
+ * inside its own scroll view (`onSettled`), which is where the browser's own
+ * document scroll would otherwise have put it.
  */
 export function observeAppViewportHeight(
   target: AppViewportTarget | undefined,
+  onSettled?: () => void,
 ): (() => void) | undefined {
   if (!target) return undefined;
+  pinDocument(target);
   applyAppViewportHeight(target);
 
   const update = () => {
+    pinDocument(target);
     applyAppViewportHeight(target);
+    if (!onSettled) return;
+    if (typeof target.requestAnimationFrame === "function") target.requestAnimationFrame(onSettled);
+    else onSettled();
   };
   const sources: AppViewportEventSource[] = [];
   if (target.visualViewport) sources.push(target.visualViewport);
@@ -143,7 +165,9 @@ export function observeAppViewportHeight(
     source.addEventListener?.("scroll", update);
   }
   target.addEventListener?.("resize", update);
+  target.addEventListener?.("scroll", update);
   target.addEventListener?.("orientationchange", update);
+  target.addEventListener?.("focusin", update);
 
   return () => {
     for (const source of sources) {
@@ -151,6 +175,8 @@ export function observeAppViewportHeight(
       source.removeEventListener?.("scroll", update);
     }
     target.removeEventListener?.("resize", update);
+    target.removeEventListener?.("scroll", update);
     target.removeEventListener?.("orientationchange", update);
+    target.removeEventListener?.("focusin", update);
   };
 }

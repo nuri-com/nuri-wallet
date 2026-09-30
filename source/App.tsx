@@ -23,6 +23,7 @@ import { resumeSwapKitV2Orders } from "./services/swapkit/SwapKitV2PendingTracke
 import { runLegacyArkadeRefunds } from "./services/swapkit/SwapKitLegacyArkadeRefundRunner";
 import { discardUnsignedV2CommitIntents } from "./services/swapkit/SwapKitV2OrderStore";
 import { observeAppViewportHeight } from "./lib/web/appViewportHeight";
+import { revealFocusedField } from "./lib/web/focusedFieldReveal";
 import { hydrateAndResumeMercuryoOrders } from "./services/mercuryo/MercuryoPendingTracker";
 import {
   DEBUG_UI_ENABLED,
@@ -150,7 +151,6 @@ import {
   performSoftLogoutForRelogin,
 } from "./services/app/SoftLogoutService";
 import PleaseUpdateAppModal from "./components/PleaseUpdateAppModal";
-import GenericSuccessModal from "./components/GenericSuccessModal";
 import { logWithId, LOG_EMOJI } from "./lib/OperationLogUtils";
 import { IOS_APP_STORE_URL } from "./config/constants";
 import { SWAPKIT_ENABLED } from "./config/network";
@@ -270,7 +270,13 @@ export default function App() {
   // (lib/web/appViewportHeight): Safari's toolbar moves the live layout viewport,
   // and a screen sized for the wrong one hides its bottom rows under the browser
   // chrome with no gesture able to reach them (#1372). No-op on native.
-  useEffect(() => observeAppViewportHeight(typeof window === "undefined" ? undefined : window), []);
+  useEffect(
+    () =>
+      observeAppViewportHeight(typeof window === "undefined" ? undefined : window, () => {
+        revealFocusedField(document, (element) => getComputedStyle(element as Element).overflowY);
+      }),
+    [],
+  );
   return payLinkUsername ? <PayLinkApp username={payLinkUsername} /> : <WalletApp />;
 }
 
@@ -338,7 +344,6 @@ function WalletApp() {
   // whatever the user has open.
   const [updateModalVisible, setUpdateModalVisible] = useState(false);
   const [updateModalVersion, setUpdateModalVersion] = useState<string | null>(null);
-  const [showGenericSuccess, setShowGenericSuccess] = useState(false);
   const [debugHubVisible, setDebugHubVisible] = useState(false);
   const [showNostrChat, setShowNostrChat] = useState(false);
   const [supportAutoMessage, setSupportAutoMessage] = useState<string | undefined>(undefined);
@@ -472,16 +477,6 @@ function WalletApp() {
         } catch {}
       },
     );
-    return off;
-  }, []);
-
-  useEffect(() => {
-    const off = EventBus.on("ui:showGenericSuccess", () => {
-      try {
-        console.log("[SuccessModal] App received ui:showGenericSuccess");
-        setShowGenericSuccess(true);
-      } catch {}
-    });
     return off;
   }, []);
 
@@ -1060,7 +1055,6 @@ function WalletApp() {
     setDebugHubVisible(false);
     setSupportDumpVisible(false);
     setUpdateModalVisible(false);
-    setShowGenericSuccess(false);
     setShowWelcome(false);
     try {
       resetMainScreensUi();
@@ -2129,10 +2123,6 @@ function WalletApp() {
                   })
                 : undefined
             }
-          />
-          <GenericSuccessModal
-            visible={showGenericSuccess}
-            onClose={() => setShowGenericSuccess(false)}
           />
 
           {/* Claim screen for an incoming Arkade Lightning payment. Rendered at

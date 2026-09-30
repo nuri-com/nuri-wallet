@@ -1,0 +1,58 @@
+# Published into nuri-com/nuri-wallet by nuri-expo's Deploy PWA workflow.
+# For every release tag it rebuilds source/ from scratch, requires every
+# application file to match release.json byte for byte, checks the live site,
+# and only then signs release.json with a public Sigstore attestation.
+name: Rebuild and attest release
+
+on:
+  push:
+    tags: ["pwa-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write # Sigstore signing certificate
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: source/.nvmrc
+
+      - name: Checker tests
+        run: node --test verify.test.mjs
+
+      - name: Local files match release.json
+        run: node verify.mjs local
+
+      - name: Rebuild from source
+        working-directory: source
+        run: |
+          npm ci --legacy-peer-deps
+          npm run build
+
+      - name: Rebuilt files match release.json
+        run: node verify.mjs rebuild
+
+      - name: Live site matches release.json
+        # A newer deploy may already be live; the rebuild above is the proof
+        # this attestation signs, the live check is recorded for the log.
+        continue-on-error: true
+        run: node verify.mjs
+
+      - name: Attest release.json
+        # GitHub signs attestations for public repositories only on this plan.
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release.json

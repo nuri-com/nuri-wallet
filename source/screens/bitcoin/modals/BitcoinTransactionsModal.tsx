@@ -396,6 +396,7 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
     };
 
     if (railTxs.length === 0) return sortPendingFirst(list);
+    const viewInExplorerLabel = t("component.ActivityRowActions.viewInExplorer");
     const mapped = railTxs.map(({ tx: t, address: txAddress }) => {
       const isPending = !t?.status?.confirmed;
       const display = classifyTransaction(t, txAddress);
@@ -425,6 +426,16 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
         }
       }
 
+      // Who a send paid: its one output that is not this wallet's own. A send
+      // with several such outputs names no single recipient to save.
+      const paidTo = isIncoming
+        ? []
+        : (t.vout || [])
+            .map((o: { scriptpubkey_address?: string }) => o?.scriptpubkey_address || "")
+            // Never the wallet's own addresses: a transfer between its rails
+            // (or change) has no recipient to save.
+            .filter((a: string) => a && a !== txAddress && !railAddresses.has(a.toLowerCase()));
+      const recipient = paidTo.length === 1 ? paidTo[0] : null;
       return {
         // Address-scoped: a transfer between the two on-chain rails appears in
         // both histories, once as a send and once as a receive.
@@ -433,6 +444,10 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
         sublabel: subtitle,
         label: title,
         onPress: onOpenExplorer,
+        onPressLabel: viewInExplorerLabel,
+        saveOffer: recipient
+          ? { destination: { type: "crypto", raw: recipient, network: "bitcoin", asset: "BTC" } }
+          : null,
         amount: `${sign}BTC ${amountSats}`,
         amountSecondary: fiatLine ?? `${homeSym} —`,
         pending: isPending,
@@ -440,7 +455,7 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
       } satisfies ActivityItem;
     });
     return sortPendingFirst(list.concat(mapped));
-  }, [railTxs, pricesVersion, inFlight, arkadeTxs, rail, homeSym]);
+  }, [railTxs, pricesVersion, inFlight, arkadeTxs, rail, homeSym, railAddresses]);
 
   const exportCsv = useCallback(async () => {
     if (exportingCsv) return;

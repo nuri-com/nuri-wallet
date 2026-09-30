@@ -29,6 +29,7 @@ const TEXT_KEYS = {
   evmAddress: "com.nuri.evm",
   arkadeAddress: "com.nuri.arkade",
   btcAddress: "com.nuri.btc",
+  onchainAddress: "com.nuri.btc.onchain",
 } as const;
 
 export type PayRecipient = {
@@ -40,6 +41,8 @@ export type PayRecipient = {
   arkadeAddress: string | null;
   /** Bitcoin boarding address (P2TR). */
   btcAddress: string | null;
+  /** Co-signed onchain wallet address (MuSig2+CSV); null for users without one. */
+  onchainAddress: string | null;
 };
 
 /**

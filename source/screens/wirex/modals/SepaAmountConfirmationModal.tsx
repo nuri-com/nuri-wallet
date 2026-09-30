@@ -1,6 +1,7 @@
 // @screen wirex.sepa-confirm
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { startSepaInFlight } from "../../../services/money/announce";
+import { startMovePill } from "../../../services/wallet/CardTransferPill";
 
 import {
   Button,
@@ -17,6 +18,7 @@ import {
 } from "@ds";
 
 import AmountKeypad from "../../../components/AmountKeypad";
+import { useKeypadFit } from "../../../lib/useKeypadFit";
 import DsSheetHost from "../../../components/DsSheetHost";
 import { formatIbanForDisplay } from "../../../lib/ibanFormat";
 import { t } from "../../../lib/i18n";
@@ -55,6 +57,8 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
 }) => {
   const [amount, setAmount] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
+  // A short screen compacts the keypad before it scrolls.
+  const keypadFit = useKeypadFit();
   const [debitToken, setDebitToken] = useState<DebitToken | null>(null);
   const amountEditable = !submitting;
 
@@ -199,6 +203,11 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
           fiat: /usd/i.test(debitToken.tokenSymbol) ? "USD" : "EUR",
         }).catch(() => {});
       }
+      // The same status pill as every other move: Processing while the bank
+      // transfer is pending, then Completed or failed as the bank feed says.
+      // Without a transfer id there is nothing to follow, and no pill claims
+      // an outcome it cannot know.
+      if (transfer.transferId) startMovePill().settleByRows(transfer.transferId);
       onSuccess();
     } catch {
       // No error UI exists for SEPA (no design). Do NOT log any PII. Fall back
@@ -255,8 +264,9 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
         </Topbar>
       </Header>
 
-      <Scroll>
+      <Scroll onLayout={keypadFit.onViewportLayout}>
         <View
+          onLayout={keypadFit.onContentLayout}
           direction="column"
           align="stretch"
           justify="between"
@@ -304,7 +314,12 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
           </View>
 
           <View direction="column" align="stretch" justify="end" gap="lg">
-            <AmountKeypad onDigit={handleDigit} onDecimal={handleDecimal} onDelete={handleDelete} />
+            <AmountKeypad
+              compact={keypadFit.compact}
+              onDigit={handleDigit}
+              onDecimal={handleDecimal}
+              onDelete={handleDelete}
+            />
           </View>
         </View>
       </Scroll>
@@ -316,6 +331,7 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
         align="stretch"
         paddingBottom="sm"
         paddingX="lg"
+        gap="sm"
       >
         <Button
           size="lg"

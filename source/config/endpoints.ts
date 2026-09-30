@@ -64,7 +64,14 @@ export const SIGNAL_URL =
 export const CALL_URL = "https://cal.com/em/talk-to-the-founder";
 
 // ── Nostr relays ──────────────────────────────────────────────────────
+// Nuri's own relay (nuri-com/nuri-nostr-relay) is the durable copy: public
+// relays keep events only as long as they choose to, so encrypted backups and
+// support messages must also land on a relay we operate and back up. The
+// public relays stay as redundancy and for third-party NIP-17 clients.
+export const NURI_NOSTR_RELAY = "wss://relay.nuri.com";
+
 export const DEFAULT_NOSTR_RELAYS = [
+  NURI_NOSTR_RELAY,
   "wss://relay.damus.io",
   "wss://relay.primal.net",
   "wss://nos.lol",

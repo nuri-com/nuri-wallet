@@ -257,7 +257,11 @@ async function reconstructFundedRecord(
 ): Promise<ArkadeLightningSendRecord> {
   const wallet = await getOrCreateWallet();
   const refundKey = await provisionRefundKey(wallet);
-  const refundAddress = await wallet.getAddress();
+  // The same single read the funding path binds into the covenant
+  // (ArkadeLightningSendService). A separate getAddress() can rotate to a
+  // different script, and the rebuilt covenant would then refuse the wallet's
+  // own refund.
+  const refundAddress = refundKey.address;
   return {
     rfqId,
     txId: "",

@@ -9,3 +9,5 @@ export const NOSTR_SUPPORT_SEEN_IDS_CACHE_KEY = "@cache:nostr_support_seen_ids";
 export const NOSTR_SUPPORT_LAST_SYNC_CACHE_KEY = "@cache:nostr_support_last_sync";
 export const NOSTR_SUPPORT_PENDING_EVENTS_CACHE_KEY = "@cache:nostr_support_pending_events";
 export const NOSTR_CONTACT_PROTOCOLS_CACHE_KEY = "@cache:nostr_contact_protocols";
+// Signed, encrypted address-book events (lib/addressBook); never plaintext.
+export const NOSTR_ADDRESS_BOOK_CACHE_KEY = "@cache:nostr_address_book";

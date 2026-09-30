@@ -13,13 +13,18 @@ import PayWalletTokenPicker, {
 import { t } from "../lib/i18n";
 import { exactBaseUnits } from "../lib/pay/payTarget";
 import type { PayWalletHolding } from "../services/pay/PayWalletBalanceService";
-import { displayDecimal } from "../services/pay/PayWalletSwapService";
+import { displayDecimal, exactDecimal } from "../services/pay/PayWalletSwapService";
 import type { PayWalletHoldingsState, PayWalletState } from "../screens/pay/hooks/usePayWalletSwap";
 
 const K = "screen.PayLink.wallet";
 
 type Props = {
   state: PayWalletState;
+  /**
+   * A link's fixed amount (in `settleLabel`): no amount field — the page
+   * quotes what the recipient must receive and shows what the payer spends.
+   */
+  fixedAmount?: string | null;
   holdings: PayWalletHoldingsState;
   settleLabel: string;
   onConnect: () => void;
@@ -38,11 +43,13 @@ function progressText(state: PayWalletState): string | null {
   if (progress.state === "settled") return t(`${K}.settled`);
   if (progress.reason === "needs_reconciliation") return t(`${K}.needsReconciliation`);
   if (progress.reason === "pending_payment_differs") return t(`${K}.pendingDiffers`);
+  if (progress.reason === "quote_expired") return t(`${K}.quoteExpired`);
   return progress.reason === "rejected" ? t(`${K}.rejected`) : t(`${K}.failed`);
 }
 
 const PayWalletSwapPanel: React.FC<Props> = ({
   state,
+  fixedAmount = null,
   holdings,
   settleLabel,
   onConnect,
@@ -93,9 +100,11 @@ const PayWalletSwapPanel: React.FC<Props> = ({
       <View direction="column" align="stretch" gap="sm">
         <Text size="md" align="center">
           {t(`${K}.pending`, {
-            amount: request.amount,
+            // What the payer spends: on a fixed-amount link the request names
+            // the recipient's figure, so the accepted deposit is shown instead.
+            amount: exactDecimal(option.depositAmount),
             token: request.token.symbol,
-            receives: displayDecimal(option.settleAmount),
+            receives: exactDecimal(option.settleAmount),
             asset: settleLabel,
           })}
         </Text>
@@ -132,10 +141,13 @@ const PayWalletSwapPanel: React.FC<Props> = ({
   const busy = state.step === "busy";
   const typed = amount.replace(",", ".").trim();
   const units = selected ? exactBaseUnits(typed, selected.decimals) : null;
-  const tooMuch = !!selected && units !== null && units > selected.units;
-  const canQuote = !!selected && units !== null && units > 0n && !tooMuch;
+  const tooMuch = !fixedAmount && !!selected && units !== null && units > selected.units;
+  const canQuote = fixedAmount
+    ? !!selected
+    : !!selected && units !== null && units > 0n && !tooMuch;
   const clearQuote = () => {
-    if (state.step === "quoted" || state.step === "no-route") onReset();
+    if (state.step === "quoted" || state.step === "no-route" || state.step === "insufficient")
+      onReset();
   };
 
   return (
@@ -185,7 +197,13 @@ const PayWalletSwapPanel: React.FC<Props> = ({
         </Button>
       ) : null}
 
-      {selected ? (
+      {fixedAmount ? (
+        <Text size="md" align="center">
+          {t(`${K}.fixedAmount`, { amount: exactDecimal(fixedAmount), asset: settleLabel })}
+        </Text>
+      ) : null}
+
+      {selected && !fixedAmount ? (
         <View direction="column" align="stretch" gap="sm">
           <TextField
             value={amount}
@@ -219,12 +237,25 @@ const PayWalletSwapPanel: React.FC<Props> = ({
         </Text>
       ) : null}
 
-      {state.step === "quoted" ? (
+      {state.step === "quoted" && !fixedAmount ? (
         <Text size="md" align="center">
           {t(`${K}.receives`, {
-            amount: displayDecimal(state.quote.option.settleAmount),
+            amount: exactDecimal(state.quote.option.settleAmount),
             asset: settleLabel,
           })}
+        </Text>
+      ) : null}
+      {(state.step === "quoted" || state.step === "insufficient") && fixedAmount && selected ? (
+        <Text size="md" align="center">
+          {t(`${K}.youPay`, {
+            amount: exactDecimal(state.quote.option.depositAmount),
+            token: selected.symbol,
+          })}
+        </Text>
+      ) : null}
+      {state.step === "insufficient" ? (
+        <Text size="sm" muted align="center">
+          {t(`${K}.moreThanBalance`)}
         </Text>
       ) : null}
       {state.step === "no-route" ? (
@@ -243,8 +274,8 @@ const PayWalletSwapPanel: React.FC<Props> = ({
             size="lg"
             variant="solid"
             accent="lilac"
-            disabled={!canQuote || busy}
-            onPress={() => onQuote(selected, typed)}
+            disabled={!canQuote || busy || state.step === "insufficient"}
+            onPress={() => onQuote(selected, fixedAmount ?? typed)}
           >
             <ButtonText>{busy ? t(`${K}.quoting`) : t(`${K}.quote`)}</ButtonText>
           </Button>

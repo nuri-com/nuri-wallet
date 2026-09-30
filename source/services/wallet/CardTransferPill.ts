@@ -145,10 +145,19 @@ function settleWithRows(pillId: string, inFlightId: string): void {
   let settled = false;
   let off: (() => void) | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  const finish = (phase: "completed" | null) => {
+  // How the move ended, when whoever finished it could tell.
+  let outcome: "completed" | "failed" | null = null;
+  const offOutcome = EventBus.on<{ id?: string; outcome?: "completed" | "failed" }>(
+    MoneyInFlightStore.OUTCOME,
+    (payload) => {
+      if (payload?.id === inFlightId && payload.outcome) outcome = payload.outcome;
+    },
+  );
+  const finish = (phase: "completed" | "failed" | null) => {
     if (settled) return;
     settled = true;
     off?.();
+    offOutcome();
     if (timer) clearTimeout(timer);
     if (phase) noteV2TransferPhase(pillId, phase, inFlightId);
     else forgetV2Move(pillId);
@@ -159,7 +168,10 @@ function settleWithRows(pillId: string, inFlightId: string): void {
       seen = true;
       return;
     }
-    if (seen || Date.now() - startedAt > ROWS_APPEAR_GRACE_MS) finish("completed");
+    // Rows leaving is the end; a failed or reverted move says so on the pill.
+    if (seen || Date.now() - startedAt > ROWS_APPEAR_GRACE_MS) {
+      finish(outcome === "failed" ? "failed" : "completed");
+    }
   };
   off = EventBus.on(MoneyInFlightStore.CHANGED, check);
   timer = setTimeout(() => finish(null), ROWS_WATCH_MS);

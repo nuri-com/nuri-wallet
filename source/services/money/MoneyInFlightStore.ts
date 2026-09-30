@@ -113,6 +113,13 @@ export function inFlightDoneRule(record: MoneyInFlight): InFlightDoneRule {
 
 const CACHE_KEY = "money:in-flight:v1";
 const CHANGED = "money:inFlightChanged";
+/**
+ * How a finished move ended, announced by whoever knows it just before its
+ * record is finished: `{ id, outcome: "completed" | "failed" }`. A record
+ * finished without it ended in a way nobody could judge.
+ */
+const OUTCOME = "money:inFlightOutcome";
+export type InFlightOutcomePayload = { id: string; outcome: "completed" | "failed" };
 
 let memory: MoneyInFlight[] = [];
 let loaded = false;
@@ -267,6 +274,7 @@ export const MoneyInFlightStore = {
   adoptMissing,
   hydrate: ensureLoaded,
   CHANGED,
+  OUTCOME,
   /** Tests only. */
   _resetForTests(opts: { cold?: boolean } = {}): void {
     memory = [];
