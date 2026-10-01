@@ -24,6 +24,7 @@ import { PendingPurchasesStore } from "./PendingPurchasesStore";
 import { MercuryoOrderStore } from "../mercuryo/MercuryoOrderStore";
 import { stopAllMercuryoTracking } from "../mercuryo/MercuryoPendingTracker";
 import { WIPE_EXTRA_STORAGE_KEYS } from "./wipeStorageKeys";
+import { resetEsims } from "../esim/EsimService";
 import {
   clearPushNotificationStorage,
   unregisterPushDevice,
@@ -93,6 +94,13 @@ export const performSoftLogoutForRelogin = async (opts?: {
   // This PR's swap loops run in the background; stop them so none carries
   // into the next session. Immediate, nothing waits.
   stopAllSwapKitV2Tracking();
+  // The eSIM service holds the wallet's record in memory and may have relay
+  // syncs or claims in flight; fence them off before the wipe.
+  try {
+    await resetEsims();
+  } catch (e) {
+    console.warn("[SoftLogout] resetEsims failed:", e);
+  }
   const extraKeychainServers = walletForEmailWipe
     ? [
         ...WIPE_EXTRA_STORAGE_KEYS,

@@ -178,6 +178,8 @@ import { homeCarouselEligibleKey, sortByHomeValueDescending, ungroupedCount } fr
 import { applyVerifiedHomeHandle } from "./homeIdentity";
 import SettingsScreen from "../settings/SettingsScreen";
 import AddressBookScreen from "../addressBook/AddressBookScreen";
+import EsimScreen from "../esim/EsimScreen";
+import { startEsimTracking } from "../../services/esim/EsimService";
 import type { SaveOffer, SendRoute } from "../addressBook/addressBookModel";
 import { isValidEvmAddress } from "../../lib/validation";
 import {
@@ -362,6 +364,10 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   const wirex = useWirexCard();
   const settingsOpen = useSettingsOpen();
   const [addressBookOpen, setAddressBookOpen] = useState(false);
+  const [esimOpen, setEsimOpen] = useState(false);
+  // eSIM orders this wallet paid are claimed app-wide, not only while the eSIM
+  // page is open: a paid order must always end up as an installable eSIM.
+  useEffect(() => startEsimTracking(), []);
   const supportUnread = useSupportUnreadCount();
   // The account email is pinned during Wirex onboarding; Settings lists it only
   // when there is one.
@@ -1253,6 +1259,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           setCarouselNavigationRevision((revision) => revision + 1);
           closeSettings();
           setAddressBookOpen(false);
+          setEsimOpen(false);
           setReceiveRail(null);
           setHistoryRail(null);
           setScanVisible(false);
@@ -1961,7 +1968,20 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           }, MODAL_HANDOFF_DELAY_MS);
         }}
         onOpenAddressBook={() => setAddressBookOpen(true)}
+        onOpenEsim={() => setEsimOpen(true)}
         exportAddressBookKey={exportAddressBookKey}
+      />
+
+      {/* An eSIM order's invoice opens the SAME Bitcoin send sheet a scanned
+          Lightning invoice does, on top of the eSIM page. */}
+      <EsimScreen
+        visible={esimOpen}
+        onClose={() => setEsimOpen(false)}
+        onPayInvoice={(invoice, amountSats) => {
+          setBtcSendPrefill(invoice);
+          setBtcSendAmountSats(amountSats > 0 ? String(Math.trunc(amountSats)) : undefined);
+          setBtcSendSource("arkade");
+        }}
       />
 
       {/* A saved destination opens the SAME send flow a scanned code does. */}

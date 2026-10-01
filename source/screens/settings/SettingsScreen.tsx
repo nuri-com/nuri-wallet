@@ -15,6 +15,8 @@
 //   Export        one CSV of every transaction across every account.
 //   Address book  saved recipients (screens/addressBook), plus copying the
 //                 address-book-only key for the desktop CLI/MCP.
+//   eSIM          buy a travel data eSIM with Bitcoin over Lightning
+//                 (screens/esim), and the eSIMs already bought.
 //   Support       the support chat, with its unread count.
 //   The version of the running bundle closes the page as plain text.
 //
@@ -95,6 +97,7 @@ type Props = {
   verification: { state: VerificationRowState; action: "start" | "resume" | null };
   onVerify: () => void;
   onOpenAddressBook: () => void;
+  onOpenEsim: () => void;
   /** The address-book-only key (nsec) for the desktop CLI/MCP. */
   exportAddressBookKey: () => Promise<string>;
 };
@@ -159,6 +162,7 @@ const SettingsScreen: React.FC<Props> = ({
   verification,
   onVerify,
   onOpenAddressBook,
+  onOpenEsim,
   exportAddressBookKey,
 }) => {
   const insets = useSafeAreaInsets();
@@ -402,6 +406,13 @@ const SettingsScreen: React.FC<Props> = ({
                       {exportLabel ? (
                         <ListActionTrailingText>{exportLabel}</ListActionTrailingText>
                       ) : null}
+                    </ListAction>
+                  </Section>
+
+                  <Section title={t(`${K}.shop`)}>
+                    <ListAction accessibilityLabel={t(`${K}.esim`)} onPress={onOpenEsim}>
+                      <ListActionText>{t(`${K}.esim`)}</ListActionText>
+                      <ListActionTrailIcon name="chevron-right" />
                     </ListAction>
                   </Section>
 

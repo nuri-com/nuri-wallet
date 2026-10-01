@@ -33,6 +33,7 @@ import {
 } from "../notifications/NotificationRegistrationService";
 
 import { resetAddressBook } from "../addressBook/AddressBookService";
+import { resetEsims } from "../esim/EsimService";
 
 type Options = {
   onClose?: () => void;
@@ -61,6 +62,12 @@ export const wipeLocalWalletData = async ({ onClose }: Options = {}) => {
     await resetAddressBook();
   } catch (e) {
     console.warn("[FactoryReset] resetAddressBook failed:", e);
+  }
+  // Same for the eSIM record held in memory (the stored copy is in the wipe list).
+  try {
+    await resetEsims();
+  } catch (e) {
+    console.warn("[FactoryReset] resetEsims failed:", e);
   }
   const extraKeychainServers = walletForEmailWipe
     ? [

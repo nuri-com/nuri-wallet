@@ -10,6 +10,7 @@ import { WIREX_SNAPSHOT_CACHE_KEY } from "../wirex/WirexAccountService";
 import { USERNAME_CLAIM_REQUIRED_KEY } from "../../lib/auth/usernameClaimSentinel";
 import { V1_WALLET_MIGRATION_OLD_CREDENTIAL_ID_KEY } from "./V1WalletMigrationService";
 import { DEV_DEVICES_STORAGE_KEY } from "../notifications/DevDeviceRegistry";
+import { ESIM_RECORD_STORAGE_KEY } from "../esim/esimStorageKey";
 import {
   NOSTR_CONTACTS_CACHE_KEY,
   NOSTR_LAST_SEEN_CACHE_KEY,
@@ -52,6 +53,7 @@ export const WIPE_EXTRA_STORAGE_KEYS: string[] = [
   "wallet_mode", // legacy persisted flag; source module removed, key still wiped
   USERNAME_CLAIM_REQUIRED_KEY,
   DEV_DEVICES_STORAGE_KEY,
+  ESIM_RECORD_STORAGE_KEY,
 ];
 
 // NOTE: this list is passed to `wipeAllKeychainData`, which only resets Keychain

@@ -22,6 +22,8 @@ const REWRITES: Array<[string, string]> = [
   // update.nuri.com (the must-update version gate) serves no browser CORS, so
   // the direct fetch fails on web and the gate silently defaults to "no update".
   ["https://update.nuri.com", "/api/update"],
+  // nadanada.me (eSIM shop) serves no browser CORS.
+  ["https://nadanada.me", "/api/nadanada"],
 ];
 
 // Exported so non-fetch web callers (e.g. EventSource, which the fetch/XHR
