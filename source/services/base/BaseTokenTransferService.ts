@@ -86,7 +86,9 @@ async function loadBaseAccount(): Promise<ReturnType<typeof privateKeyToAccount>
 export type BaseGasReadiness = "sufficient" | "insufficient" | "unknown";
 
 // Relay refusals that mean "this wallet does not need a drip", not "this wallet
-// cannot pay". The faucet README requires clients to continue on both.
+// cannot pay". The faucet README requires clients to continue on both, so the
+// balance is polled until the relay's view arrives; only a wallet still empty
+// after that is refused.
 const PROCEEDABLE_REFUSALS = new Set(["already_claimed", "has_gas"]);
 
 // The drip tx can be mined a beat before the balance reads back; poll instead
@@ -165,9 +167,8 @@ export async function ensureBaseMainnetGas(
     });
     const drip = await dripBaseGas(address);
     if (!drip.sent || !drip.txHash) {
-      log("[BaseTokenTransfer] Faucet drip not sent", { reason: drip.reason });
-      // `nativeBalance` above is stale the moment the relay answers, and two
-      // kinds of non-sent response are not proof the wallet cannot pay:
+      // `nativeBalance` above is stale the moment the relay answers, and no
+      // non-sent response is proof the wallet cannot pay:
       //   - has_gas / already_claimed: the relay says the wallet is covered. A
       //     retried request makes this concrete — attempt one can submit the
       //     drip and time out, so attempt two sees already_claimed for a wallet
@@ -177,18 +178,26 @@ export async function ensureBaseMainnetGas(
       //     of the ETH it already holds — this gate's floor is 200k × 2× price,
       //     far above what an ERC20 transfer actually costs.
       // Re-read before refusing.
-      const proceedable = drip.transient === true || PROCEEDABLE_REFUSALS.has(drip.reason ?? "");
-      // Poll only for already_claimed — that is the one case with a drip
-      // plausibly still in flight. Nothing else has anything to wait for.
-      const balance =
-        drip.reason === "already_claimed"
-          ? await waitForGasBalance(publicClient, address, minGasWei)
-          : await publicClient.getBalance({ address });
-      if (balance >= minGasWei) return "sufficient";
-      // Still short: the faucet is out of our hands, but the wallet may cover
-      // the real (much smaller) gas cost, so let the send try. Only a chosen,
-      // definitive refusal over an empty wallet is a dead end.
-      return proceedable ? "unknown" : shortfallVerdict(balance);
+      // Poll for a relay that says the wallet is covered: a drip may still be in
+      // flight (already_claimed), or the relay's node may be ahead of ours
+      // (has_gas). Nothing else has anything to wait for.
+      const balance = PROCEEDABLE_REFUSALS.has(drip.reason ?? "")
+        ? await waitForGasBalance(publicClient, address, minGasWei)
+        : await publicClient.getBalance({ address });
+      // Still short: the faucet is out of our hands, but a wallet holding some
+      // ETH may cover the real (much smaller) gas cost, so let the send try.
+      // A wallet that re-reads as EMPTY cannot pay any gas whatever the relay
+      // said: estimateGas would only fail with a raw "allowance (0)" (#1457),
+      // so that is "insufficient" for every refusal, transient ones included.
+      const verdict: BaseGasReadiness =
+        balance >= minGasWei ? "sufficient" : shortfallVerdict(balance);
+      log("[BaseTokenTransfer] Faucet drip not sent", {
+        reason: drip.reason,
+        transient: drip.transient === true,
+        balance: balance.toString(),
+        verdict,
+      });
+      return verdict;
     }
     if (!awaitConfirmation) {
       log("[BaseTokenTransfer] Faucet drip submitted (not awaiting)", { txHash: drip.txHash });

@@ -863,6 +863,7 @@ export const en = {
       day: "%{count} day",
       days: "%{count} days",
       pending: "Waiting for payment",
+      payNow: "Pay now",
       delivering: "Paid, getting your eSIM…",
       slow: "Taking longer, tap for support",
       dashboard: "Manage on nadanada",

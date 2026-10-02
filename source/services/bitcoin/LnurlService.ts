@@ -83,6 +83,20 @@ function getDomainFromUrl(url: string): string | null {
   return match?.[1] ? match[1] : null;
 }
 
+// The `reason` of an LNURL error body, or null when the body is not one
+// (HTML error page, empty, unreadable). Capped so a hostile host cannot
+// flood the log or the support dump.
+async function lnurlErrorReason(response: Response): Promise<string | null> {
+  try {
+    const json = (await response.json()) as { status?: unknown; reason?: unknown } | null;
+    if (json?.status !== "ERROR" || typeof json.reason !== "string") return null;
+    const reason = json.reason.trim();
+    return reason ? reason.slice(0, 200) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchLnurlJson(url: string): Promise<unknown> {
   // On web this becomes the same-origin /api/lnurl forwarder — the browser must
   // not connect to arbitrary LNURL hosts itself (see lib/web/apiProxy).
@@ -90,10 +104,16 @@ async function fetchLnurlJson(url: string): Promise<unknown> {
     __nuriSource: LNURL_FETCH_SOURCE,
   } as NuriFetchInit);
   if (!response.ok) {
+    // LUD-06 servers answer a refused callback (amount out of bounds, ...) with
+    // a non-2xx status AND a {status:"ERROR", reason} body. The reason is the
+    // only thing that says why, so read it before throwing (#1393).
+    const reason = await lnurlErrorReason(response);
     log(
-      `🌐 ERROR API_ERR grp=Network scope=LnurlService act=fetchLnurlJson status=${response.status} host=${getDomainFromUrl(url) || "unknown"} src=services/bitcoin/LnurlService.ts#fetchLnurlJson`,
+      `🌐 ERROR API_ERR grp=Network scope=LnurlService act=fetchLnurlJson status=${response.status} host=${getDomainFromUrl(url) || "unknown"}${reason ? ` reason=${reason.replace(/\s+/g, "_")}` : ""} src=services/bitcoin/LnurlService.ts#fetchLnurlJson`,
     );
-    throw new Error(`LNURL HTTP ${response.status}`);
+    throw new Error(
+      reason ? `LNURL HTTP ${response.status}: ${reason}` : `LNURL HTTP ${response.status}`,
+    );
   }
   const json = await response.json();
   if (json?.status === "ERROR") {

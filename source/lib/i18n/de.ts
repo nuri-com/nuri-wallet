@@ -874,6 +874,7 @@ export const de = {
       day: "%{count} Tag",
       days: "%{count} Tage",
       pending: "Wartet auf Zahlung",
+      payNow: "Jetzt bezahlen",
       delivering: "Bezahlt, eSIM wird geholt…",
       slow: "Dauert länger, tippe für Support",
       dashboard: "Auf nadanada verwalten",

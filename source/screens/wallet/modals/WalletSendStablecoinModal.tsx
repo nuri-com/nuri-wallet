@@ -32,7 +32,7 @@ import { toNuriUsername } from "../../../lib/pay/nuriUsername";
 import { resolvePayRecipient } from "../../../lib/pay/resolvePayRecipient";
 import { createRecipientLookupGate } from "../../../lib/pay/recipientLookupGate";
 import { isValidEvmAddress } from "../../../lib/validation";
-import { truncateDecimalString } from "../../../lib/amounts";
+import { scannedAmountPrefill } from "../../../lib/amounts";
 import { useFiatAmountInput } from "../../../lib/useFiatAmountInput";
 import { sendTokenOnBase } from "../../../services/base/BaseTokenTransferService";
 import { EventBus } from "../../../services/events/AppEventBusService";
@@ -111,6 +111,14 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   // user edits the field: a manual entry is its own intent.
   const [exactScannedAmount, setExactScannedAmount] = useState<string | null>(null);
   const amountEditable = !isRequesting;
+  // The scan keeps full precision, so it can top the balance by less than the
+  // 2-decimal display shows (scanned 1.004, held 1.00). Checked on the exact
+  // string so the CTA blocks there too.
+  const scannedExceedsBalance =
+    exactScannedAmount != null &&
+    maxStablecoinAvailable != null &&
+    Number(exactScannedAmount) > maxStablecoinAvailable;
+  const overBalance = exceedsBalance || scannedExceedsBalance;
 
   // Reset the amount once on open, pre-filling if provided. Must NOT depend on
   // amountEditable: the CTA toggles isRequesting (=> amountEditable), which would
@@ -128,23 +136,15 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
     setResolvingRecipient(false);
     setRecipientUnresolvable(false);
     setRecipientLookupFailed(false);
-    const prefilledNumeric = prefilledAmount != null ? Number(prefilledAmount) : 0;
-    if (prefilledAmount != null && Number.isFinite(prefilledNumeric) && prefilledNumeric > 0) {
-      const max = maxStablecoinAvailable ?? 0;
-      if (max > 0 && prefilledNumeric <= max) {
-        // Display capped to 2 decimals; the exact scanned string is kept
-        // separately and is what gets sent.
-        setExactScannedAmount(prefilledAmount);
-        setAmount(truncateDecimalString(prefilledAmount, 2));
-      } else {
-        setExactScannedAmount(null);
-        setAmount("");
-      }
-    } else {
-      setExactScannedAmount(null);
-      setAmount("");
-    }
-  }, [visible, prefilledAmount, maxStablecoinAvailable, setAmount]);
+    // A scanned amount is always kept, even above the balance (#1486): the
+    // field shows what the QR asked for and the CTA stays blocked with the
+    // "exceeds balance" hint, instead of silently emptying the field.
+    const prefill = scannedAmountPrefill(prefilledAmount);
+    setExactScannedAmount(prefill.exact);
+    setAmount(prefill.display);
+    // No balance dependency: the prefill no longer depends on it, and a balance
+    // refresh must not reset the recipient or an amount the user edited.
+  }, [visible, prefilledAmount, setAmount]);
 
   const validAddress = useMemo(() => isValidEvmAddress(recipient), [recipient]);
   const acceptsSavedDestination = useMemo(
@@ -193,12 +193,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
       console.log("[WalletSendStablecoinModal] Amount below minimum");
       return;
     }
-    const exactNumeric = Number(exactScannedAmount ?? amount);
-    if (
-      exactScannedAmount != null &&
-      maxStablecoinAvailable != null &&
-      exactNumeric > maxStablecoinAvailable
-    ) {
+    if (scannedExceedsBalance) {
       console.log("[WalletSendStablecoinModal] Exact scanned amount exceeds balance");
       return;
     }
@@ -370,7 +365,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
 
   const isCtaDisabled = onRecipientStep
     ? !recipientEntryUsable || resolvingRecipient
-    : isRequesting || !validAddress || parsedAmount <= 0 || exceedsBalance || isBelowMinimum;
+    : isRequesting || !validAddress || parsedAmount <= 0 || overBalance || isBelowMinimum;
 
   // The token decides the code: a USDC send must not render "EUR". No token is
   // the euro send (BASE_EURC), stated in the currency it moves — never the
@@ -397,7 +392,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
 
   // Amount-step only. The recipient step has its own hint (recipientHint) and
   // owns the address message — carrying it here too printed it twice.
-  const amountHint = exceedsBalance
+  const amountHint = overBalance
     ? t("screen.WalletSendStablecoinModal.exceedsBalanceHint")
     : !onRecipientStep && recipient.length > 0 && !validAddress
       ? t("screen.WalletSendStablecoinModal.invalidAddressError")

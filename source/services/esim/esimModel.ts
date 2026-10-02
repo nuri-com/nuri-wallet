@@ -80,6 +80,12 @@ export type EsimPendingOrder = {
   expiresAt: number;
   /** Set once this wallet's own Lightning send for the invoice is funded. */
   paidAt?: number;
+  /**
+   * Set (and backed up to the relays) immediately before this wallet funds a
+   * Lightning send for the invoice. Lives in the order itself, so it survives
+   * a wallet restore: the invoice is then never offered for payment again.
+   */
+  sendStartedAt?: number;
   /** A top-up: the owned eSIM (ICCID) this order adds a bundle to. */
   topupIccid?: string;
   /** Country/region slug, so a top-up can be priced for the same place. */
@@ -486,7 +492,9 @@ export function isPendingLive(order: EsimPendingOrder, now: number): boolean {
  * is then the user's only claim on an eSIM, kept until nadanada delivers it.
  */
 export function canDropPending(order: EsimPendingOrder, now: number): boolean {
-  return order.paidAt === undefined && !isPendingLive(order, now);
+  return (
+    order.paidAt === undefined && order.sendStartedAt === undefined && !isPendingLive(order, now)
+  );
 }
 
 /** Pending orders worth showing: an open invoice, or one the wallet paid. */
@@ -497,6 +505,32 @@ export function visiblePending(order: EsimPendingOrder, now: number): boolean {
 /** Whether the invoice can still be paid (shown as "waiting for payment"). */
 export function isInvoiceOpen(order: EsimPendingOrder, now: number): boolean {
   return now < order.expiresAt;
+}
+
+/**
+ * Time an invoice must still have left to be offered for payment again: the
+ * send flow quotes, asks for the passkey and refuses to fund in its last
+ * minute, so an invoice closer to expiry than this would only fail there.
+ */
+export const REOPEN_MIN_LEFT_MS = 5 * 60 * 1000;
+
+/**
+ * Whether an unpaid order's invoice may be handed to the send sheet again.
+ * Only for an order this wallet never started paying (no funded send, no send
+ * record for its hash): a second send of an invoice that already has one would
+ * lock sats nobody can claim.
+ */
+export function canReopenPayment(
+  order: EsimPendingOrder,
+  now: number,
+  sendStartedForHash: boolean,
+): boolean {
+  return (
+    order.paidAt === undefined &&
+    order.sendStartedAt === undefined &&
+    !sendStartedForHash &&
+    order.expiresAt - now > REOPEN_MIN_LEFT_MS
+  );
 }
 
 function isOwned(value: unknown): value is OwnedEsim {
@@ -526,6 +560,7 @@ function isPending(value: unknown): value is EsimPendingOrder {
     typeof value.createdAt === "number" &&
     typeof value.expiresAt === "number" &&
     (value.paidAt === undefined || typeof value.paidAt === "number") &&
+    (value.sendStartedAt === undefined || typeof value.sendStartedAt === "number") &&
     (value.topupIccid === undefined || typeof value.topupIccid === "string")
   );
 }
@@ -564,11 +599,16 @@ export function mergeRecords(a: EsimRecord, b: EsimRecord): EsimRecord {
   for (const order of [...a.pending, ...b.pending]) {
     if (claimed.has(order.paymentHash)) continue;
     const seen = pending.get(order.paymentHash);
-    // A copy that knows the order was paid wins: losing paidAt would let the
-    // order be dropped as unpaid.
-    if (!seen || (seen.paidAt === undefined && order.paidAt !== undefined)) {
-      pending.set(order.paymentHash, order);
-    }
+    // Facts only ever get added: a copy that knows the order was paid, or that
+    // a send for it started, keeps that. Losing either would let the order be
+    // dropped as unpaid or its invoice offered for a second payment.
+    const paidAt = seen?.paidAt ?? order.paidAt;
+    const sendStartedAt = seen?.sendStartedAt ?? order.sendStartedAt;
+    pending.set(order.paymentHash, {
+      ...(seen ?? order),
+      ...(paidAt !== undefined ? { paidAt } : {}),
+      ...(sendStartedAt !== undefined ? { sendStartedAt } : {}),
+    });
   }
   return {
     version: 1,
@@ -583,7 +623,7 @@ export function sameRecord(a: EsimRecord, b: EsimRecord): boolean {
   const key = (r: EsimRecord) =>
     JSON.stringify([
       r.esims.map((e) => e.iccid).sort(),
-      r.pending.map((p) => `${p.paymentHash}:${p.paidAt ?? ""}`).sort(),
+      r.pending.map((p) => `${p.paymentHash}:${p.paidAt ?? ""}:${p.sendStartedAt ?? ""}`).sort(),
       [...r.doneTopups].sort(),
     ]);
   return key(a) === key(b);

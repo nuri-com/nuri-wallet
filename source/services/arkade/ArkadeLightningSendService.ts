@@ -32,6 +32,7 @@ import { asSwapKitV2OrderId } from "../swapkit/SwapKitV2Service";
 import { executeAndSubmitV2Action } from "../swapkit/SwapKitV2ActionService";
 import { startSwapKitV2Tracking } from "../swapkit/SwapKitV2PendingTracker";
 import { fundArkadeIntentsOutpoint } from "./ArkadeSendService";
+import { runLightningFundingGuards } from "./lightningFundingGuards";
 import { arkadeServerConfigService } from "./ArkadeServerConfigService";
 import { EventBus } from "../events/AppEventBusService";
 import { withOutgoingBrowserApproval } from "./internal/browserApproval";
@@ -531,6 +532,9 @@ export async function payArkadeLightningInvoice(_params: {
                   // figure read minutes ago.
                   assertInvoiceStillPayable(decodeBolt11Facts(invoice).expiresAt);
                   await _params.onBeforeBroadcast?.();
+                  // Feature checks at the boundary (an eSIM order records the
+                  // send in its backed-up record); one that throws sends nothing.
+                  await runLightningFundingGuards(payTrace.paymentHash);
                   return wallet.send({
                     address: fundingAddress,
                     amount: fundingAmountSats,

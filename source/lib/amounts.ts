@@ -59,3 +59,20 @@ export const formatBalance = (amount: number) => {
   const [whole, decimal] = amount.toFixed(2).split(".");
   return { whole, decimal };
 };
+
+/**
+ * Prefill for an amount carried in by a payment QR. The exact string is what
+ * gets sent; the display is capped to 2 decimals. The balance plays no part:
+ * an amount above it is still shown, and the send screen blocks its CTA with
+ * the over-balance hint (#1486). Clearing it left the user with an empty field
+ * and no reason why.
+ */
+export const scannedAmountPrefill = (
+  scanned: string | null | undefined,
+): { exact: string | null; display: string } => {
+  const numeric = scanned != null ? Number(scanned) : 0;
+  if (scanned == null || !Number.isFinite(numeric) || numeric <= 0) {
+    return { exact: null, display: "" };
+  }
+  return { exact: scanned, display: truncateDecimalString(scanned, 2) };
+};

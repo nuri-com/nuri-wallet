@@ -51,6 +51,7 @@ import { errMsg } from "../../lib/errorMessage";
 import { t } from "../../lib/i18n";
 import {
   claimPendingEsims,
+  reopenEsimPayment,
   createEsimOrder,
   createEsimTopup,
   currentEsims,
@@ -61,6 +62,7 @@ import {
   onEsimToppedUp,
   subscribeEsims,
 } from "../../services/esim/EsimService";
+import { lightningSendStartedFor } from "../../services/arkade/lightningSendStarted";
 import ChoiceSheet from "../../components/ChoiceSheet";
 import { EventBus } from "../../services/events/AppEventBusService";
 import {
@@ -343,6 +345,8 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
   /** Set while picking a plan to add to this owned eSIM (top-up). */
   const [topupFor, setTopupFor] = useState<OwnedEsim | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  /** Unpaid orders whose invoice may be paid from here (see reopenEsimPayment). */
+  const [payable, setPayable] = useState<ReadonlySet<string>>(() => new Set());
 
   const homeCountry = useMemo(() => Localization.getLocales()[0]?.regionCode ?? null, []);
 
@@ -469,6 +473,44 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
   // An order whose invoice expired unpaid is still claimed in the background
   // (a payment in flight at expiry can settle), but no longer listed.
   const openOrders = record.pending.filter((order) => visiblePending(order, now));
+  const unpaidKey = openOrders
+    .filter((order) => order.paidAt === undefined)
+    .map((order) => order.paymentHash)
+    .join(",");
+
+  // Which unpaid orders can be paid from their row; rechecked as time passes,
+  // so a row stops offering payment shortly before its invoice expires.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `now` re-runs the check on the clock tick.
+  useEffect(() => {
+    if (!visible || !unpaidKey) {
+      setPayable(new Set());
+      return;
+    }
+    let live = true;
+    void Promise.all(
+      unpaidKey
+        .split(",")
+        .map(async (hash) =>
+          (await reopenEsimPayment(hash, lightningSendStartedFor)) ? hash : null,
+        ),
+    ).then((hashes) => {
+      if (live) setPayable(new Set(hashes.filter((h): h is string => h !== null)));
+    });
+    return () => {
+      live = false;
+    };
+  }, [visible, unpaidKey, now]);
+
+  // Asks the service again at tap time: the row may be a few seconds stale.
+  const payOrder = useCallback(
+    (order: EsimPendingOrder) => {
+      void reopenEsimPayment(order.paymentHash, lightningSendStartedFor).then((pay) => {
+        if (pay) onPayInvoice(pay.invoice, pay.amountSats);
+        else setPayable((prev) => new Set([...prev].filter((h) => h !== order.paymentHash)));
+      });
+    },
+    [onPayInvoice],
+  );
   const hasMine = record.esims.length > 0 || openOrders.length > 0;
 
   return (
@@ -501,31 +543,43 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
                         </Text>
                       </View>
                       <List>
-                        {/* No tap on a pending order: its payment may already be
-                            in flight, and a second send of the same invoice
-                            would lock sats nobody can claim. */}
+                        {/* An unpaid order opens its invoice again, but only while
+                            this wallet never started a send for it: a second
+                            send of the same invoice would lock sats nobody can
+                            claim (reopenEsimPayment). */}
                         {openOrders.map((order, index) => (
                           <Fragment key={order.paymentHash}>
                             {index > 0 ? <ListSeparator /> : null}
                             {(() => {
                               const slow =
                                 order.paidAt !== undefined && now - order.paidAt > SLOW_DELIVERY_MS;
+                              const canPay = !slow && payable.has(order.paymentHash);
                               const label = slow
                                 ? t(`${K}.slow`)
                                 : order.paidAt !== undefined
                                   ? t(`${K}.delivering`)
-                                  : t(`${K}.pending`);
+                                  : canPay
+                                    ? t(`${K}.payNow`)
+                                    : t(`${K}.pending`);
                               return (
                                 <ListAction
                                   accessibilityLabel={`${order.placeName}, ${label}`}
-                                  onPress={slow ? () => openSupport(order) : undefined}
+                                  onPress={
+                                    slow
+                                      ? () => openSupport(order)
+                                      : canPay
+                                        ? () => payOrder(order)
+                                        : undefined
+                                  }
                                 >
                                   <ListActionText>{order.placeName}</ListActionText>
                                   <ListActionTextMuted>
                                     {bundleSummary(order.bundleName)}
                                   </ListActionTextMuted>
                                   <ListActionTrailingText>{label}</ListActionTrailingText>
-                                  {slow ? <ListActionTrailIcon name="chevron-right" /> : null}
+                                  {slow || canPay ? (
+                                    <ListActionTrailIcon name="chevron-right" />
+                                  ) : null}
                                 </ListAction>
                               );
                             })()}

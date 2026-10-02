@@ -41,6 +41,7 @@ import {
 import { deleteAuthData, getAuthData, storeAuthData } from "../../lib/secureKeyStorage";
 import { createForegroundPoller, onAppForegroundEnter } from "../app/ForegroundPoller";
 import { EventBus } from "../events/AppEventBusService";
+import { registerLightningFundingGuard } from "../arkade/lightningFundingGuards";
 import {
   type CompleteResult,
   type EsimPendingOrder,
@@ -51,6 +52,7 @@ import {
   type OwnedEsim,
   assertInvoiceMatchesOrder,
   canDropPending,
+  canReopenPayment,
   visiblePending,
   mergeRecords,
   parseComplete,
@@ -359,17 +361,20 @@ export function loadEsims(): Promise<EsimRecord> {
   return loaded;
 }
 
-let syncing: Promise<void> | null = null;
+let syncing: Promise<boolean> | null = null;
 
 /**
  * Merge the relay copy into the device copy, and publish the device copy when
  * the relays have none or an older one. Repeats (start, foreground, tracker)
  * until it has succeeded once, so a restore that began offline still runs.
+ * Resolves true when the relay copy was read and merged by this pass.
+ * Overlapping calls share one pass.
  */
-export function syncFromRelays(): Promise<void> {
+export function syncFromRelays(): Promise<boolean> {
   if (!syncing) {
     const gen = generation;
     syncing = (async () => {
+      let mergedOk = false;
       let keys: BackupKeys | null = null;
       try {
         keys = await backupKeys();
@@ -390,12 +395,14 @@ export function syncFromRelays(): Promise<void> {
         } else if (!sameRecord(merged, remote)) {
           backupDirty = true;
         }
+        mergedOk = true;
       } catch {
         // Offline or reset: the next pass retries.
       } finally {
         if (keys) closeKeys(keys);
       }
       if (gen === generation && backupDirty && hasContent(current)) await backup(gen);
+      return mergedOk;
     })().finally(() => {
       syncing = null;
     });
@@ -409,7 +416,7 @@ function hasContent(record: EsimRecord): boolean {
 
 /** Retry whatever the relays are missing (tracker tick, foreground). */
 export function healEsimBackup(): Promise<void> {
-  return !relaySynced || backupDirty ? syncFromRelays() : Promise.resolve();
+  return !relaySynced || backupDirty ? syncFromRelays().then(() => {}) : Promise.resolve();
 }
 
 /**
@@ -588,6 +595,46 @@ export function onEsimToppedUp(listener: (iccid: string) => void): () => void {
   return () => statusListeners.delete(listener);
 }
 
+/**
+ * Whether this wallet ever started a Lightning send for a payment hash. The
+ * caller supplies it (the Lightning send store lives in the Arkade layer,
+ * which this service does not import); it must fail closed, true when unsure.
+ */
+export type SendStartedFor = (paymentHash: string) => Promise<boolean>;
+
+/**
+ * The invoice of an unpaid order, to pay it now (the user ordered and left
+ * before paying). Null when it must not be paid again: the wallet started a
+ * send for it, it was marked paid, or the invoice is about to expire.
+ */
+export async function reopenEsimPayment(
+  paymentHash: string,
+  sendStartedFor: SendStartedFor,
+): Promise<{ invoice: string; amountSats: number } | null> {
+  const gen = generation;
+  try {
+    // Another device may have paid it: decide on the merged relay copy only.
+    await reconciledEsims(gen);
+  } catch {
+    return null;
+  }
+  const order = current.pending.find((p) => p.paymentHash === paymentHash);
+  if (!order) return null;
+  let started = true;
+  try {
+    started = await sendStartedFor(order.paymentHash);
+  } catch {
+    // Unsure means started: never offer an invoice that may have a send.
+  }
+  if (!canReopenPayment(order, Date.now(), started)) return null;
+  const facts = decodeBolt11Facts(order.invoice);
+  // The stored invoice is what the order is claimed with: it must still
+  // commit to the order's hash and an amount.
+  if (facts.paymentHash.toLowerCase() !== order.paymentHash) return null;
+  if (!Number.isFinite(facts.amountSats) || facts.amountSats <= 0) return null;
+  return { invoice: order.invoice, amountSats: facts.amountSats };
+}
+
 let claiming: Promise<void> | null = null;
 
 /**
@@ -613,6 +660,72 @@ export function claimPendingEsims(
   }
   return claiming;
 }
+
+/**
+ * Load the record and merge a fresh read of the relay copy. Whether an
+ * invoice was already paid is decided across devices: another device can mark
+ * an order at any time, so every decision that could lead to a payment reads
+ * the relays now, never relying on an earlier sync this session. Throws when
+ * that read does not succeed, so callers fail closed.
+ */
+async function reconciledEsims(gen: number): Promise<void> {
+  await loadEsims();
+  const fresh = await syncFromRelays();
+  assertGeneration(gen);
+  if (!fresh) throw new Error("eSIM record not reconciled with its backup");
+}
+
+/**
+ * Funding guard (runs right before this wallet funds a Lightning payment).
+ * Decides on the merged relay copy: an eSIM order known here is not paid
+ * while that merge fails. For an invoice that belongs to an eSIM order:
+ * - refuses when the order already has `sendStartedAt`: a send for it began
+ *   here or on another device, and a second one would fund the invoice twice;
+ * - otherwise records `sendStartedAt` and backs the record up to the relays
+ *   before allowing the payment. No relay acknowledgement, no payment.
+ * The marker is restored with the wallet, so no device offers the invoice
+ * again. A payment that is not for an eSIM order passes.
+ */
+export async function guardEsimInvoiceFunding(paymentHash: string): Promise<void> {
+  const hash = String(paymentHash || "").toLowerCase();
+  if (!hash) return;
+  const gen = generation;
+  let reconciled = true;
+  try {
+    await reconciledEsims(gen);
+  } catch {
+    reconciled = false;
+  }
+  const order = current.pending.find((p) => p.paymentHash === hash);
+  // An eSIM order this device knows of is only paid on the merged copy. An
+  // invoice it does not know passes even with the relays down: this guard
+  // must not stop every other Lightning payment, and the app offers no eSIM
+  // invoice it holds no order for.
+  if (!reconciled && order) {
+    throw new Error("Couldn't check your eSIM orders. Check your connection and try again.");
+  }
+  if (!order) return;
+  if (order.sendStartedAt !== undefined || order.paidAt !== undefined) {
+    throw new Error("This eSIM order already has a payment. Nothing was sent.");
+  }
+  await edit(
+    (record) => ({
+      ...record,
+      pending: record.pending.map((p) =>
+        p.paymentHash === hash && p.sendStartedAt === undefined
+          ? { ...p, sendStartedAt: Date.now() }
+          : p,
+      ),
+    }),
+    gen,
+  );
+  if ((await backup(gen)) === 0) {
+    throw new Error("Couldn't save the eSIM order. Check your connection and try again.");
+  }
+  assertGeneration(gen);
+}
+
+registerLightningFundingGuard(guardEsimInvoiceFunding);
 
 /** Record that this wallet's own Lightning send for an order was funded. */
 async function markPaid(paymentHash: string | undefined): Promise<void> {

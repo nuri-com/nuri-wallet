@@ -23,6 +23,7 @@ import { getCachedArkadeIdentity } from "./walletCache";
 
 const ARKADE_LIGHTNING_SEND_STORE_VERSION = "arkade-intents-lightning-send-v1";
 const ARKADE_LIGHTNING_SEND_FUNDING_OUTBOX_VERSION = "arkade-intents-funding-outbox-v1";
+const ARKADE_LIGHTNING_SEND_SETTLED_HASHES_VERSION = "arkade-intents-settled-hashes-v1";
 
 export type ArkadeLightningSendRecord = {
   /** The negotiation id — the only handle for looking this swap up later. */
@@ -88,6 +89,25 @@ function fundingOutboxKey(ownerKey: string): string {
   return scopeArkadeV4StorageKey(
     `collection:ln-send:${ARKADE_LIGHTNING_SEND_FUNDING_OUTBOX_VERSION}:${ownerHash(ownerKey)}`,
   );
+}
+
+/**
+ * Payment hashes of sends whose record was deleted once settled. A deleted
+ * record is not proof nothing was sent: callers asking "did this wallet ever
+ * send to this invoice" (an eSIM order offering its invoice again) read these
+ * too, so a funded invoice can never be offered for a second payment.
+ */
+function settledHashesKey(ownerKey: string): string {
+  return scopeArkadeV4StorageKey(
+    `collection:ln-send:${ARKADE_LIGHTNING_SEND_SETTLED_HASHES_VERSION}:${ownerHash(ownerKey)}`,
+  );
+}
+
+async function readSettledHashesStrict(ownerKey: string): Promise<string[]> {
+  const raw = await AsyncStorage.getItem(settledHashesKey(ownerKey));
+  if (!raw) return [];
+  const parsed: unknown = JSON.parse(raw);
+  return Array.isArray(parsed) ? parsed.filter((h): h is string => typeof h === "string") : [];
 }
 
 // One writer at a time: a send saving its record while a resume deletes a
@@ -339,10 +359,23 @@ export async function recordArkadeLightningSendFunding(
 
 export function deleteArkadeLightningSend(ownerKey: string, rfqId: string): Promise<void> {
   return enqueue(async () => {
-    const [records, outbox] = await Promise.all([
+    const [records, outbox, settled] = await Promise.all([
       readRecordsForMutation(ownerKey, "delete"),
       readFundingOutboxStrict(ownerKey),
+      readSettledHashesStrict(ownerKey),
     ]);
+    // The payment hash outlives the record, and is written first: if this
+    // write fails the delete aborts and the record (still counted) stays.
+    const hashes = records
+      .filter((item) => item.rfqId === rfqId)
+      .map((item) => String(item.paymentHash || "").toLowerCase())
+      .filter((hash) => hash && !settled.includes(hash));
+    if (hashes.length > 0) {
+      await AsyncStorage.setItem(
+        settledHashesKey(ownerKey),
+        JSON.stringify([...settled, ...hashes]),
+      );
+    }
     await writeRecords(
       ownerKey,
       records.filter((item) => item.rfqId !== rfqId),
@@ -353,4 +386,25 @@ export function deleteArkadeLightningSend(ownerKey: string, rfqId: string): Prom
     }
     pendingFundingTxids.delete(pendingFundingKey(ownerKey, rfqId));
   });
+}
+
+/**
+ * Whether this wallet ever started a Lightning send for `paymentHash`: a send
+ * still on record (written before the passkey prompt, so in-flight and
+ * abandoned sends count) or one settled and deleted. Throws when the store
+ * cannot be read; callers must treat that as "started".
+ */
+export async function hasArkadeLightningSendFor(
+  ownerKey: string,
+  paymentHash: string,
+): Promise<boolean> {
+  const hash = String(paymentHash || "").toLowerCase();
+  const [records, settled] = await Promise.all([
+    readRecordsStrict(ownerKey),
+    readSettledHashesStrict(ownerKey),
+  ]);
+  return (
+    settled.includes(hash) ||
+    records.some((record) => String(record.paymentHash || "").toLowerCase() === hash)
+  );
 }
