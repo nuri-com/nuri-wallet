@@ -10,8 +10,9 @@ import { useNuriTheme, View } from "@ds";
  * the card's padding is the quiet zone. The QR fills the measured inner width,
  * so the tile stays square on every screen size.
  *
- * ponytail / DS deviation: the tile is capped to ~42% of the viewport height so
- * short screens never have to scroll the sheet — it just shrinks. This height
+ * ponytail / DS deviation: the tile is capped to a share of the viewport height
+ * (42% by default) so short screens never have to scroll the sheet — it just
+ * shrinks. A sheet with more under the QR passes a smaller share. This height
  * cap is a plain RN maxWidth wrapper, not a DS primitive; flag for the DS owner
  * to fold into a DS sizing token.
  */
@@ -19,11 +20,12 @@ export default function AddressQrTile({
   value,
   header,
   children,
-}: { value: string; header?: ReactNode; children?: ReactNode }) {
+  maxHeightShare = 0.42,
+}: { value: string; header?: ReactNode; children?: ReactNode; maxHeightShare?: number }) {
   const theme = useNuriTheme();
   const { height } = useWindowDimensions();
   const [side, setSide] = useState(0);
-  const maxSide = Math.round(height * 0.42);
+  const maxSide = Math.round(height * maxHeightShare);
   return (
     <RNView style={{ alignSelf: "center", maxWidth: maxSide, width: "100%" }}>
       {header ? <View paddingBottom="sm">{header}</View> : null}

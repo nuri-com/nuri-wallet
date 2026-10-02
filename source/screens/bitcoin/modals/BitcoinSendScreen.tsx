@@ -8,7 +8,6 @@ import {
   ButtonText,
   Footer,
   Header,
-  IconAvatar,
   IconButton,
   Scroll,
   Text,
@@ -26,6 +25,12 @@ import AddressBookSuggestions, {
 } from "../../../components/AddressBookSuggestions";
 import { recipientWithName, savedContactFor } from "../../../lib/addressBook/contact";
 import AmountKeypad from "../../../components/AmountKeypad";
+import AmountDisplay, {
+  BTC_LOGO,
+  SATS_UNIT,
+  bitcoinSecondaryAmount,
+  fiatImageFor,
+} from "../../../components/AmountDisplay";
 import { useKeypadFit } from "../../../lib/useKeypadFit";
 import { acceptsBitcoinSend } from "../../addressBook/addressBookModel";
 import DsSheetHost from "../../../components/DsSheetHost";
@@ -69,7 +74,7 @@ import { getArkadeOnchainSendMinimumSats } from "../../../services/arkade/Arkade
 import { t } from "../../../lib/i18n";
 import { useCurrencyToggle, useKeypadEntry } from "../../../lib/useCurrencyToggle";
 import { useLiveBtcPrice } from "../../../lib/bitcoin/useLiveBtcPrice";
-import { satsFromAmountEntry, satsToFiat } from "../../../lib/bitcoin/convert";
+import { satsFromAmountEntry } from "../../../lib/bitcoin/convert";
 import { sanitizeDigits, sanitizeFiatDigits } from "../../../lib/sanitizeDigits";
 import { useHomeCurrency } from "../../../lib/currency/useHomeCurrency";
 import { decodeBolt11Facts, isBolt11Invoice } from "../../../lib/bitcoin/lightning";
@@ -110,9 +115,6 @@ import { groupCount } from "../../../lib/formatting";
 
 type Props = BitcoinSendProps;
 
-const BTC_LOGO = require("../../../assets/rails/btc.png");
-const EUR_FLAG = require("../../../assets/flags/eur.png");
-const USD_FLAG = require("../../../assets/flags/usa.png");
 const TZS_FLAG = require("../../../assets/flags/tza.png");
 
 // `availableAtMs` is 0 when the wait could not be derived from the wallet's
@@ -687,13 +689,7 @@ export default function BitcoinSendScreen({
       // Nothing quoted yet is not "0 sats" — a zero here reads as a free send.
       return currentSats > 0 ? groupCount(currentSats) : "\u2014";
     }
-    if (!isSatsMode) {
-      // fiat mode: secondary shows derived sats
-      return groupCount(currentSats);
-    }
-    if (!fiatPerBtc) return "\u2014";
-    const fiat = satsToFiat(currentSats, fiatPerBtc);
-    return fiat === null ? "\u2014" : fiat.toFixed(2);
+    return bitcoinSecondaryAmount(isSatsMode, currentSats, fiatPerBtc);
   }, [isSatsMode, currentSats, fiatPerBtc, isRecipientTzPhone]);
 
   useLiveBtcPrice(visible, fiatCode, satsDigits, fiatDigits, setFiatPerBtc);
@@ -1641,9 +1637,12 @@ export default function BitcoinSendScreen({
     : isSatsMode
       ? groupCount(currentSats)
       : fiatDigits || "0";
-  const fiatImage = fiatCode === "USD" ? USD_FLAG : EUR_FLAG;
+  const fiatImage = fiatImageFor(fiatCode);
   const primaryImage = isRecipientTzPhone ? TZS_FLAG : isSatsMode ? BTC_LOGO : fiatImage;
   const secondaryImage = isRecipientTzPhone ? BTC_LOGO : isSatsMode ? fiatImage : BTC_LOGO;
+  // What a screen reader says after each figure: the images carry the unit visually.
+  const primaryUnit = isRecipientTzPhone ? "TZS" : isSatsMode ? SATS_UNIT : fiatCode;
+  const secondaryUnit = isRecipientTzPhone ? SATS_UNIT : isSatsMode ? fiatCode : SATS_UNIT;
 
   const recipientLooksValid =
     isRecipientBolt11 ||
@@ -1740,7 +1739,7 @@ export default function BitcoinSendScreen({
           gap="sm"
           paddingX="lg"
           paddingTop="lg"
-          paddingBottom="lg"
+          paddingBottom={keypadFit.compact ? "sm" : "lg"}
           fill="grow"
         >
           <View direction="column" align="stretch" justify="start" gap="sm">
@@ -1795,47 +1794,28 @@ export default function BitcoinSendScreen({
             </View>
           ) : (
             <>
-              <View direction="column" align="stretch" justify="center" gap="sm" fill="grow">
-                <View direction="row" align="center" justify="between">
-                  <IconButton
-                    icon="transfer-vertical"
-                    variant="soft"
-                    accessibilityLabel={t("common.swapCurrency")}
-                    // A BOLT11's amount is protocol-fixed and lives in the sats
-                    // field alone. Switching to fiat left the screen and the CTA
-                    // reading zero while the service still paid the invoice's
-                    // real amount — two numbers on one screen, the true one
-                    // invisible. Nothing to switch between, so nothing to press.
-                    disabled={invoiceLockedAmountRef.current || isRecipientTzPhone}
-                    onPress={toggleInputMode}
-                  />
-                  <View direction="row" align="center" justify="end" gap="sm">
-                    <IconAvatar size="sm" source={primaryImage} />
-                    <Text size="3xl" align="end">
-                      {primaryAmount}
-                    </Text>
-                  </View>
-                </View>
-                <View direction="row" align="center" justify="end" gap="xs">
-                  <IconAvatar size="sm" source={secondaryImage} />
-                  <Text size="md" align="end">
-                    {secondaryAmount}
-                  </Text>
-                </View>
-                {errorMessage ? (
-                  <Text size="md" emphasis align="center">
-                    {errorMessage}
-                  </Text>
-                ) : exceedsBalance ? (
-                  <Text size="md" emphasis align="center">
-                    {overBalanceMessage}
-                  </Text>
-                ) : infoMessage ? (
-                  <Text size="md" muted align="center">
-                    {infoMessage}
-                  </Text>
-                ) : null}
-              </View>
+              <AmountDisplay
+                primaryAmount={primaryAmount}
+                primaryImage={primaryImage}
+                primaryUnit={primaryUnit}
+                secondary={{ amount: secondaryAmount, image: secondaryImage, unit: secondaryUnit }}
+                onToggle={toggleInputMode}
+                // A BOLT11's amount is protocol-fixed and lives in the sats
+                // field alone. Switching to fiat left the screen and the CTA
+                // reading zero while the service still paid the invoice's
+                // real amount — two numbers on one screen, the true one
+                // invisible. Nothing to switch between, so nothing to press.
+                toggleDisabled={invoiceLockedAmountRef.current || isRecipientTzPhone}
+                message={
+                  errorMessage
+                    ? { text: errorMessage, tone: "alert" }
+                    : exceedsBalance
+                      ? { text: overBalanceMessage, tone: "alert" }
+                      : infoMessage
+                        ? { text: infoMessage, tone: "info" }
+                        : null
+                }
+              />
 
               {amountEditable ? (
                 <AmountKeypad

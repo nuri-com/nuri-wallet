@@ -8,7 +8,6 @@ import {
   ButtonText,
   Footer,
   Header,
-  IconAvatar,
   IconButton,
   Scroll,
   Text,
@@ -21,6 +20,7 @@ import {
   View,
 } from "@ds";
 
+import AmountDisplay, { EUR_FLAG, USD_FLAG } from "../../../components/AmountDisplay";
 import AmountKeypad from "../../../components/AmountKeypad";
 import { useKeypadFit } from "../../../lib/useKeypadFit";
 import DsSheetHost from "../../../components/DsSheetHost";
@@ -49,9 +49,6 @@ import { startMovePill } from "../../../services/wallet/CardTransferPill";
 import { reportErrorToSupport } from "../../../lib/support/reportErrorToSupport";
 
 type Props = WalletSendStablecoinProps;
-
-const EUR_FLAG = require("../../../assets/flags/eur.png");
-const USD_FLAG = require("../../../assets/flags/usa.png");
 
 const WalletSendStablecoinModal: React.FC<Props> = ({
   visible,
@@ -456,7 +453,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
           justify="between"
           gap="sm"
           paddingX="lg"
-          paddingBottom="lg"
+          paddingBottom={keypadFit.compact ? "sm" : "lg"}
           fill="grow"
         >
           <View direction="column" align="stretch" justify="start" gap="sm">
@@ -506,27 +503,22 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
             />
           </View>
 
-          <View direction="column" align="center" justify="center" gap="sm" fill="grow">
-            {onRecipientStep ? (
-              recipientHint ? (
+          {onRecipientStep ? (
+            <View direction="column" align="center" justify="center" gap="sm" fill="grow">
+              {recipientHint ? (
                 <Text size="md" muted align="center">
                   {recipientHint}
                 </Text>
-              ) : null
-            ) : (
-              <View direction="row" align="center" justify="center" gap="sm">
-                <IconAvatar size="sm" source={token?.code === "USD" ? USD_FLAG : EUR_FLAG} />
-                <Text size="3xl" align="center">
-                  {amount || "0"}
-                </Text>
-              </View>
-            )}
-            {!onRecipientStep && amountHint ? (
-              <Text size="md" muted align="center">
-                {amountHint}
-              </Text>
-            ) : null}
-          </View>
+              ) : null}
+            </View>
+          ) : (
+            <AmountDisplay
+              primaryAmount={amount || "0"}
+              primaryImage={token?.code === "USD" ? USD_FLAG : EUR_FLAG}
+              primaryUnit={token?.code === "USD" ? "USDC" : "EURC"}
+              message={amountHint ? { text: amountHint, tone: "info" } : null}
+            />
+          )}
 
           <View direction="column" align="stretch" justify="end" gap="lg">
             {onRecipientStep ? null : (

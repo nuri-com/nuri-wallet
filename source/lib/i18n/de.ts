@@ -166,13 +166,10 @@ export const de = {
     BitcoinSendScreen: {
       infoBalanceUnavailable: "Walletsaldo nicht verf\u00fcgbar",
       infoFiatPriceUnavailable: "Fiat-Preis fehlt. Betr\u00e4ge nur ungef\u00e4hr.",
-      infoMaxAmountEntered:
-        "Maximal m\u00f6glicher Betrag eingesetzt, damit die Geb\u00fchren gedeckt sind.",
-      fiatPlaceholder: "%{symbol} \u2014",
-      fiatAmount: "%{symbol} %{amount}",
+      infoMaxAmountEntered: "Maximum nach Gebühren.",
       errorInvalidAddress: "G\u00fcltige BTC-Adresse eingeben",
       errorUsernameNotFound: "Kein Nuri-Nutzer mit diesem Namen.",
-      errorUsernameLookupFailed: "Name konnte nicht gepr\u00fcft werden. Bitte erneut versuchen.",
+      errorUsernameLookupFailed: "Name konnte nicht geprüft werden.",
       errorPositiveAmount: "Positiven Betrag",
       errorNoUtxos: "Keine UTXOs verf\u00fcgbar",
       errorMissingAggregatedKey: "Wallet nicht bereit \u2013 Schl\u00fcssel fehlt",
@@ -181,14 +178,10 @@ export const de = {
       errorAmountGreaterThanZero: "Betrag gr\u00f6\u00dfer als 0.",
       errorExceedsBalance: "Betrag \u00fcber Guthaben nach Geb\u00fchren.",
       errorSendFailed: "Etwas ist schiefgelaufen. Bitte erneut versuchen.",
-      errorLightningLockupUnavailable:
-        "Es wurde nichts gesendet, es wurde kein Guthaben bewegt. Lightning-Zahlungen sind derzeit nicht verf\u00fcgbar.",
-      errorOnchainTooFreshHours:
-        "Guthaben kann gerade nicht bewegt werden. Bitte in etwa %{hours}h erneut versuchen.",
-      errorOnchainTooFreshMinutes:
-        "Guthaben kann gerade nicht bewegt werden. Bitte in etwa %{minutes} Min. erneut versuchen.",
-      errorOnchainTooFresh:
-        "Guthaben kann gerade nicht bewegt werden. Bitte später erneut versuchen.",
+      errorLightningLockupUnavailable: "Lightning nicht verfügbar. Nichts gesendet.",
+      errorOnchainTooFreshHours: "Verfügbar in etwa %{hours} Std.",
+      errorOnchainTooFreshMinutes: "Verfügbar in etwa %{minutes} Min.",
+      errorOnchainTooFresh: "Noch nicht verfügbar. Später erneut versuchen.",
       headline: "Bitcoin senden",
       headlineWithBalance: "Bitcoin senden (%{amount} sats)",
       recipientLabel: "Bitcoin-Empf\u00e4nger",
@@ -272,7 +265,6 @@ export const de = {
     },
     LightningInvoiceSheet: {
       title: "Bitcoin-Rechnung erstellen",
-      recipientLabel: "Bitcoin-Empf\u00e4nger",
       create: "Rechnung erstellen",
       creating: "Rechnung wird erstellt…",
       tryAgain: "Erneut versuchen",
@@ -629,7 +621,6 @@ export const de = {
       sendCtaLabel: "%{currency} %{amount} an %{name} senden",
       sendCtaLabelNoAmount: "%{currency} an %{name} senden",
       sendA11yLabel: "Senden",
-      amountA11yLabel: "Betrag in %{currency}",
       insufficientHint: "\u00dcbersteigt das verf\u00fcgbare Guthaben",
       noTokenHint: "Kein Guthaben zum Senden verf\u00fcgbar",
     },
@@ -681,8 +672,7 @@ export const de = {
       sendLabel: "Senden",
       tryAgainLabel: "Erneut versuchen",
       sendA11yLabel: "%{symbol} senden",
-      invalidAddressError:
-        "Gib eine g\u00fcltige 0x-Adresse, einen ENS-Namen oder einen Nuri-Namen ein.",
+      invalidAddressError: "Ungültige Adresse oder ungültiger Name.",
       ensNotFound: "Dieser Name f\u00fchrt zu keiner Adresse.",
       lookupFailed: "Name konnte nicht gepr\u00fcft werden. Bitte erneut versuchen.",
       exceedsBalanceHint: "\u00dcbersteigt das verf\u00fcgbare Guthaben",

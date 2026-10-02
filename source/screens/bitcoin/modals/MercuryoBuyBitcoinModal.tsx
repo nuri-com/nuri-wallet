@@ -8,12 +8,16 @@ import {
   Header,
   IconButton,
   Scroll,
-  Text,
   Topbar,
   TopbarTitle,
   TopbarTrailing,
   View,
 } from "@ds";
+import AmountDisplay, {
+  BTC_LOGO,
+  SATS_UNIT,
+  fiatImageFor,
+} from "../../../components/AmountDisplay";
 import AmountKeypad from "../../../components/AmountKeypad";
 import { useKeypadFit } from "../../../lib/useKeypadFit";
 import DsSheetHost from "../../../components/DsSheetHost";
@@ -244,12 +248,8 @@ const MercuryoBuyBitcoinModal: React.FC<Props> = ({ visible, onClose, bitcoinAdd
     }
   };
 
-  const secondaryText = useMemo(() => {
-    if (loadingPrice || !fiatPerBtc) return "BTC —";
-    return `BTC ${groupCount(satsAmountInt)}`;
-  }, [loadingPrice, fiatPerBtc, satsAmountInt]);
-
-  const fiatSymbol = BUY_FIAT;
+  // A dash while the price is unknown: zero would read as a free purchase.
+  const secondaryAmount = loadingPrice || !fiatPerBtc ? "\u2014" : groupCount(satsAmountInt);
   const handleDigit = (digit: string) => handleChangeText(amount + digit);
   const handleDelete = () => handleChangeText(amount.slice(0, -1));
   return (
@@ -276,22 +276,20 @@ const MercuryoBuyBitcoinModal: React.FC<Props> = ({ visible, onClose, bitcoinAdd
           justify="between"
           gap="lg"
           paddingX="lg"
-          paddingBottom="lg"
+          paddingBottom={keypadFit.compact ? "sm" : "lg"}
           fill="grow"
         >
-          <View direction="column" align="center" justify="center" gap="sm" fill="grow">
-            <Text size="3xl" align="center">
-              {`${fiatSymbol} ${amount || "0"}`}
-            </Text>
-            <Text size="md" muted align="center">
-              {secondaryText}
-            </Text>
-            {!bitcoinAddress ? (
-              <Text size="md" muted align="center">
-                {t("screen.MercuryoBuyBitcoinModal.generateAddressHint")}
-              </Text>
-            ) : null}
-          </View>
+          <AmountDisplay
+            primaryAmount={amount || "0"}
+            primaryImage={fiatImageFor(BUY_FIAT)}
+            primaryUnit={BUY_FIAT}
+            secondary={{ amount: secondaryAmount, image: BTC_LOGO, unit: SATS_UNIT }}
+            message={
+              !bitcoinAddress
+                ? { text: t("screen.MercuryoBuyBitcoinModal.generateAddressHint"), tone: "info" }
+                : null
+            }
+          />
 
           <AmountKeypad compact={keypadFit.compact} onDigit={handleDigit} onDelete={handleDelete} />
         </View>
@@ -301,6 +299,7 @@ const MercuryoBuyBitcoinModal: React.FC<Props> = ({ visible, onClose, bitcoinAdd
         <Button
           size="lg"
           variant="solid"
+          accent="lilac"
           disabled={disabled || isSubmitting}
           onPress={() => void handleBuy()}
           accessibilityLabel={t("screen.MercuryoBuyBitcoinModal.buyBitcoinA11yLabel")}

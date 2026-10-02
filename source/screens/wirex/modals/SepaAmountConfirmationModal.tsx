@@ -7,7 +7,6 @@ import {
   Button,
   Footer,
   Header,
-  IconAvatar,
   IconButton,
   Scroll,
   Text,
@@ -17,6 +16,7 @@ import {
   View,
 } from "@ds";
 
+import AmountDisplay, { EUR_FLAG } from "../../../components/AmountDisplay";
 import AmountKeypad from "../../../components/AmountKeypad";
 import { useKeypadFit } from "../../../lib/useKeypadFit";
 import DsSheetHost from "../../../components/DsSheetHost";
@@ -42,7 +42,6 @@ type Props = {
 };
 
 const CURRENCY_CODE = "EUR";
-const EUR_FLAG = require("../../../assets/flags/eur.png");
 const SepaAmountConfirmationModal: React.FC<Props> = ({
   visible,
   onClose,
@@ -272,7 +271,7 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
           justify="between"
           gap="sm"
           paddingX="lg"
-          paddingBottom="lg"
+          paddingBottom={keypadFit.compact ? "sm" : "lg"}
           fill="grow"
         >
           <View direction="column" align="stretch" justify="start" gap="xl">
@@ -293,25 +292,12 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
             </View>
           </View>
 
-          <View direction="column" align="center" justify="center" gap="sm" fill="grow">
-            <View direction="row" align="center" justify="center" gap="sm">
-              <IconAvatar size="sm" source={EUR_FLAG} />
-              <Text
-                size="3xl"
-                align="center"
-                accessibilityLabel={t("screen.SepaAmountConfirmationModal.amountA11yLabel", {
-                  currency: CURRENCY_CODE,
-                })}
-              >
-                {displayAmount || "0"}
-              </Text>
-            </View>
-            {amountHint ? (
-              <Text size="md" muted align="center">
-                {amountHint}
-              </Text>
-            ) : null}
-          </View>
+          <AmountDisplay
+            primaryAmount={displayAmount || "0"}
+            primaryImage={EUR_FLAG}
+            primaryUnit={CURRENCY_CODE}
+            message={amountHint ? { text: amountHint, tone: "info" } : null}
+          />
 
           <View direction="column" align="stretch" justify="end" gap="lg">
             <AmountKeypad

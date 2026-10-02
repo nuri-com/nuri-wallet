@@ -14,6 +14,7 @@ import "text-encoding";
 import { installDebugLogBuffer } from "./services/logging/DebugLogBuffer";
 import { setLogLevel } from "./lib/log";
 import { installApiProxy } from "./lib/web/apiProxy";
+import { installTextFieldHints } from "./lib/web/textFieldHints";
 
 // Install early so we can ship a useful journey log via support dumps.
 installDebugLogBuffer({ maxEntries: 800, maxEntryChars: 720 });
@@ -31,6 +32,10 @@ globalThis.logLevel = setLogLevel;
 // Web (PWA) only: route backend calls through same-origin /api/* (no CORS).
 // No-op on native. Must run before any service can fire a request.
 installApiProxy();
+
+// Web (PWA) only: no contact AutoFill or autocorrect on data-entry fields.
+// No-op on native.
+installTextFieldHints();
 
 // Use require to ensure our log buffer is installed before App executes.
 const App = require("./App").default;

@@ -16,7 +16,7 @@ import {
   View,
 } from "@ds";
 import { t } from "../lib/i18n";
-import { satsFromAmountEntry, satsToFiat } from "../lib/bitcoin/convert";
+import { satsFromAmountEntry } from "../lib/bitcoin/convert";
 import { useHomeCurrency } from "../lib/currency/useHomeCurrency";
 import { sanitizeDigits, sanitizeFiatDigits } from "../lib/sanitizeDigits";
 import { useCurrencyToggle, useKeypadEntry } from "../lib/useCurrencyToggle";
@@ -24,6 +24,12 @@ import { useLiveBtcPrice } from "../lib/bitcoin/useLiveBtcPrice";
 import { btcSpotPriceService } from "../services/pricing/BtcSpotPriceService";
 import AddressQrTile from "./AddressQrTile";
 import AmountKeypad from "./AmountKeypad";
+import AmountDisplay, {
+  BTC_LOGO,
+  SATS_UNIT,
+  bitcoinSecondaryAmount,
+  fiatImageFor,
+} from "./AmountDisplay";
 import { useKeypadFit } from "../lib/useKeypadFit";
 import DsSheetHost from "./DsSheetHost";
 import { groupCount } from "../lib/formatting";
@@ -166,20 +172,15 @@ const LightningInvoiceSheet: React.FC<Props> = ({
     return satsFromAmountEntry(isSatsMode, satsDigits, fiatDigits, fiatPerBtc);
   }, [isSatsMode, satsDigits, fiatDigits, fiatPerBtc]);
 
-  const primaryAmount = isSatsMode
-    ? `BTC ${satsDigits || "0"}`
-    : `${fiatSymbol} ${fiatDigits || "0"}`;
-  const secondaryAmountText = useMemo(() => {
-    if (!isSatsMode) return `BTC ${groupCount(currentSats)}`;
-    const placeholder = t("screen.BitcoinSendScreen.fiatPlaceholder", { symbol: fiatSymbol });
-    if (!fiatPerBtc) return placeholder;
-    const fiat = satsToFiat(currentSats, fiatPerBtc);
-    if (fiat === null) return placeholder;
-    return t("screen.BitcoinSendScreen.fiatAmount", {
-      symbol: fiatSymbol,
-      amount: fiat.toFixed(2),
-    });
-  }, [isSatsMode, currentSats, fiatPerBtc, fiatSymbol]);
+  // Same figures and images as the Bitcoin send screen (AmountDisplay).
+  const primaryAmount = isSatsMode ? groupCount(currentSats) : fiatDigits || "0";
+  const secondaryAmount = useMemo(
+    () => bitcoinSecondaryAmount(isSatsMode, currentSats, fiatPerBtc),
+    [isSatsMode, currentSats, fiatPerBtc],
+  );
+  const fiatImage = fiatImageFor(fiatSymbol);
+  const primaryImage = isSatsMode ? BTC_LOGO : fiatImage;
+  const secondaryImage = isSatsMode ? fiatImage : BTC_LOGO;
 
   const parsedAmount =
     Number.isFinite(currentSats) && currentSats > 0 ? Math.trunc(currentSats) : 0;
@@ -262,44 +263,24 @@ const LightningInvoiceSheet: React.FC<Props> = ({
 
   const renderEntering = () => (
     <>
-      <View
-        variant="soft"
-        radius="md"
-        paddingX="lg"
-        paddingY="md"
-        direction="column"
-        align="stretch"
-        gap="xs"
-      >
-        <Text size="sm" muted>
-          {t("screen.LightningInvoiceSheet.recipientLabel")}
-        </Text>
-        <Text size="sm" mono flow="truncate" lines={1}>
+      <View variant="soft" radius="md" paddingX="lg" paddingY="md" align="stretch">
+        <Text size="sm" mono muted flow="truncate" lines={1}>
           {lightningAddress ?? ""}
         </Text>
       </View>
 
-      <View direction="column" align="stretch" justify="center" gap="sm" fill="grow">
-        <View direction="row" align="center" justify="between">
-          <IconButton
-            icon="transfer-vertical"
-            variant="soft"
-            accessibilityLabel={t("common.swapCurrency")}
-            onPress={handleAmountToggle}
-          />
-          <Text size="3xl" align="end">
-            {primaryAmount}
-          </Text>
-        </View>
-        <Text size="md" align="end">
-          {secondaryAmountText}
-        </Text>
-        {amountProblemText ? (
-          <Text size="sm" align="end" accent="orange">
-            {amountProblemText}
-          </Text>
-        ) : null}
-      </View>
+      <AmountDisplay
+        primaryAmount={primaryAmount}
+        primaryImage={primaryImage}
+        primaryUnit={isSatsMode ? SATS_UNIT : fiatSymbol}
+        secondary={{
+          amount: secondaryAmount,
+          image: secondaryImage,
+          unit: isSatsMode ? fiatSymbol : SATS_UNIT,
+        }}
+        onToggle={handleAmountToggle}
+        message={amountProblemText ? { text: amountProblemText, tone: "alert" } : null}
+      />
 
       <AmountKeypad
         compact={keypadFit.compact}
@@ -319,10 +300,8 @@ const LightningInvoiceSheet: React.FC<Props> = ({
   );
 
   const renderReady = (ready: Extract<SheetState, { kind: "ready" }>) => {
-    // Pure sats, no thousand separators — same as the Bitcoin send screen.
-    const satsAmount = String(Math.max(0, Math.trunc(ready.amountSats)));
-    const fiatAmount = fiatPerBtc != null ? satsToFiat(ready.amountSats, fiatPerBtc) : null;
-    const fiatDisplay = fiatAmount != null ? `${fiatSymbol} ${fiatAmount.toFixed(2)}` : null;
+    // The invoice's fixed amount, shown the way the entry screen shows it.
+    const readySats = Math.max(0, Math.trunc(ready.amountSats));
 
     return (
       <>
@@ -353,15 +332,27 @@ const LightningInvoiceSheet: React.FC<Props> = ({
         </View>
 
         <View direction="column" align="stretch" justify="center" gap="md" fill="grow">
-          <AddressQrTile value={ready.invoice} />
-          <View direction="column" align="center">
-            <Text size="3xl" align="center">{`BTC ${satsAmount}`}</Text>
-            {fiatDisplay ? (
-              <Text size="md" muted align="center">
-                {`≈ ${fiatDisplay}`}
-              </Text>
-            ) : null}
-          </View>
+          {/* The amount block under the QR is the entry screen's, so the tile
+              leaves it room: on an iPhone SE the default share hid it under
+              the Share button. */}
+          <AddressQrTile value={ready.invoice} maxHeightShare={0.28}>
+            {/* The button is always the last thing on the sheet, so the expiry
+                sits with the invoice it describes. */}
+            <Text size="sm" muted align="center">
+              {t("screen.LightningInvoiceSheet.expiresShort")}
+            </Text>
+          </AddressQrTile>
+          <AmountDisplay
+            fill={false}
+            primaryAmount={groupCount(readySats)}
+            primaryImage={BTC_LOGO}
+            primaryUnit={SATS_UNIT}
+            secondary={{
+              amount: bitcoinSecondaryAmount(true, readySats, fiatPerBtc),
+              image: fiatImageFor(fiatSymbol),
+              unit: fiatSymbol,
+            }}
+          />
         </View>
       </>
     );
@@ -433,19 +424,14 @@ const LightningInvoiceSheet: React.FC<Props> = ({
             <ButtonText>{t("screen.LightningInvoiceSheet.tryAgain")}</ButtonText>
           </Button>
         ) : (
-          <View direction="column" align="stretch" gap="sm">
-            <Button
-              size="lg"
-              variant="solid"
-              accent="lilac"
-              onPress={() => void handleShareInvoice()}
-            >
-              <ButtonText>{t("common.share")}</ButtonText>
-            </Button>
-            <Text size="sm" muted align="center">
-              {t("screen.LightningInvoiceSheet.expiresShort")}
-            </Text>
-          </View>
+          <Button
+            size="lg"
+            variant="solid"
+            accent="lilac"
+            onPress={() => void handleShareInvoice()}
+          >
+            <ButtonText>{t("common.share")}</ButtonText>
+          </Button>
         );
       case "error":
         return (
@@ -477,10 +463,15 @@ const LightningInvoiceSheet: React.FC<Props> = ({
           onLayout={keypadFit.onContentLayout}
           direction="column"
           align="stretch"
-          justify="start"
-          gap="lg"
+          justify="between"
+          // The send screen's spacing, so the two amount screens line up and the
+          // keypad fits an iPhone SE.
+          gap={state.kind === "entering" ? "sm" : "lg"}
           paddingX="lg"
-          paddingBottom="lg"
+          paddingTop="lg"
+          // Only the keypad screen trades bottom room for fitting; the created
+          // invoice keeps the full gap above its button.
+          paddingBottom={state.kind === "entering" && keypadFit.compact ? "sm" : "lg"}
           fill="grow"
         >
           {renderBody()}
