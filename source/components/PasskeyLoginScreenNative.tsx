@@ -2,10 +2,12 @@
 // biome-ignore lint/correctness/noUnusedImports: React needed for JSX fragments
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WALLET_RP_ID } from "../config/passkey";
 import { normalizePrfOutput, zeroize } from "../lib/crypto";
 import { t } from "../lib/i18n";
 import { formatWalletPasskeyLabel } from "../lib/passkeyLabels";
+import { resolveActionsBottom } from "../lib/passkeyActionsLayout";
 import { getBitcoinAddress } from "../lib/secureKeyStorage";
 import {
   arkadeBootstrapClaimAuth,
@@ -48,6 +50,13 @@ export default function PasskeyLoginScreenNative({
   onAttemptStart,
 }: Props) {
   const prfRef = useRef<Uint8Array | null>(null);
+  // The actions block is absolutely positioned, so it paints under the system
+  // navigation bar unless we add its inset. On a 3-button nav bar that is 126px
+  // (42dp @ 420dpi), which swallowed the whole "Use existing Passkey" row.
+  // Same Math.max(inset, MIN) shape UsernameOnboardingScreen already uses, so
+  // gesture-nav devices (small inset) keep the original 32px breathing room.
+  const insets = useSafeAreaInsets();
+  const actionsBottom = resolveActionsBottom(insets.bottom);
   const targetedAutoStartRef = useRef<string | null>(null);
   const [targetedAction, setTargetedAction] = useState<TargetedAction>({ kind: "checking" });
   const [busy, setBusy] = useState(false);
@@ -387,7 +396,7 @@ export default function PasskeyLoginScreenNative({
     const disabled = busy || !["sign-in", "claim"].includes(targetedAction.kind);
 
     return (
-      <View style={styles.actions}>
+      <View style={[styles.actions, { bottom: actionsBottom }]}>
         <Button
           size="lg"
           variant="solid"
@@ -411,7 +420,7 @@ export default function PasskeyLoginScreenNative({
 
   return (
     <>
-      <View style={styles.actions}>
+      <View style={[styles.actions, { bottom: actionsBottom }]}>
         <Button
           size="lg"
           variant="solid"
@@ -457,7 +466,6 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 16,
     right: 16,
-    bottom: 32,
     gap: 16,
     zIndex: 3,
   },

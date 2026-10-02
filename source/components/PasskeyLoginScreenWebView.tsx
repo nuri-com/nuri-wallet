@@ -34,7 +34,7 @@ const buildHtml = (
     <title>Stateless Bitcoin Passkey</title>
     <style>
       body { margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif; background: transparent; display:flex; flex-direction:column; justify-content:flex-end; height:100vh; }
-      .bar { padding:16px 16px 32px 16px; position:relative; }
+      .bar { padding:16px 16px calc(32px + env(safe-area-inset-bottom, 0px)) 16px; position:relative; }
       button { width:100%; padding:0 32px; min-height:48px; border-radius:100px; border:none; font-size:16px; margin:0 0 12px 0; font-weight:600; display:flex; align-items:center; justify-content:center; color:${colors.pillFg}; box-sizing:border-box; outline:none; -webkit-tap-highlight-color:transparent; }
       button:focus, button:focus-visible { outline:none; }
       #create { background:${colors.pillBg}; }
