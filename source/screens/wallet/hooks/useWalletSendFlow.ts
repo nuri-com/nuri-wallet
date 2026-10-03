@@ -97,10 +97,13 @@ export function useWalletSendFlow(p?: Params) {
       setSendToWalletRail(rail ?? null);
       setSendToWalletIsCard(false);
       setShowWalletScan(false);
-      setIsSendToWalletVisible(true);
+      // Let the scanner close before its replacement enters the shared overlay.
+      // Opening both in one tick can make the closing scanner tear down the send
+      // sheet on web, dropping the recipient and amount it was meant to show.
+      scheduleModalHandoff(() => setIsSendToWalletVisible(true));
       return true;
     },
-    [],
+    [scheduleModalHandoff],
   );
 
   /**
