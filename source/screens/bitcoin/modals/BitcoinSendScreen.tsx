@@ -70,7 +70,11 @@ import { isUserCancelledAuth } from "../../../lib/support/isUserCancelledAuth";
 import { isArkadeMaxSendAmountError } from "../../../services/arkade/internal/maxSendAmount";
 import { isArkadeVtxoTooFreshError } from "../../../services/arkade/internal/settlementExpiryGap";
 import { getArkadeWalletSummary } from "../../../services/arkade/ArkadeWalletService";
-import { getArkadeOnchainSendMinimumSats } from "../../../services/arkade/ArkadeSendService";
+import {
+  getArkadeArkSendMinimumSats,
+  getArkadeOnchainSendMinimumSats,
+} from "../../../services/arkade/ArkadeSendService";
+import { isBelowVtxoMinimum } from "../../../services/arkade/internal/sendMinimums";
 import { t } from "../../../lib/i18n";
 import { useCurrencyToggle, useKeypadEntry } from "../../../lib/useCurrencyToggle";
 import { useLiveBtcPrice } from "../../../lib/bitcoin/useLiveBtcPrice";
@@ -106,7 +110,7 @@ import {
   normalizeLightningInput,
   resolveLnurlPayRequest,
 } from "../../../services/bitcoin/LnurlService";
-import { toNuriUsername } from "../../../lib/pay/nuriUsername";
+import { isNuriLightningAddress, toNuriUsername } from "../../../lib/pay/nuriUsername";
 import { resolvePayRecipient } from "../../../lib/pay/resolvePayRecipient";
 import { nuriUsernameDestination } from "../../../lib/pay/nuriUsernameDestination";
 import { createRecipientLookupGate } from "../../../lib/pay/recipientLookupGate";
@@ -180,6 +184,9 @@ export default function BitcoinSendScreen({
   // without a release, and a hardcoded figure here refuses sends the server
   // would accept.
   const [onchainMinSats, setOnchainMinSats] = useState(ARKADE_BITCOIN_ONCHAIN_MIN_SEND_SATS);
+  // The node's floor for an ark-to-ark send (a new VTXO), read live. Null until
+  // the node answers; the send re-reads it and refuses on its own.
+  const [arkMinSats, setArkMinSats] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [localAmountLocked, setLocalAmountLocked] = useState(false);
@@ -220,7 +227,8 @@ export default function BitcoinSendScreen({
   // user opened this from the on-chain row.
   const recipientIsLightning = useMemo(() => {
     const normalized = normalizeLightningInput(toAddress.trim());
-    if (isBolt11Invoice(normalized) || isLnurlPaymentInput(normalized)) return true;
+    if (isBolt11Invoice(normalized)) return true;
+    if (isLnurlPaymentInput(normalized) && !isNuriLightningAddress(normalized)) return true;
     // A phone number is paid by minting a BOLT11 for it at confirm time, so it
     // is a Lightning recipient for every purpose this flag governs — which
     // balance the screen reads, holds and spends from.
@@ -453,11 +461,42 @@ export default function BitcoinSendScreen({
   // If the caller provides a preset address when opening, reflect it in the
   // field. An explicit empty string is authoritative (clears the field for the
   // manual recipient-entry path); `undefined` means "no preset".
+  //
+  // A scanned or handed-over `name@nuri.com` is a Nuri user whose Lightning
+  // address cannot receive yet: it is swapped for the address the directory
+  // lists for this sheet's rail, as a typed username is on Next.
   useEffect(() => {
     if (visible && typeof presetAddress === "string") {
       setToAddress(presetAddress.trim());
     }
   }, [visible, presetAddress]);
+  // Declared after the effect that invalidates the lookup gate on every
+  // recipient change, so this lookup's ticket is taken after that reset.
+  useEffect(() => {
+    if (!visible || typeof presetAddress !== "string") return;
+    const preset = presetAddress.trim();
+    if (toAddress.trim() !== preset) return;
+    const username = isNuriLightningAddress(preset) ? toNuriUsername(preset) : null;
+    if (!username) return;
+    const ticket = usernameLookupGate.current.begin(preset);
+    const stillCurrent = () => usernameLookupGate.current.isCurrent(ticket, toAddressRef.current);
+    setResolvingUsername(true);
+    setErrorMessage(null);
+    void resolvePayRecipient(username)
+      .then((recipient) => {
+        if (!stillCurrent()) return;
+        const destination = nuriUsernameDestination(recipient, sendSource);
+        if (destination) setToAddress(destination);
+        else setErrorMessage(t("screen.BitcoinSendScreen.errorUsernameNotFound"));
+      })
+      .catch(() => {
+        if (stillCurrent())
+          setErrorMessage(t("screen.BitcoinSendScreen.errorUsernameLookupFailed"));
+      })
+      .finally(() => {
+        if (stillCurrent()) setResolvingUsername(false);
+      });
+  }, [visible, presetAddress, toAddress, sendSource]);
   useEffect(() => {
     if (!visible) {
       return;
@@ -525,6 +564,11 @@ export default function BitcoinSendScreen({
         if (mounted && Number.isFinite(min) && min > 0) setOnchainMinSats(Math.trunc(min));
       })
       .catch(() => {});
+    void getArkadeArkSendMinimumSats()
+      .then((min: number | null) => {
+        if (mounted && min !== null) setArkMinSats(min);
+      })
+      .catch(() => {});
     return () => {
       mounted = false;
     };
@@ -572,7 +616,10 @@ export default function BitcoinSendScreen({
   const trimmedToAddress = toAddress.trim();
   const normalizedRecipient = normalizeLightningInput(trimmedToAddress);
   const isRecipientBolt11 = isBolt11Invoice(normalizedRecipient);
-  const isRecipientLnurl = isLnurlPaymentInput(normalizedRecipient);
+  // `name@nuri.com` is a Nuri user, paid at their Arkade address: their
+  // Lightning address cannot receive yet, so it never selects the LN rail.
+  const isRecipientLnurl =
+    isLnurlPaymentInput(normalizedRecipient) && !isNuriLightningAddress(normalizedRecipient);
   const isRecipientBitcoinAddress = isValidBitcoinAddressMainnet(trimmedToAddress);
   const isRecipientArk = isArkAddress(trimmedToAddress);
   // The recipient as the corridor is asked for it: E.164, or null when this is
@@ -821,7 +868,10 @@ export default function BitcoinSendScreen({
         return;
       }
       const isBolt11 = !isArk && isBolt11Invoice(lightningRequest);
-      const isLnurl = !isArk && isLnurlPaymentInput(lightningRequest);
+      const isLnurl =
+        !isArk &&
+        isLnurlPaymentInput(lightningRequest) &&
+        !isNuriLightningAddress(lightningRequest);
       // Read again here rather than from render state: this runs after an await
       // chain, and the rail that gets paid must be the one this string names.
       const remitRecipient = isArk ? null : normalizeTanzanianMobileNumber(addr);
@@ -843,6 +893,17 @@ export default function BitcoinSendScreen({
           `🔐 STEP Arkade_v4=1 step=wallet_send_confirm_blocked status=blocked why=amount_required target=${isLnurl ? "lnurl" : "bitcoin_onchain"} expected_next=user_enters_amount src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
         );
         setErrorMessage(t("screen.BitcoinSendScreen.errorAmountGreaterThanZero"));
+        return;
+      }
+      // An ark recipient gets a new VTXO, which the node refuses below its floor.
+      // Say the floor here instead of after the passkey prompt.
+      if (isArk && isBelowVtxoMinimum(currentSats, arkMinSats)) {
+        log(
+          `🔐 STEP Arkade_v4=1 step=wallet_send_confirm_blocked status=blocked why=below_vtxo_minimum sats=${currentSats} min_sats=${arkMinSats} target=ark_send expected_next=user_enters_minimum_amount src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
+        );
+        setErrorMessage(
+          t("screen.BitcoinSendScreen.minimumSatsLabel", { amount: String(arkMinSats) }),
+        );
         return;
       }
       // A send above the spendable figure fails at settlement, after a passkey
@@ -1301,6 +1362,7 @@ export default function BitcoinSendScreen({
     balanceSats,
     isRecipientBitcoinAddress,
     onchainMinSats,
+    arkMinSats,
     lnurlMaxSats,
     // The shilling figure the invoice is minted for. Without it here, confirm
     // would close over the amount as it stood when the recipient was entered.
@@ -1423,6 +1485,7 @@ export default function BitcoinSendScreen({
     !isRecipientLnurl &&
     currentSats > 0 &&
     currentSats < onchainMinSats;
+  const isBelowArkSendMinimum = isRecipientArk && isBelowVtxoMinimum(currentSats, arkMinSats);
 
   // Pull the LNURL pay request when the recipient is a lightning address /
   // LNURL, then enforce max(LNURL min, our floor) and pre-fill the amount to
@@ -1609,25 +1672,29 @@ export default function BitcoinSendScreen({
             ? t("screen.BitcoinSendScreen.minimumSatsLabel", {
                 amount: String(onchainMinSats),
               })
-            : isBelowLnurlMinimum && lnurlMinFloorSats != null
+            : isBelowArkSendMinimum && arkMinSats !== null
               ? t("screen.BitcoinSendScreen.minimumSatsLabel", {
-                  amount: String(lnurlMinFloorSats),
+                  amount: String(arkMinSats),
                 })
-              : isAboveLightningMaximum
-                ? t("screen.BitcoinSendScreen.maximumSatsLabel", {
-                    amount: groupCount(lightningMaxCeilingSats),
+              : isBelowLnurlMinimum && lnurlMinFloorSats != null
+                ? t("screen.BitcoinSendScreen.minimumSatsLabel", {
+                    amount: String(lnurlMinFloorSats),
                   })
-                : // On the phone rail the first press only fetches the corridor's
-                  // real price: the quote under it excludes the corridor fee, so
-                  // nothing payable has been named yet. The button says that
-                  // rather than offering a "Confirm" for a figure about to change.
-                  isRecipientTzPhone && !remitPendingInvoice && currentSats > 0
-                  ? t("screen.BitcoinSendScreen.ctaGetQuote")
-                  : currentSats > 0
-                    ? t("screen.BitcoinSendScreen.ctaConfirmWithFee", {
-                        total: groupCount(currentSats + estimatedFeeSats),
-                      })
-                    : t("screen.BitcoinSendScreen.ctaConfirm");
+                : isAboveLightningMaximum
+                  ? t("screen.BitcoinSendScreen.maximumSatsLabel", {
+                      amount: groupCount(lightningMaxCeilingSats),
+                    })
+                  : // On the phone rail the first press only fetches the corridor's
+                    // real price: the quote under it excludes the corridor fee, so
+                    // nothing payable has been named yet. The button says that
+                    // rather than offering a "Confirm" for a figure about to change.
+                    isRecipientTzPhone && !remitPendingInvoice && currentSats > 0
+                    ? t("screen.BitcoinSendScreen.ctaGetQuote")
+                    : currentSats > 0
+                      ? t("screen.BitcoinSendScreen.ctaConfirmWithFee", {
+                          total: groupCount(currentSats + estimatedFeeSats),
+                        })
+                      : t("screen.BitcoinSendScreen.ctaConfirm");
 
   // The phone rail reads the other way round from every other one: the figure
   // the user chose is the shilling amount, and the sats underneath are what the
@@ -1852,6 +1919,7 @@ export default function BitcoinSendScreen({
               exceedsBalance ||
               exceedsSettleableForOffboard ||
               isBelowArkadeOnchainMinimum ||
+              isBelowArkSendMinimum ||
               isBelowLnurlMinimum ||
               isAboveLightningMaximum ||
               invoiceUnpayable ||

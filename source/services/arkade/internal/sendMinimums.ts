@@ -35,6 +35,24 @@ export function requireVtxoMinimumSats(info: NodeAmountFields | null | undefined
   return min;
 }
 
+/**
+ * The same floor for a screen to state before Confirm, or null when the node
+ * cannot be read. Null keeps the button free; `requireVtxoMinimumSats` still
+ * refuses at send time, so an unknown floor never lets a send through.
+ */
+export function vtxoMinimumSatsOrNull(info: NodeAmountFields | null | undefined): number | null {
+  try {
+    return requireVtxoMinimumSats(info);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a typed amount sits under a known floor. Zero is "nothing typed yet". */
+export function isBelowVtxoMinimum(sats: number, minSats: number | null): boolean {
+  return minSats !== null && sats > 0 && sats < minSats;
+}
+
 /** Refuse an amount the node's floor already rules out, naming both figures. */
 export function assertMeetsVtxoMinimum(sats: number, minSats: number): void {
   if (sats < minSats) {

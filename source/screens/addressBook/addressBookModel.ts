@@ -7,6 +7,7 @@ import {
   MAX_DESTINATIONS,
   normalizeDestination,
 } from "../../lib/addressBook/contact";
+import { isNuriLightningAddress } from "../../lib/pay/nuriUsername";
 import { isValidEvmAddress } from "../../lib/validation";
 
 /** Which existing send flow a destination opens in, and with what. */
@@ -48,6 +49,9 @@ export function routeDestination(destination: Destination, contactLabel = ""): S
       }
       return { kind: "unsupported", reason: "network" };
     case "lightning":
+      // A Nuri user's `@nuri.com` address cannot receive (no Lightning receive
+      // today), so a contact saved with one before is paid at its other rails.
+      if (isNuriLightningAddress(destination.raw)) return { kind: "unsupported", reason: "rail" };
       return { kind: "bitcoin", target: destination.raw, rail: "arkade" };
     case "bank":
       return {
@@ -119,7 +123,8 @@ export function destinationSummary(destination: Destination): string {
   }
 }
 
-/** Saved destinations the Bitcoin send screen can pay (onchain, Arkade, Lightning). */
+/**
+ * Saved destinations the Bitcoin send screen can pay (onchain, Arkade, Lightning). */
 export function acceptsBitcoinSend(destination: Destination): boolean {
   return routeDestination(destination).kind === "bitcoin";
 }
@@ -319,13 +324,16 @@ export type NuriUserRails = {
 };
 
 /**
- * Every destination a Nuri user can be paid at: their Lightning address, their
- * one EVM address (euro or dollar), their Arkade and Bitcoin addresses. Only
- * what the directory actually lists.
+ * Every destination a Nuri user can be paid at: their one EVM address (euro or
+ * dollar), their Arkade and Bitcoin addresses. Only what the directory actually
+ * lists. Their `@nuri.com` Lightning address is left out: Lightning receive is
+ * not available, so a payment to it cannot arrive.
  */
 export function destinationsFromNuriUser(rails: NuriUserRails): Destination[] {
   const out: Destination[] = [];
-  if (rails.lightningAddress) out.push({ type: "lightning", raw: rails.lightningAddress });
+  if (rails.lightningAddress && !isNuriLightningAddress(rails.lightningAddress)) {
+    out.push({ type: "lightning", raw: rails.lightningAddress });
+  }
   if (rails.evmAddress) {
     out.push({ type: "crypto", raw: rails.evmAddress, network: "evm", asset: "ANY" });
   }

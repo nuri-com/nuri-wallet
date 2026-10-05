@@ -32,7 +32,11 @@ import {
   rememberSettlementMinExpiryGapMs,
 } from "./internal/vtxoSettleability";
 import { grossUpOffboardSats } from "./internal/offboardGrossUp";
-import { assertMeetsVtxoMinimum, requireVtxoMinimumSats } from "./internal/sendMinimums";
+import {
+  assertMeetsVtxoMinimum,
+  requireVtxoMinimumSats,
+  vtxoMinimumSatsOrNull,
+} from "./internal/sendMinimums";
 import { createArkadeServerSwapIntent } from "./internal/swapIntents";
 import { truncateForLog } from "./internal/utils";
 import { getOrCreateWallet } from "./internal/walletCache";
@@ -74,6 +78,18 @@ export async function getArkadeOnchainSendMinimumSats(): Promise<number> {
   return Number.isFinite(serverMinSats) && serverMinSats > 0
     ? Math.trunc(serverMinSats)
     : ARKADE_OFFBOARD_FALLBACK_MIN_SATS;
+}
+
+/**
+ * The smallest ark-to-ark send the node accepts (its `vtxoMinAmount`), read
+ * live, or null when the node cannot be read. The send itself re-reads it and
+ * fails closed, so null only means the screen has no figure to state.
+ */
+export async function getArkadeArkSendMinimumSats(): Promise<number | null> {
+  const info = await fetchArkNodeInfoWithRetry(
+    arkadeServerConfigService.getArkadeNodeUrl().replace(/\/+$/, ""),
+  ).catch((): null => null);
+  return vtxoMinimumSatsOrNull(info);
 }
 
 /**

@@ -14,6 +14,19 @@ import { isEnsName } from "../qr/resolveEns";
 const LIGHTNING_SUFFIX = "@nuri.com";
 const ENS_SUFFIX = `.${ENS_PARENT_DOMAIN}`;
 
+/**
+ * A Nuri user's own `<name>@nuri.com` Lightning address. Lightning receive is
+ * not available, so a payment to one cannot arrive: it is never offered or paid
+ * as Lightning; the name it carries is paid at the user's Arkade address.
+ */
+export function isNuriLightningAddress(input: string): boolean {
+  const value = String(input || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^lightning:/, "");
+  return value.endsWith(LIGHTNING_SUFFIX) && toNuriUsername(value) !== null;
+}
+
 export function toNuriUsername(input: string): string | null {
   let value = String(input || "")
     .trim()
