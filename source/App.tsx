@@ -24,6 +24,7 @@ import { runLegacyArkadeRefunds } from "./services/swapkit/SwapKitLegacyArkadeRe
 import { discardUnsignedV2CommitIntents } from "./services/swapkit/SwapKitV2OrderStore";
 import { observeAppViewportHeight } from "./lib/web/appViewportHeight";
 import { revealFocusedField } from "./lib/web/focusedFieldReveal";
+import { installDocumentPanGuard } from "./lib/web/documentPanGuard";
 import { hydrateAndResumeMercuryoOrders } from "./services/mercuryo/MercuryoPendingTracker";
 import {
   DEBUG_UI_ENABLED,
@@ -275,6 +276,20 @@ export default function App() {
       observeAppViewportHeight(typeof window === "undefined" ? undefined : window, () => {
         revealFocusedField(document, (element) => getComputedStyle(element as Element).overflowY);
       }),
+    [],
+  );
+  // With the keyboard open the browser can still pan the whole locked page
+  // (lib/web/documentPanGuard): a drag that no app scroller can take is
+  // cancelled, so a screen that fits does not move. No-op on native.
+  useEffect(
+    () =>
+      installDocumentPanGuard(
+        typeof document === "undefined" ? undefined : (document as never),
+        (element) => {
+          const style = getComputedStyle(element as unknown as Element);
+          return { x: style.overflowX, y: style.overflowY };
+        },
+      ),
     [],
   );
   return payLinkUsername ? <PayLinkApp username={payLinkUsername} /> : <WalletApp />;
