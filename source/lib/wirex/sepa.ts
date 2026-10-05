@@ -23,3 +23,19 @@ export function pickSepaDebitToken(balances: WirexTokenBalance[]): SepaDebitToke
   if (eur.length) return eur[0];
   return usable.sort((a, b) => b.balance - a.balance)[0];
 }
+
+// What a SEPA estimate will take from the debit token, fee included. Wirex's
+// `estimated_amounts[].amount` is the full token debit: a 0.10 EUR quote came
+// back as 0.1005 WEUR with a 0.0005 fee. The amount the user typed is NOT the
+// debit, so a send of the whole balance fails `insufficient_funds` (#1536).
+// Null when the estimate names no usable figure for this token.
+export function sepaEstimateDebit(raw: unknown, tokenAddress: string): number | null {
+  const list = (raw as { estimated_amounts?: unknown } | null)?.estimated_amounts;
+  if (!Array.isArray(list)) return null;
+  const want = tokenAddress.toLowerCase();
+  const entry = list.find(
+    (item) => typeof item?.token_address === "string" && item.token_address.toLowerCase() === want,
+  ) as { amount?: unknown } | undefined;
+  const debit = Number(entry?.amount);
+  return Number.isFinite(debit) && debit > 0 ? debit : null;
+}

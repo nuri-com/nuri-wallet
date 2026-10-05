@@ -623,6 +623,11 @@ export const de = {
       sendA11yLabel: "Senden",
       insufficientHint: "\u00dcbersteigt das verf\u00fcgbare Guthaben",
       noTokenHint: "Kein Guthaben zum Senden verf\u00fcgbar",
+      feeHint: "Nicht genug f\u00fcr die Geb\u00fchr. Versuche einen kleineren Betrag.",
+      feeHintWithMax:
+        "Nicht genug f\u00fcr die Geb\u00fchr. Du kannst bis zu %{amount} EUR senden.",
+      sendFailedHint:
+        "Die \u00dcberweisung ging nicht durch. Pr\u00fcfe deine Aktivit\u00e4t, bevor du es erneut versuchst.",
     },
     Wirex3dsApproval: {
       title: "Kartenzahlung best\u00e4tigen",

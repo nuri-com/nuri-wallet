@@ -616,6 +616,9 @@ export const en = {
       sendA11yLabel: "Send",
       insufficientHint: "Exceeds available balance",
       noTokenHint: "No funds available to send",
+      feeHint: "Not enough to cover the fee. Try a smaller amount.",
+      feeHintWithMax: "Not enough to cover the fee. You can send up to %{amount} EUR.",
+      sendFailedHint: "The transfer did not go through. Check your activity before trying again.",
     },
     Wirex3dsApproval: {
       title: "Confirm Card Payment",

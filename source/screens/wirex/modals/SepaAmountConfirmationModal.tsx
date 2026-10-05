@@ -24,7 +24,7 @@ import { formatIbanForDisplay } from "../../../lib/ibanFormat";
 import { t } from "../../../lib/i18n";
 
 import { wirexService } from "../../../services/wirex/WirexService";
-import { pickSepaDebitToken } from "../../../lib/wirex/sepa";
+import { pickSepaDebitToken, sepaEstimateDebit } from "../../../lib/wirex/sepa";
 
 type DebitToken = { tokenAddress: string; tokenSymbol: string; balance: number };
 
@@ -42,6 +42,15 @@ type Props = {
 };
 
 const CURRENCY_CODE = "EUR";
+
+// The fee is debit - amount. A euro token debits 1:1, so the largest amount
+// that fits is the balance minus that fee; other tokens convert at a rate, so
+// only the plain hint applies there.
+function feeShortfallHint(balance: number, debit: number, amount: number, symbol: string): string {
+  const max = Math.floor((balance - (debit - amount)) * 100) / 100;
+  if (!/EUR/i.test(symbol) || !(max > 0)) return t("screen.SepaAmountConfirmationModal.feeHint");
+  return t("screen.SepaAmountConfirmationModal.feeHintWithMax", { amount: max.toFixed(2) });
+}
 const SepaAmountConfirmationModal: React.FC<Props> = ({
   visible,
   onClose,
@@ -59,6 +68,9 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
   // A short screen compacts the keypad before it scrolls.
   const keypadFit = useKeypadFit();
   const [debitToken, setDebitToken] = useState<DebitToken | null>(null);
+  // Why the last Send did not go out. Shown under the amount; the sheet stays
+  // open so the user can correct the amount instead of guessing (#1536).
+  const [sendError, setSendError] = useState<string | null>(null);
   const amountEditable = !submitting;
 
   const recipientLabel = useMemo(() => {
@@ -75,6 +87,7 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
       return;
     }
     setAmount("");
+    setSendError(null);
   }, [visible]);
 
   // Load the wallet and pick a debit token when the sheet opens
@@ -115,6 +128,7 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
   }, []);
 
   const handleChangeText = (text: string) => {
+    setSendError(null);
     setAmount(clampAmountString(text));
   };
 
@@ -181,6 +195,13 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
         reference: cleanReference || undefined,
       });
       if (!est.estimationId) throw new Error("wirex_sepa_estimation_id_missing");
+      // Wirex debits amount + fee from the token. Refuse before signing when
+      // that does not fit, instead of letting Wirex fail `insufficient_funds`.
+      const debit = sepaEstimateDebit(est.raw, debitToken.tokenAddress);
+      if (debit != null && debit > maxAvailable) {
+        setSendError(feeShortfallHint(maxAvailable, debit, amt, debitToken.tokenSymbol));
+        return;
+      }
       const transfer = await wirexService.sepaTransfer({
         wallet,
         accountId,
@@ -209,11 +230,10 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
       if (transfer.transferId) startMovePill().settleByRows(transfer.transferId);
       onSuccess();
     } catch {
-      // No error UI exists for SEPA (no design). Do NOT log any PII. Fall back
-      // to the send screen so the user can retry, rather than stranding them on
-      // a confirmation with a silently re-enabled button.
+      // Keep the sheet open and say why. Closing it silently made a rejected
+      // transfer look like nothing happened (#1536). Do NOT log any PII.
       console.warn("[SepaAmountConfirmationModal] send failed");
-      onClose();
+      setSendError(t("screen.SepaAmountConfirmationModal.sendFailedHint"));
     } finally {
       setSubmitting(false);
     }
@@ -230,7 +250,6 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
     lastName,
     reference,
     onSuccess,
-    onClose,
   ]);
 
   // Only actionable failures stay near the amount. The available balance is in
@@ -239,7 +258,7 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
     ? t("screen.SepaAmountConfirmationModal.noTokenHint")
     : exceedsBalance
       ? t("screen.SepaAmountConfirmationModal.insufficientHint")
-      : null;
+      : sendError;
   const headerTitle =
     maxAvailable == null
       ? t("screen.SepaAmountConfirmationModal.headerTitle")
@@ -296,7 +315,7 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
             primaryAmount={displayAmount || "0"}
             primaryImage={EUR_FLAG}
             primaryUnit={CURRENCY_CODE}
-            message={amountHint ? { text: amountHint, tone: "info" } : null}
+            message={amountHint ? { text: amountHint, tone: sendError ? "alert" : "info" } : null}
           />
 
           <View direction="column" align="stretch" justify="end" gap="lg">
