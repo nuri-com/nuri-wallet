@@ -1,7 +1,6 @@
-import { ensureSettlementMinExpiryGapMs } from "./ArkadeApiService";
 import { readArkadePendingLnurlSwapsCache } from "./ArkadeReceiveOrchestrator";
+import { arkadeCounterparties, arkAddressScript, type Counterparty } from "./arkadeCounterparty";
 import { getOrCreateWallet } from "./internal/walletCache";
-import { partitionVtxosBySettleability } from "./internal/vtxoSettleability";
 import type { ArkadePendingLnurlSwap } from "./types/lnurl";
 
 export type ArkadeRawTransaction = {
@@ -11,6 +10,10 @@ export type ArkadeRawTransaction = {
   type?: string;
   amount?: number | string;
   settled?: boolean;
+  /** An on-chain deposit into Arkade (the SDK's `key.boardingTxid`). */
+  boarding?: boolean;
+  /** The offchain transaction (the SDK's `key.arkTxid`). */
+  arkTxid?: string;
   kind?: "offchain" | "boarding" | "exit" | "batch" | "lightning_receive" | "lightning_send";
 };
 
@@ -24,6 +27,8 @@ export type UnifiedTransaction = {
   kind?: "offchain" | "boarding" | "exit" | "batch" | "lightning_receive" | "lightning_send";
   txid?: string;
   isMigrationTx?: boolean;
+  /** The other party's output scripts (hex), for naming a saved contact. */
+  counterpartyScripts?: string[];
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -45,6 +50,12 @@ function coerceRawTx(v: unknown): ArkadeRawTransaction {
     type: typeof r.type === "string" ? r.type : undefined,
     amount: typeof r.amount === "number" || typeof r.amount === "string" ? r.amount : undefined,
     settled: typeof r.settled === "boolean" ? r.settled : undefined,
+    boarding:
+      isRecord(r.key) && typeof r.key.boardingTxid === "string" && r.key.boardingTxid !== "",
+    arkTxid:
+      isRecord(r.key) && typeof r.key.arkTxid === "string" && r.key.arkTxid
+        ? r.key.arkTxid
+        : undefined,
     kind: typeof r.kind === "string" ? (r.kind as ArkadeRawTransaction["kind"]) : undefined,
   };
 }
@@ -91,28 +102,29 @@ export function getArkadePendingLnurlSwapsSnapshot(): ArkadePendingLnurlSwap[] {
   return readArkadePendingLnurlSwapsCache().map((row) => ({ ...row }));
 }
 
-/**
- * The txids of receives whose VTXO is settled but still inside the server's min
- * expiry gap — the money arrived and finalized, yet an offboard cannot spend it
- * for about another day. Those rows read as pending rather than confirmed, so
- * the list matches the balance, which already leaves them out.
- */
-async function tooFreshReceiveTxids(): Promise<Set<string>> {
-  const txids = new Set<string>();
+/** Both sides of each offchain payment, keyed by arkTxid; empty on any failure. */
+async function counterpartiesOf(
+  history: ArkadeRawTransaction[],
+): Promise<Map<string, Counterparty>> {
+  const txids = history.flatMap((tx) => (tx.arkTxid ? [tx.arkTxid] : []));
+  if (txids.length === 0) return new Map();
   try {
-    if ((await ensureSettlementMinExpiryGapMs()) === null) return txids;
     const wallet = await getOrCreateWallet();
-    const { tooFresh } = partitionVtxosBySettleability(await wallet.getVtxos());
-    for (const vtxo of tooFresh) {
-      const txid = String((vtxo as { txid?: unknown }).txid || "")
-        .trim()
-        .toLowerCase();
-      if (txid) txids.add(txid);
-    }
+    const own = arkAddressScript(await wallet.getAddress());
+    if (!own) return new Map();
+    return await arkadeCounterparties(wallet.indexerProvider, txids, new Set([own]));
   } catch {
-    // Unknown gap or unreadable wallet — leave every row as it was.
+    return new Map();
   }
-  return txids;
+}
+
+function counterpartyFor(
+  tx: ArkadeRawTransaction,
+  parties: Map<string, Counterparty>,
+): string[] | undefined {
+  const party = tx.arkTxid ? parties.get(tx.arkTxid.toLowerCase()) : undefined;
+  if (!party) return undefined;
+  return String(tx.type).toLowerCase() === "sent" ? party.paidTo : party.paidFrom;
 }
 
 export async function getUnifiedTransactionHistory(opts: {
@@ -120,10 +132,9 @@ export async function getUnifiedTransactionHistory(opts: {
 }): Promise<UnifiedTransaction[]> {
   const results: UnifiedTransaction[] = [];
 
-  const tooFreshTxids = await tooFreshReceiveTxids();
-
   try {
     const arkHistory = await getArkadeTransactionHistory();
+    const parties = await counterpartiesOf(arkHistory);
     for (const [index, tx] of arkHistory.entries()) {
       results.push({
         // The index keeps the fallback unique. `ark-${createdAt}` alone collides
@@ -140,19 +151,19 @@ export async function getUnifiedTransactionHistory(opts: {
             : typeof tx.createdAt === "number"
               ? tx.createdAt
               : Date.parse(String(tx.createdAt)) || Date.now(),
+        // A received Arkade payment is in the wallet the moment it lands,
+        // preconfirmed or not; an onchain deposit still waiting to board is
+        // not. A send stays pending until it settles.
         status:
-          tx.settled &&
-          !tooFreshTxids.has(
-            String(tx.txid || "")
-              .trim()
-              .toLowerCase(),
-          )
+          tx.settled || (String(tx.type).toLowerCase() !== "sent" && !tx.boarding)
             ? "confirmed"
             : "pending",
         source: "arkade",
         kind: tx.kind || "offchain",
         txid: tx.txid,
         isMigrationTx: false,
+        // A receive is named by who paid, a send by who got paid.
+        counterpartyScripts: counterpartyFor(tx, parties),
       });
     }
   } catch {}

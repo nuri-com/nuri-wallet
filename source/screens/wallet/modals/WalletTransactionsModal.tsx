@@ -308,6 +308,7 @@ const WalletTransactionsModal: React.FC<Props> = ({
           kind === "swapkit_swap_pending"
             ? undefined
             : t("component.ActivityRowActions.viewInExplorer"),
+        incoming: isIncoming,
         // A send to someone else's address can be saved. Every outgoing
         // on-chain transfer is a "wallet_transfer_out"; only the one to the
         // card's own deposit address is the user's own move, never a card

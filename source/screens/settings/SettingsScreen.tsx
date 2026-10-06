@@ -98,6 +98,8 @@ type Props = {
   onVerify: () => void;
   onOpenAddressBook: () => void;
   onOpenEsim: () => void;
+  /** Logs out right away. */
+  onLogout: () => void;
   /** The address-book-only key (nsec) for the desktop CLI/MCP. */
   exportAddressBookKey: () => Promise<string>;
 };
@@ -163,6 +165,7 @@ const SettingsScreen: React.FC<Props> = ({
   onVerify,
   onOpenAddressBook,
   onOpenEsim,
+  onLogout,
   exportAddressBookKey,
 }) => {
   const insets = useSafeAreaInsets();
@@ -427,6 +430,12 @@ const SettingsScreen: React.FC<Props> = ({
                       <ListActionTrailIcon name="chevron-right" />
                     </ListAction>
                   </Section>
+
+                  <List>
+                    <ListAction accessibilityLabel={t(`${K}.logout`)} onPress={onLogout}>
+                      <ListActionText>{t(`${K}.logout`)}</ListActionText>
+                    </ListAction>
+                  </List>
 
                   <View paddingX="lg">
                     <Text size="sm" emphasis muted align="center">

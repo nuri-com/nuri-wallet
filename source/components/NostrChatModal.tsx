@@ -47,7 +47,7 @@ import { setCachedSupportUnreadCount, getSupportUnreadCount } from "../lib/nostr
 import { getAuthData, getEthereumAddress, storeAuthData } from "../lib/secureKeyStorage";
 import { ensureDmRelayListPublished } from "../services/nostr/NostrDmRelayListService";
 import { sendSupportDump } from "../services/support/SupportDumpService";
-import { hasAbortedTeardown, requestUserLogout } from "../services/app/UserLogoutService";
+import { requestUserLogout } from "../services/app/UserLogoutService";
 import LogoutConfirmSheet from "./LogoutConfirmSheet";
 import { logWithId, LOG_EMOJI } from "../lib/OperationLogUtils";
 import { t } from "../lib/i18n";
@@ -307,7 +307,6 @@ const NostrChatModal: React.FC<Props> = ({
   );
   const [switchingPasskey, setSwitchingPasskey] = useState(false);
   const [showSwitchPasskeyConfirm, setShowSwitchPasskeyConfirm] = useState(false);
-  const [switchPasskeyBlocked, setSwitchPasskeyBlocked] = useState(hasAbortedTeardown);
   const [protocolByContact, setProtocolByContact] = useState<Record<string, ContactProtocol>>({});
   const [deliveryByMessageId, setDeliveryByMessageId] = useState<
     Record<string, "pending" | "sent" | "failed">
@@ -1727,16 +1726,12 @@ const NostrChatModal: React.FC<Props> = ({
           ? t("screen.NostrChatModal.shareLogsFailed")
           : t("screen.NostrChatModal.shareLogsLabel");
 
-  const handleSwitchPasskey = async () => {
+  const handleSwitchPasskey = () => {
     if (switchingPasskey) return;
     setSwitchingPasskey(true);
-    setStatus(null);
-    const result = await requestUserLogout();
-    if (result === "blocked") {
-      setSwitchPasskeyBlocked(true);
-      setStatus(t("screen.NostrChatModal.switchPasskeyFailed"));
-      setSwitchingPasskey(false);
-    }
+    void requestUserLogout().then((result) => {
+      if (result === "failed") setSwitchingPasskey(false);
+    });
   };
 
   return (
@@ -1892,11 +1887,8 @@ const NostrChatModal: React.FC<Props> = ({
       <LogoutConfirmSheet
         visible={showSwitchPasskeyConfirm}
         busy={switchingPasskey}
-        blocked={switchPasskeyBlocked}
-        onClose={() => {
-          if (!switchingPasskey && !switchPasskeyBlocked) setShowSwitchPasskeyConfirm(false);
-        }}
-        onConfirm={() => void handleSwitchPasskey()}
+        onClose={() => setShowSwitchPasskeyConfirm(false)}
+        onConfirm={handleSwitchPasskey}
       />
     </DsSheetHost>
   );

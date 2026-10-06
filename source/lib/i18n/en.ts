@@ -396,6 +396,8 @@ export const en = {
       topUp: "Top up",
     },
     App: {
+      previousWalletNotRemoved:
+        "The previous wallet could not be removed from this device yet. Restart the app and try again.",
       biometricSetupMessage: "Please enable biometrics and try again",
       lockScreenSetupMessage: "Please set up a device passcode (screen lock) and try again",
       passcodeAuthUnsupportedMessage:
@@ -480,7 +482,6 @@ export const en = {
       loadedVersion: "Loaded app version: %{version}",
       switchPasskey: "Logout",
       switchingPasskey: "Logging out…",
-      switchPasskeyFailed: "Could not log out. Try again.",
       backAccessibilityLabel: "Back",
       showQrLabel: "Show QR",
       scanQrLabel: "Scan QR",
@@ -843,6 +844,7 @@ export const en = {
       help: "Help",
       support: "Support",
       supportUnread: "%{count} new",
+      logout: "Log out",
       version: "Version %{version}",
     },
     Esim: {
@@ -921,18 +923,10 @@ export const en = {
     },
     LogoutConfirm: {
       title: "Log out?",
-      bulletLocal: "Your Nuri session and this device's keys are removed from this phone.",
-      bulletPasskey:
-        "Your passkey stays where it lives — in iCloud Keychain, Google Password Manager or your password app. Nuri cannot delete it.",
-      bulletFunds: "Your money, your bank details and your cards are not touched.",
-      bulletSignIn: "To get back in you need that passkey again, on a device that supports it.",
+      body: "You need your passkey to sign back in. Your money is not touched.",
       confirm: "Log out",
       confirmBusy: "Logging out…",
-      cancel: "Stay signed in",
-      retry: "Try again",
-      blockedTitle: "Finish logging out",
-      blockedBody:
-        "Logging out started but could not be finished, so this device is between two states and cannot be used until it completes. Your money and your passkey are not affected. Try again — if it keeps failing, contact support.",
+      cancel: "Cancel",
     },
     AssetScreen: {
       swapA11yLabel: "Swap",
@@ -976,6 +970,8 @@ export const en = {
       viewInExplorer: "View in explorer",
       sendAgain: "Send again",
       addToAddressBook: "Add to address book",
+      contactReceived: "%{name} received",
+      contactSent: "%{name} sent",
     },
     BitcoinRecipientField: {
       pasteAccessoryLabel: "Paste",

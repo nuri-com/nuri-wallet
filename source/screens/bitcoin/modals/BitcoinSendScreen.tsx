@@ -32,7 +32,7 @@ import AmountDisplay, {
   fiatImageFor,
 } from "../../../components/AmountDisplay";
 import { useKeypadFit } from "../../../lib/useKeypadFit";
-import { acceptsBitcoinSend } from "../../addressBook/addressBookModel";
+import { acceptsBitcoinSend, bitcoinSendCost } from "../../addressBook/addressBookModel";
 import DsSheetHost from "../../../components/DsSheetHost";
 import { btcSpotPriceService } from "../../../services/pricing/BtcSpotPriceService";
 import { log } from "../../../services/logging/LoggerService";
@@ -1723,6 +1723,8 @@ export default function BitcoinSendScreen({
   // destination picked here.
   const recipientNuriUsername = recipientLooksValid ? null : toNuriUsername(trimmedToAddress);
   const manualEntryActive = presetRecipientEmpty && (!recipientConfirmed || recipientFocused);
+  // One suggestion per contact: the destination this wallet pays cheapest.
+  const suggestionCost = useMemo(() => bitcoinSendCost(effectiveSendSource), [effectiveSendSource]);
   // A recipient that is a saved contact shows by name (picked, scanned or pasted).
   const savedContacts = useAddressBookContacts(visible);
   const savedRecipient = useMemo(
@@ -1844,6 +1846,7 @@ export default function BitcoinSendScreen({
               active={visible && manualEntryActive}
               query={toAddress}
               accepts={acceptsBitcoinSend}
+              cost={suggestionCost}
               onPick={({ destination }) => {
                 setToAddress(destination.raw);
                 setErrorMessage(null);

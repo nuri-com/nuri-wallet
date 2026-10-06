@@ -276,6 +276,12 @@ export function suggestDestinations(
   query: string,
   accepts: (destination: Destination) => boolean,
   max = 5,
+  /**
+   * Cost of paying a destination from this screen, lower is cheaper, Infinity
+   * when it cannot be paid. When set, each contact is suggested once, at its
+   * cheapest payable destination: a person is one row, not one per address.
+   */
+  cost?: (destination: Destination) => number,
 ): DestinationSuggestion[] {
   const q = trim(query).toLowerCase();
   if (!q) return [];
@@ -292,12 +298,21 @@ export function suggestDestinations(
       hit(contact.label) ||
       hit(contact.note ?? "") ||
       (contact.nuriUsername ? hit(`@${contact.nuriUsername}`) : false);
+    const matches: DestinationSuggestion[] = [];
     contact.destinations.forEach((destination, index) => {
       if (!accepts(destination)) return;
+      if (cost && !Number.isFinite(cost(destination))) return;
       if (byName || Object.values(destination).some((v) => hit(String(v)))) {
-        out.push({ contact, destination, index });
+        matches.push({ contact, destination, index });
       }
     });
+    if (cost && matches.length > 1) {
+      out.push(
+        matches.reduce((best, m) => (cost(m.destination) < cost(best.destination) ? m : best)),
+      );
+    } else {
+      out.push(...matches);
+    }
   }
   // The field already holds exactly a saved destination: the pick is done.
   if (

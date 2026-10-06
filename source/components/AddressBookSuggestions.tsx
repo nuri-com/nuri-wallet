@@ -80,14 +80,16 @@ type Props = {
   query: string;
   /** Which saved destinations this screen can pay. */
   accepts: (destination: Destination) => boolean;
+  /** Cost of a destination from this screen; set to show each contact once, at its cheapest. */
+  cost?: (destination: Destination) => number;
   onPick: (suggestion: DestinationSuggestion) => void;
 };
 
-export default function AddressBookSuggestions({ active, query, accepts, onPick }: Props) {
+export default function AddressBookSuggestions({ active, query, accepts, cost, onPick }: Props) {
   const contacts = useAddressBookContacts(active);
   const suggestions = useMemo(
-    () => (active ? suggestDestinations(contacts, query, accepts) : []),
-    [active, contacts, query, accepts],
+    () => (active ? suggestDestinations(contacts, query, accepts, 5, cost) : []),
+    [active, contacts, query, accepts, cost],
   );
   if (suggestions.length === 0) return null;
   return (

@@ -52,7 +52,6 @@ import {
 import BalanceRegion from "../../components/BalanceRegion";
 import HomeCardCarousel from "../../components/HomeCardCarousel";
 import ChoiceSheet from "../../components/ChoiceSheet";
-import LogoutConfirmSheet from "../../components/LogoutConfirmSheet";
 import ReceiveModal from "../../components/ReceiveModal";
 import LightningInvoiceSheet from "../../components/LightningInvoiceSheet";
 import NotificationBadge from "../../components/NotificationBadge";
@@ -67,7 +66,8 @@ import {
   USDC_BASE_TOKEN,
 } from "../../services/swapkit/SwapKitStableAssets";
 import { getBalancesSnapshot, subscribeBalances } from "../../services/app/BalanceDriversService";
-import { hasAbortedTeardown, requestUserLogout } from "../../services/app/UserLogoutService";
+import LogoutConfirmSheet from "../../components/LogoutConfirmSheet";
+import { requestUserLogout } from "../../services/app/UserLogoutService";
 import { EURC_SCAN_TOKEN, USDC_SCAN_TOKEN } from "../../services/balance/transactions/onchainScan";
 import { walletBalanceStore } from "../../services/balance/WalletBalanceStore";
 import { usdcBalanceStore } from "../../services/balance/UsdcBalanceStore";
@@ -386,6 +386,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   }, []);
 
   const handleGreetingPress = useCallback(() => {
+    if (!DEBUG_UI_ENABLED) return;
     debugTapCountRef.current += 1;
     if (debugTapTimerRef.current) clearTimeout(debugTapTimerRef.current);
     debugTapTimerRef.current = setTimeout(() => {
@@ -397,13 +398,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     if (debugTapTimerRef.current) {
       clearTimeout(debugTapTimerRef.current);
       debugTapTimerRef.current = null;
-    }
-    // Same gesture, one entry per build: the debug hub where there is one, and
-    // otherwise the logout confirm — production's only way back to passkey
-    // onboarding (#1061).
-    if (!DEBUG_UI_ENABLED) {
-      setLogoutConfirmVisible(true);
-      return;
     }
     try {
       EventBus.emit("debug:openHub");
@@ -477,16 +471,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // Sats the Move sheet already collected. Null when the top-up was opened on
   // its own (Add money), where the keypad is where the amount comes from.
   const [addMoneyVisible, setAddMoneyVisible] = useState(false);
-  // Reached by the greeting's eight-tap gesture in a production build — the
-  // same hidden entry the debug hub uses in a dev one (#1061).
-  const [logoutConfirmVisible, setLogoutConfirmVisible] = useState(false);
-  // Stays true from the moment the wipe starts: it ends in an app reload, so
-  // there is no "finished" state to return to on this screen.
-  const [logoutBusy, setLogoutBusy] = useState(false);
-  // A teardown aborted part-way. Seeded from the service, not from local state
-  // alone, so the recovery state survives a remount of this screen — the
-  // identity is half-destroyed and there is no home to go back to.
-  const [logoutBlocked, setLogoutBlocked] = useState(() => hasAbortedTeardown());
   // Buying bitcoin through Mercuryo. The order outlives this sheet, so nothing
   // about a purchase depends on it staying open.
   const buyFlow = useBitcoinBuyFlow();
@@ -1184,7 +1168,12 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       case "wallet":
       case "dollar":
         return {
-          primary: { label: t("screen.WalletScreen.ensNameLabel"), value: ensName },
+          // The QR carries the 0x address on both faces: every wallet can scan it.
+          primary: {
+            label: t("screen.WalletScreen.ensNameLabel"),
+            value: ensName,
+            qrValue: evmAddress,
+          },
           secondary: { label: t("screen.HomeScreen.receiveLabelEvm"), value: evmAddress },
         };
       default:
@@ -1738,30 +1727,12 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     ],
   );
 
-  const handleLogoutConfirm = useCallback(async () => {
+  const [logoutConfirmVisible, setLogoutConfirmVisible] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
+  const handleLogout = useCallback(async () => {
     setLogoutBusy(true);
-    const result = await requestUserLogout();
-    if (result === "started") return; // the app reload takes it from here
-    // "in-flight" means another teardown owns the reload — stay busy rather
-    // than re-arming a button that would race it.
-    if (result === "in-flight") return;
-    // Aborted part-way: the sheet becomes the recovery state and only a
-    // successful retry leaves it.
-    setLogoutBusy(false);
-    setLogoutBlocked(true);
+    if ((await requestUserLogout()) === "failed") setLogoutBusy(false);
   }, []);
-
-  const closeLogoutConfirm = useCallback(() => {
-    if (logoutBusy || logoutBlocked) return;
-    setLogoutConfirmVisible(false);
-  }, [logoutBusy, logoutBlocked]);
-
-  // The recovery state owns the screen: it re-presents itself if anything
-  // (a remount, a deep link, a closed sheet) would otherwise reveal the home
-  // over a half-destroyed identity.
-  useEffect(() => {
-    if (logoutBlocked) setLogoutConfirmVisible(true);
-  }, [logoutBlocked]);
 
   return (
     <>
@@ -1969,6 +1940,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         }}
         onOpenAddressBook={() => setAddressBookOpen(true)}
         onOpenEsim={() => setEsimOpen(true)}
+        onLogout={() => setLogoutConfirmVisible(true)}
         exportAddressBookKey={exportAddressBookKey}
       />
 
@@ -2378,10 +2350,9 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
 
       <LogoutConfirmSheet
         visible={logoutConfirmVisible}
-        onClose={closeLogoutConfirm}
-        onConfirm={handleLogoutConfirm}
+        onClose={() => setLogoutConfirmVisible(false)}
+        onConfirm={handleLogout}
         busy={logoutBusy}
-        blocked={logoutBlocked}
       />
 
       {/* Only ever shown when the scan genuinely left a choice open. */}

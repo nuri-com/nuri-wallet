@@ -23,7 +23,10 @@ import type { IconName } from "@ds";
 import DsSheetHost from "./DsSheetHost";
 import ChoiceSheet from "./ChoiceSheet";
 import { useAddressBookContacts } from "./AddressBookSuggestions";
-import { isRecipientSaved } from "../lib/addressBook/contact";
+import { type Contact, isRecipientSaved, savedContactFor } from "../lib/addressBook/contact";
+import { contactRowLabelKey } from "../lib/addressBook/activityContact";
+import { arkAddressScript } from "../services/arkade/arkadeCounterparty";
+import { contactAvatar } from "../lib/addressBook/petAvatar";
 import { EventBus } from "../services/events/AppEventBusService";
 import { destinationHint, type SaveOffer } from "../screens/addressBook/addressBookModel";
 import { i18n, t } from "../lib/i18n";
@@ -60,6 +63,13 @@ export type ActivityItem = {
    * tapping the row lists "Add to address book" next to its own action.
    */
   saveOffer?: SaveOffer | null;
+  /**
+   * Money in (true) or out (false). Required for a saved contact to name the
+   * row: in reads "Emil sent", out "Emil received". Unset keeps the label.
+   */
+  incoming?: boolean;
+  /** Arkade: the other party's output scripts (hex), matched against saved contacts. */
+  counterpartyScripts?: string[];
   /** Pending rows sort into a leading "Pending" section. */
   pending?: boolean;
   /** ISO timestamp used for the month grouping. */
@@ -143,6 +153,31 @@ const ActivitySheet: React.FC<Props> = ({
       Boolean(item.saveOffer) &&
       !isRecipientSaved(contacts, (item.saveOffer as SaveOffer).destination),
     [contacts],
+  );
+  // Saved Arkade addresses by script, to recognise a contact in a payment.
+  const contactByScript = useMemo(() => {
+    const map = new Map<string, Contact>();
+    for (const contact of contacts) {
+      if (contact.deleted) continue;
+      for (const d of contact.destinations) {
+        if (d.type !== "crypto" || d.network !== "ark") continue;
+        const script = arkAddressScript(d.raw);
+        if (script && !map.has(script)) map.set(script, contact);
+      }
+    }
+    return map;
+  }, [contacts]);
+  // A payment with a saved contact reads as that person: their avatar and name.
+  const contactOf = useCallback(
+    (item: ActivityItem): Contact | null => {
+      for (const script of item.counterpartyScripts ?? []) {
+        const contact = contactByScript.get(script.toLowerCase());
+        if (contact) return contact;
+      }
+      const destination = item.saveOffer?.destination;
+      return destination ? savedContactFor(contacts, destination.raw, () => true) : null;
+    },
+    [contacts, contactByScript],
   );
   const pressRow = useCallback(
     (item: ActivityItem) => {
@@ -229,32 +264,42 @@ const ActivitySheet: React.FC<Props> = ({
                 </View>
               ) : null}
               <List>
-                {section.items.map((item, index) => (
-                  <React.Fragment key={item.key}>
-                    {index > 0 ? <ListSeparator /> : null}
-                    <ListAction
-                      accessibilityLabel={item.label}
-                      onPress={item.onPress || canSave(item) ? () => pressRow(item) : undefined}
-                    >
-                      <ListActionLeadingAvatar
-                        name={item.pending ? "spinner" : item.icon}
-                        variant="outline"
-                      />
-                      <ListActionText>{item.label}</ListActionText>
-                      {item.sublabel ? (
-                        <ListActionTextMuted>{item.sublabel}</ListActionTextMuted>
-                      ) : null}
-                      {item.amount ? (
-                        <ListActionTrailingText>{item.amount}</ListActionTrailingText>
-                      ) : null}
-                      {item.amountSecondary ? (
-                        <ListActionTrailingTextMuted>
-                          {item.amountSecondary}
-                        </ListActionTrailingTextMuted>
-                      ) : null}
-                    </ListAction>
-                  </React.Fragment>
-                ))}
+                {section.items.map((item, index) => {
+                  const labelKey = contactRowLabelKey(item.incoming);
+                  const contact = labelKey ? contactOf(item) : null;
+                  const label =
+                    contact && labelKey ? t(labelKey, { name: contact.label }) : item.label;
+                  return (
+                    <React.Fragment key={item.key}>
+                      {index > 0 ? <ListSeparator /> : null}
+                      <ListAction
+                        accessibilityLabel={label}
+                        onPress={item.onPress || canSave(item) ? () => pressRow(item) : undefined}
+                      >
+                        {contact && !item.pending ? (
+                          <ListActionLeadingAvatar source={contactAvatar(contact)} />
+                        ) : (
+                          <ListActionLeadingAvatar
+                            name={item.pending ? "spinner" : item.icon}
+                            variant="outline"
+                          />
+                        )}
+                        <ListActionText>{label}</ListActionText>
+                        {item.sublabel ? (
+                          <ListActionTextMuted>{item.sublabel}</ListActionTextMuted>
+                        ) : null}
+                        {item.amount ? (
+                          <ListActionTrailingText>{item.amount}</ListActionTrailingText>
+                        ) : null}
+                        {item.amountSecondary ? (
+                          <ListActionTrailingTextMuted>
+                            {item.amountSecondary}
+                          </ListActionTrailingTextMuted>
+                        ) : null}
+                      </ListAction>
+                    </React.Fragment>
+                  );
+                })}
               </List>
             </View>
           ))}

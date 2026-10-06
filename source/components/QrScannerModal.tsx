@@ -278,11 +278,12 @@ const QrScannerModal: React.FC<Props> = ({
         ) : null}
       </RNView>
       {renderPermissionAction()}
-      {mismatchMessage ? (
-        <Text size="md" emphasis align="center">
-          {mismatchMessage}
-        </Text>
-      ) : null}
+      {/* Always mounted, one line: the row keeps its height with or without a
+          message, so showing one never shrinks the circle (it made the camera
+          jump on every rejected scan). */}
+      <Text size="md" emphasis align="center" flow="truncate" lines={1}>
+        {mismatchMessage ?? "\u00A0"}
+      </Text>
     </View>
   );
 

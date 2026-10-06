@@ -10,6 +10,7 @@ import {
   resumeSwapKitV2TrackingIntake,
   stopAllSwapKitV2Tracking,
 } from "../swapkit/SwapKitV2PendingTracker";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Updates from "expo-updates";
 import { authStateManager } from "../auth/AuthStateService";
 import {
@@ -229,7 +230,67 @@ const scheduleAppReload = () => {
   }, 300);
 };
 
+// Set before a logout's wipe and removed only once the wipe is verified. Not in
+// the keychain, so it survives the very failure it records. While it is set the
+// app does not start into the old wallet: launch and sign-in finish the wipe
+// first (finishPendingLogout).
+const LOGOUT_PENDING_KEY = "nuri:logout:pending";
+
+async function wipeVerified(options: Options): Promise<boolean> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await wipeLocalWalletData(options);
+      return true;
+    } catch (e) {
+      console.error(`[FactoryReset] Wipe incomplete (attempt ${attempt}):`, e);
+    }
+  }
+  return false;
+}
+
+/**
+ * Log out: wipe and relaunch on the welcome screen. A wipe that could not be
+ * verified leaves the pending marker set, so the relaunch finishes it before
+ * anything can unlock the old wallet.
+ */
 export const performFactoryReset = async (options: Options = {}) => {
-  await wipeLocalWalletData(options);
+  let marked = false;
+  try {
+    await AsyncStorage.setItem(LOGOUT_PENDING_KEY, "1");
+    marked = true;
+  } catch (e) {
+    console.error("[FactoryReset] Could not record the pending logout:", e);
+  }
+  if (await wipeVerified(options)) {
+    await AsyncStorage.removeItem(LOGOUT_PENDING_KEY).catch(() => {});
+  } else if (!marked) {
+    // Nothing would stop the relaunch from opening the old wallet: stay put.
+    throw new Error("Factory reset aborted: wipe not verified and not recorded.");
+  }
   scheduleAppReload();
+};
+
+/**
+ * Called on launch and before a sign-in commits. "none": no logout pending.
+ * "done": the pending logout's wipe is now verified. "incomplete": old key
+ * material is still on the device; the old wallet must not open and no new one
+ * may be committed on top.
+ */
+export const finishPendingLogout = async (): Promise<"none" | "done" | "incomplete"> => {
+  // Fail closed: a marker that cannot be read, or cannot be cleared, is not
+  // proof that no logout is pending.
+  let pending: string | null;
+  try {
+    pending = await AsyncStorage.getItem(LOGOUT_PENDING_KEY);
+  } catch {
+    return "incomplete";
+  }
+  if (pending !== "1") return "none";
+  if (!(await wipeVerified({}))) return "incomplete";
+  try {
+    await AsyncStorage.removeItem(LOGOUT_PENDING_KEY);
+  } catch {
+    return "incomplete";
+  }
+  return "done";
 };

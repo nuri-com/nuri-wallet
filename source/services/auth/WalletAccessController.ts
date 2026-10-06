@@ -6,7 +6,6 @@ import {
 } from "../../lib/secureKeyStorage";
 import { logWithId } from "../../lib/OperationLogUtils";
 import { errDescription } from "../../lib/errorMessage";
-import { noteAutoAccessSettled, noteAutoAccessStarted } from "../../lib/factoryResetIntent";
 import { reportErrorToSupport } from "../../lib/support/reportErrorToSupport";
 import { recoverWalletKeysFromPasskey } from "./WalletKeyRecoveryService";
 import type { WalletKeyRecoveryOutcome } from "./WalletKeyRecoveryService";
@@ -66,8 +65,6 @@ export type WalletAccessDeps = {
   isBiometricPromptDismissal: (error: unknown) => boolean;
   abandonInFlightWalletUnlock: () => void;
   clearPrivateKeyMemoryCache: () => void;
-  noteAutoAccessStarted: () => void;
-  noteAutoAccessSettled: (unlocked: boolean) => void;
   reportErrorToSupport: (opts: { error: unknown; userMessage?: string }) => Promise<unknown>;
   log: (message: string, data?: Record<string, unknown>) => void;
   timeoutMs: number;
@@ -79,8 +76,6 @@ const defaultDeps: WalletAccessDeps = {
   isBiometricPromptDismissal,
   abandonInFlightWalletUnlock,
   clearPrivateKeyMemoryCache,
-  noteAutoAccessStarted,
-  noteAutoAccessSettled,
   reportErrorToSupport,
   log: (message, data) => logWithId("🔐 WalletAccess", message, data),
   timeoutMs: WALLET_ACCESS_TIMEOUT_MS,
@@ -149,13 +144,8 @@ export class WalletAccessController {
     this.inFlight = true;
     this.deps.log("wallet access requested", { source });
     this.deps.clearPrivateKeyMemoryCache();
-    // Bracket a non-reset auto-unlock so the factory-reset deep link can bridge
-    // the cold-start race only while this attempt can still land.
-    if (source === "auto") this.deps.noteAutoAccessStarted();
     try {
-      const result = await this.runAttempt(source);
-      if (source === "auto") this.deps.noteAutoAccessSettled(result.status === "unlocked");
-      return result;
+      return await this.runAttempt(source);
     } finally {
       this.inFlight = false;
     }

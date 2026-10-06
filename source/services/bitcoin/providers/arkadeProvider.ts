@@ -50,6 +50,7 @@ function unifiedArkadeRowToTransaction(atx: UnifiedTransaction): BitcoinTransact
     txid: atx.txid,
     kind: atx.kind,
     isMigrationTx: atx.isMigrationTx,
+    counterpartyScripts: atx.counterpartyScripts,
   };
 }
 

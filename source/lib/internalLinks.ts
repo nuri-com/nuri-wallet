@@ -1,8 +1,5 @@
 export const NURI_INTERNAL_LINK_PATTERN = /^(?:nuri|nuriwallet)(?:-[a-z0-9]+)?:\/\//i;
 
-export const FACTORY_RESET_SCREEN = "factory-reset";
-export const FACTORY_RESET_LINK = `nuri://${FACTORY_RESET_SCREEN}`;
-
 export const SHOW_IBAN_SCREEN = "show-iban";
 export const SHOW_CARD_NUMBER_SCREEN = "show-card-number";
 
@@ -25,7 +22,6 @@ export const INTERNAL_LINK_DESTINATIONS = [
   { screen: SHOW_IBAN_SCREEN, label: "Card · bank details" },
   { screen: SHOW_CARD_NUMBER_SCREEN, label: "Card · card number" },
   { screen: V1_WALLET_MIGRATION_SCREEN, label: "v1 wallet migration" },
-  { screen: FACTORY_RESET_SCREEN, label: "Factory reset (opens the delete flow)" },
 ] as const;
 
 export type InternalLinkScreen = (typeof INTERNAL_LINK_DESTINATIONS)[number]["screen"];

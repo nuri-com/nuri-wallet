@@ -28,6 +28,8 @@ import { t } from "../lib/i18n";
 export type ReceiveAddress = {
   label: string;
   value?: string | null;
+  /** What the QR encodes when it is not `value` (a name shown, its address scanned). */
+  qrValue?: string | null;
 };
 
 type Props = {
@@ -75,6 +77,7 @@ const ReceiveModal: React.FC<Props> = ({
   const effectiveSecondary = Boolean(secondary) && (showSecondary || !primary.value);
   const selected = effectiveSecondary && secondary ? secondary : primary;
   const qrValue = selected.value ?? "";
+  const qrCode = selected.qrValue !== undefined ? (selected.qrValue ?? "") : qrValue;
   const canSwitch = Boolean(primary.value && secondary?.value);
   // A failed derivation is not the same as "no address yet": it says so, and it
   // offers the retry, because nothing else in the app re-runs the derivation.
@@ -160,9 +163,9 @@ const ReceiveModal: React.FC<Props> = ({
           </View>
 
           <View direction="column" align="stretch" justify="center" fill="grow">
-            {qrValue ? (
+            {qrCode ? (
               <Pressable onPress={() => void handleCopy()} accessibilityLabel={t("common.copy")}>
-                <AddressQrTile value={qrValue} />
+                <AddressQrTile value={qrCode} />
               </Pressable>
             ) : (
               <View direction="column" align="center" justify="center" gap="md">

@@ -31,6 +31,8 @@ export type BitcoinTransaction = {
   txid?: string;
   kind?: UnifiedTransaction["kind"];
   isMigrationTx?: boolean;
+  /** The other party's output scripts (hex), for naming a saved contact. */
+  counterpartyScripts?: string[];
 };
 
 export type GetBitcoinTransactionsOptions = {

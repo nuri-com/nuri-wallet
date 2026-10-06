@@ -266,6 +266,7 @@ export function mapWirexBankActivity(
         ? {
             ...row,
             onPressLabel: t("component.ActivityRowActions.sendAgain"),
+            incoming: item.direction === "Inbound",
             saveOffer: {
               destination: {
                 type: "bank" as const,

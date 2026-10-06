@@ -128,6 +128,7 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
             kind: row.kind,
             txid: row.txid,
             isMigrationTx: row.isMigrationTx,
+            counterpartyScripts: row.counterpartyScripts,
           });
         }
         // A refresh that fetched nothing never replaces what is already shown.
@@ -378,6 +379,8 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
           amountSecondary: fiatLine ?? `${homeSym} —`,
           pending: isPending,
           createdAt: _createdAt,
+          incoming: isIncoming,
+          counterpartyScripts: atx.counterpartyScripts,
         });
       }
     }
@@ -452,6 +455,7 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
         amountSecondary: fiatLine ?? `${homeSym} —`,
         pending: isPending,
         createdAt: _createdAt,
+        incoming: isIncoming,
       } satisfies ActivityItem;
     });
     return sortPendingFirst(list.concat(mapped));

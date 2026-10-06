@@ -139,13 +139,8 @@ import UsernameOnboardingScreen from "./screens/onboarding/UsernameOnboardingScr
 import V1WalletMigrationScreen from "./screens/migration/V1WalletMigrationScreen";
 import { t } from "./lib/i18n";
 import { checkMustUpdateForVersion, getBundleAppVersion } from "./services/app/AppUpdateService";
-import { performFactoryReset } from "./services/app/FactoryResetService";
-import {
-  hasAbortedTeardown,
-  requestUserLogout,
-  requestWalletReplacement,
-} from "./services/app/UserLogoutService";
-import LogoutConfirmSheet from "./components/LogoutConfirmSheet";
+import { finishPendingLogout, performFactoryReset } from "./services/app/FactoryResetService";
+import { requestWalletReplacement } from "./services/app/UserLogoutService";
 import {
   SOFT_LOGOUT_RELAUNCH_SENTINEL_KEY,
   WIREX_FORCED_RELOGIN_DONE_KEY,
@@ -163,7 +158,6 @@ import {
 import { SUPPORT_PUBKEY } from "./lib/nostr/unread";
 import { setPendingCardDetail } from "./lib/cardDetailIntent";
 import {
-  FACTORY_RESET_SCREEN,
   NURI_INTERNAL_LINK_PATTERN,
   SHOW_CARD_NUMBER_SCREEN,
   SHOW_IBAN_SCREEN,
@@ -334,15 +328,6 @@ function WalletApp() {
   // only name the home screen can greet on its very first frame. Everything
   // else has to wait for the LNURL status fetch that the login bootstrap runs.
   const [signedInHandle, setSignedInHandle] = useState<string | null>(null);
-  // A teardown aborted part-way (see UserLogoutService): the device is neither
-  // signed in nor wiped. Nothing may present itself as a usable session until a
-  // retry completes, so this owns the app root, not the flow that triggered it.
-  const [teardownBlocked, setTeardownBlocked] = useState(hasAbortedTeardown);
-  const [teardownRetryBusy, setTeardownRetryBusy] = useState(false);
-  // The factory-reset deep link arrives unauthenticated — anything that can open
-  // a URL can send it — so it only asks. The wipe waits for the confirmation the
-  // sheet collects.
-  const [factoryResetConfirmVisible, setFactoryResetConfirmVisible] = useState(false);
   const [currencyReady, setCurrencyReady] = useState(false);
   const appLocale = useAppLocale();
   const [isSignedInWithPRF, setIsSignedInWithPRF] = useState(false);
@@ -390,8 +375,6 @@ function WalletApp() {
   } | null>(null);
   const debugOpenTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [biometricLockVisible, setBiometricLockVisible] = useState(false);
-  // When opened via the factory-reset deep link, the lock must not auto-unlock
-  // (which would dismiss it before the user can reach Delete wallet).
   const [supportDumpVisible, setSupportDumpVisible] = useState(false);
   const [isAppActive, setIsAppActive] = useState(() => AppState.currentState === "active");
   const isDesktopWeb = useIsDesktopWeb();
@@ -589,7 +572,7 @@ function WalletApp() {
   // is what finishes it — or, once its order is provably dead, recovers the USDC
   // the hub already delivered. Idempotent: in-flight orders are deduped.
   useEffect(() => {
-    if (!isSignedInWithPRF || !isAppActive || biometricLockVisible || teardownBlocked) return;
+    if (!isSignedInWithPRF || !isAppActive || biometricLockVisible) return;
     // v2 orders resume on every signed-in foreground. A commit intent from an
     // earlier launch never got its reply, so nothing was signed for it: it is
     // dropped (the user asks again), then the tracker drives every real order.
@@ -599,7 +582,7 @@ function WalletApp() {
     // Sats still locked in a pre-v2 Satora Arkade swap come back here: the
     // due refund is signed with the swap key and paid to this wallet.
     if (SWAPKIT_ENABLED) void runLegacyArkadeRefunds();
-  }, [isSignedInWithPRF, isAppActive, biometricLockVisible, teardownBlocked]);
+  }, [isSignedInWithPRF, isAppActive, biometricLockVisible]);
 
   // Mercuryo checkout runs in the OS browser, so a purchase is only observable
   // through the provider's status endpoint. Resuming on every foreground is what
@@ -789,6 +772,13 @@ function WalletApp() {
         // frame, so nothing renders in the device language and then flips.
         await Promise.all([homeCurrencyService.initialize(), initializeLanguagePreference()]);
         setCurrencyReady(true);
+        // A logout whose wipe was not verified is finished before anything
+        // reads the keychain: the old wallet never opens again, and the device
+        // starts on the welcome screen either way.
+        if ((await finishPendingLogout()) !== "none") {
+          setShowWelcome(true);
+          return;
+        }
         await authStateManager.initialize();
         const authSnapshot = authStateManager.getState();
         const storedUsername = authSnapshot.walletUsername?.trim().toLowerCase() || "";
@@ -1018,17 +1008,6 @@ function WalletApp() {
             break;
           case V1_WALLET_MIGRATION_SCREEN:
             EventBus.emit("nav:openV1WalletMigrationScreen");
-            break;
-          case FACTORY_RESET_SCREEN:
-            // Opens the logout confirmation; confirming wipes the wallet and
-            // reloads to the welcome screen. The link cannot do the wiping
-            // itself: `nuri://` is an unauthenticated custom scheme, so any app,
-            // page or support message that can open a URL could otherwise
-            // destroy this device's key material without the user agreeing to
-            // it. The sheet is the only thing that reaches requestUserLogout.
-            setShowNostrChat(false);
-            resetMainScreensUi();
-            setFactoryResetConfirmVisible(true);
             break;
           default:
             console.log("[App:handleDeepLink] Unknown deep link screen:", screen);
@@ -1330,6 +1309,13 @@ function WalletApp() {
       credPubkeyB64u?: string;
     }) => {
       setWelcomeFooterMessage(null);
+
+      // Never commit a wallet over the previous one's keys.
+      if ((await finishPendingLogout()) === "incomplete") {
+        zeroize(payload.prf);
+        handleError(t("screen.App.previousWalletNotRemoved"));
+        return;
+      }
 
       const hasCredId = !!payload.credIdB64u;
       const credIdLen = payload.credIdB64u?.length ?? 0;
@@ -1761,31 +1747,6 @@ function WalletApp() {
     [],
   );
 
-  // Both of the sheet's confirmations — the first one the factory-reset link
-  // asks for, and the retry out of the blocked state — run the full canonical
-  // logout: wipe plus relaunch, rather than the in-place replacement whose
-  // caller no longer has a wallet to commit.
-  const handleTeardownConfirm = useCallback(async () => {
-    setTeardownRetryBusy(true);
-    const result = await requestUserLogout();
-    // "started" has the relaunch scheduled and "in-flight" means another
-    // teardown owns it; in both cases the app goes down, so staying busy is the
-    // honest state. Only an abort re-arms the button — and seals the sheet into
-    // the recovery state, which no cancel may leave.
-    if (result === "blocked") {
-      setTeardownRetryBusy(false);
-      setTeardownBlocked(true);
-    }
-  }, []);
-
-  // Cancel: no teardown ran, so the session is untouched and the sheet simply
-  // closes. Mid-wipe or after an aborted one there is nothing intact to hand
-  // back, and the sheet renders sealed anyway.
-  const closeTeardownConfirm = useCallback(() => {
-    if (teardownBlocked || teardownRetryBusy) return;
-    setFactoryResetConfirmVisible(false);
-  }, [teardownBlocked, teardownRetryBusy]);
-
   const handlePasskeyPayload = useCallback(
     async (payload: {
       prf: Uint8Array;
@@ -1834,14 +1795,11 @@ function WalletApp() {
         );
         if (switchedWallet) {
           resetToWelcome(false);
-          // Same destructive teardown as a logout, so it goes through the same
-          // boundary: an abort here leaves a half-torn identity that must latch
-          // the blocking recovery state instead of handing the flow back as a
-          // retryable error, and nothing may commit the incoming wallet on top.
+          // Same wipe as a logout. If it does not complete, the boundary logs
+          // out instead (relaunch), and nothing is committed on top.
           const replacement = await requestWalletReplacement();
           if (replacement !== "replaced") {
             zeroize(payload.prf);
-            if (replacement === "blocked") setTeardownBlocked(true);
             return;
           }
         }
@@ -2003,17 +1961,6 @@ function WalletApp() {
               />
             ) : null}
           </DsView>
-
-          {/* Mounted at the app root, above every flow: the factory-reset link
-            can arrive over any screen, and once a teardown has aborted there is
-            no screen underneath that may be handed back either. */}
-          <LogoutConfirmSheet
-            visible={teardownBlocked || factoryResetConfirmVisible}
-            blocked={teardownBlocked}
-            busy={teardownRetryBusy}
-            onClose={closeTeardownConfirm}
-            onConfirm={() => void handleTeardownConfirm()}
-          />
 
           <SupportModals
             showNostrChat={showNostrChat}

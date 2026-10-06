@@ -398,6 +398,8 @@ export const de = {
       topUp: "Aufladen",
     },
     App: {
+      previousWalletNotRemoved:
+        "Die vorherige Wallet konnte noch nicht von diesem Gerät entfernt werden. Starte die App neu und versuche es erneut.",
       biometricSetupMessage: "Bitte aktiviere Biometrie und versuche es erneut",
       lockScreenSetupMessage:
         "Bitte richte einen Gerätecode (Displaysperre) ein und versuche es erneut",
@@ -488,7 +490,6 @@ export const de = {
       loadedVersion: "Geladene App-Version: %{version}",
       switchPasskey: "Logout",
       switchingPasskey: "Abmelden…",
-      switchPasskeyFailed: "Abmelden fehlgeschlagen. Bitte erneut versuchen.",
       backAccessibilityLabel: "Zur\u00fcck",
       showQrLabel: "QR anzeigen",
       scanQrLabel: "QR scannen",
@@ -856,6 +857,7 @@ export const de = {
       help: "Hilfe",
       support: "Support",
       supportUnread: "%{count} neu",
+      logout: "Abmelden",
       version: "Version %{version}",
     },
     Esim: {
@@ -935,20 +937,10 @@ export const de = {
     },
     LogoutConfirm: {
       title: "Abmelden?",
-      bulletLocal:
-        "Deine Nuri-Sitzung und die Schlüssel dieses Geräts werden von diesem Handy entfernt.",
-      bulletPasskey:
-        "Dein Passkey bleibt, wo er liegt — im iCloud-Schlüsselbund, im Google Passwortmanager oder in deiner Passwort-App. Nuri kann ihn nicht löschen.",
-      bulletFunds: "Dein Geld, deine Bankdaten und deine Karten bleiben unberührt.",
-      bulletSignIn:
-        "Für die Rückkehr brauchst du diesen Passkey erneut, auf einem Gerät, das ihn unterstützt.",
+      body: "Zum Anmelden brauchst du deinen Passkey. Dein Geld bleibt unberührt.",
       confirm: "Abmelden",
-      confirmBusy: "Wird abgemeldet…",
-      cancel: "Angemeldet bleiben",
-      retry: "Erneut versuchen",
-      blockedTitle: "Abmelden abschließen",
-      blockedBody:
-        "Das Abmelden hat begonnen, konnte aber nicht abgeschlossen werden. Dieses Gerät ist deshalb in einem Zwischenzustand und kann bis zum Abschluss nicht genutzt werden. Dein Geld und dein Passkey sind nicht betroffen. Versuche es erneut — falls es weiterhin fehlschlägt, wende dich an den Support.",
+      confirmBusy: "Abmelden…",
+      cancel: "Abbrechen",
     },
     AssetScreen: {
       swapA11yLabel: "Tauschen",
@@ -992,6 +984,8 @@ export const de = {
       viewInExplorer: "Im Explorer ansehen",
       sendAgain: "Erneut senden",
       addToAddressBook: "Zum Adressbuch hinzufügen",
+      contactReceived: "An %{name}",
+      contactSent: "Von %{name}",
     },
     BitcoinRecipientField: {
       pasteAccessoryLabel: "Einf\u00fcgen",

@@ -130,6 +130,28 @@ export function acceptsBitcoinSend(destination: Destination): boolean {
   return routeDestination(destination).kind === "bitcoin";
 }
 
+/**
+ * What a saved Bitcoin destination costs to pay from a wallet, lower is
+ * cheaper; Infinity when that wallet cannot pay it at all. From Arkade an
+ * Arkade address is a plain offchain transfer and an onchain one an exit with
+ * a miner fee. From the onchain wallet an onchain address is cheapest, a
+ * Lightning address still works (the send moves to Arkade), and an Arkade
+ * address cannot be paid. The recipient can move the money on themselves.
+ */
+export function bitcoinSendCost(
+  source: "arkade" | "onchain",
+): (destination: Destination) => number {
+  return (destination) => {
+    const route = routeDestination(destination);
+    if (route.kind !== "bitcoin") return 9;
+    const offchain = route.rail === "arkade";
+    if (source === "arkade") return offchain ? 0 : destination.label === "boarding" ? 2 : 1;
+    if (destination.type === "lightning") return 3;
+    if (offchain) return Number.POSITIVE_INFINITY;
+    return destination.label === "boarding" ? 1 : 0;
+  };
+}
+
 /** Saved destinations the wallet send can pay: EVM addresses, or Base ones saved for this asset. */
 export function acceptsWalletSend(asset: "EURC" | "USDC"): (destination: Destination) => boolean {
   return (destination) => {
