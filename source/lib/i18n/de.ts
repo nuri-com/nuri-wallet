@@ -50,11 +50,6 @@ export const de = {
         "Keine Wallet geöffnet. Scanne den QR-Code oder kopiere die Zahlungsdaten.",
       sendExactly: "Genau %{amount} senden",
       continue: "Weiter",
-      bitcoinMethod: {
-        onchain: "On-chain",
-        lightning: "Lightning",
-      },
-      lightningHint: "Bezahle mit jeder Lightning-Wallet. Es kommt als On-chain-Bitcoin an.",
       orderWaiting: "Warten auf deine Zahlung",
       orderSettled: "Zahlung erhalten",
       anyTokenHint:
@@ -103,7 +98,8 @@ export const de = {
         quoteExpired: "Dieser Preis ist abgelaufen. Tippe auf „Erneut versuchen“ für einen neuen.",
       },
       asset: {
-        BTC: "Bitcoin",
+        BTC: "Bitcoin (onchain)",
+        BTC_LN: "Bitcoin (Lightning)",
         USDC_BASE: "USDC auf Base",
         EURC_BASE: "EURC auf Base",
         EVM_WALLET: "Beliebiger Token (Wallet verbinden)",
@@ -807,7 +803,7 @@ export const de = {
       placeholder_base_eurc: "0x…",
       placeholder_ark: "ark1…",
       placeholder_bitcoin: "bc1…",
-      bicPlaceholder: "BIC (optional)",
+      bicPlaceholder: "BIC",
       nuriUsername: "Nuri-Benutzername",
       nuriUsernamePlaceholder: "@benutzername (optional)",
       nuriLookup: "Ausfüllen",

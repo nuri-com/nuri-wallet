@@ -159,6 +159,17 @@
         margin-inline: auto;
       }
 
+      /* The pay page's wallet provider (RainbowKit) wraps the app in a block
+       * <div data-rk>. A block box sizes to its content, so the screen below it
+       * grew past the viewport, the keypad never compacted and the CTA sat
+       * under the bottom edge. Keep it in the flex chain. Its modals portal to
+       * <body>, outside #root, so they are untouched. */
+      #root [data-rk] {
+        display: flex;
+        flex: 1 1 0%;
+        min-height: 0;
+      }
+
       /* Installed PWA (standalone): no browser chrome, so fill the entire screen
        * height. On iOS the small/dynamic viewport units stop ~47px short of the
        * screen and leave a dead canvas strip at the bottom; `vh`/`lvh` span the
@@ -238,6 +249,6 @@
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
-  <script src="/_expo/static/js/web/index-1c321039d1a0500b855d25351c5ce293.js" defer></script>
+  <script src="/_expo/static/js/web/index-7226b8695f529ce9c8a793d1bd2f1900.js" defer></script>
 </body>
 </html>

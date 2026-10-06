@@ -1,6 +1,6 @@
 // @screen wirex.sepa-recipient
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Keyboard } from "react-native";
+import { Keyboard, Platform } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import {
   Button,
@@ -140,6 +140,9 @@ const SepaRecipientModal: React.FC<Props> = ({
     }
     // Don't check if already prefilled from scanner
     if (prefilledIban) return;
+    // On web, iOS shows its Paste/Speak callout for every clipboard read that
+    // is not a direct tap on paste, so the PWA skips this unprompted read.
+    if (Platform.OS === "web") return;
     (async () => {
       try {
         const text = await Clipboard.getStringAsync();

@@ -403,7 +403,44 @@ export async function sendTokenOnBase({
     args: [toAddress, value],
   });
 
-  // 4) Gas drip: an EOA holding tokens but no ETH cannot pass estimateGas
+  // 4) Prove the source EOA can fund this exact token transfer before doing
+  // any gas work. The amount shown by a screen can be stale or can come from a
+  // different pocket (for example, the card balance); only balanceOf for this
+  // account and contract is authoritative at the transfer boundary.
+  let tokenBalance: bigint;
+  try {
+    const result = await publicClient.call({
+      to: tokenAddress,
+      data: encodeFunctionData({
+        abi: ERC20_ABI,
+        functionName: "balanceOf",
+        args: [account.address],
+      }),
+    });
+    if (!result.data) throw new Error("empty balanceOf response");
+    tokenBalance = BigInt(result.data);
+  } catch (cause) {
+    const err = new Error("Source wallet balance is unavailable. Retry in a moment.") as Error & {
+      code?: string;
+      cause?: unknown;
+    };
+    err.code = "TOKEN_BALANCE_UNAVAILABLE";
+    err.cause = cause;
+    throw err;
+  }
+  if (value > tokenBalance) {
+    const err = new Error("Source wallet balance is too low for this transfer.") as Error & {
+      code?: string;
+      available?: bigint;
+      requested?: bigint;
+    };
+    err.code = "INSUFFICIENT_TOKEN_BALANCE";
+    err.available = tokenBalance;
+    err.requested = value;
+    throw err;
+  }
+
+  // 5) Gas drip: an EOA holding tokens but no ETH cannot pass estimateGas
   // below, so users would be stuck with unswappable funds. Only mainnet has an
   // in-app faucet. A KNOWN-empty wallet fails here with a typed error instead of
   // falling through to estimateGas, whose raw RPC rejection says nothing a user
@@ -420,7 +457,7 @@ export async function sendTokenOnBase({
     }
   }
 
-  // 5) Estimate gas then send.
+  // 6) Estimate gas then send.
   // `gas` upper bound is required: viem fills in maxFeePerGas/PriorityFee
   // when an account is passed, and the RPC's eth_estimateGas then runs a
   // conservative safety check `sender_balance >= maxFeePerGas × gas`.
@@ -450,7 +487,7 @@ export async function sendTokenOnBase({
   } as unknown as Parameters<typeof walletClient.sendTransaction>[0]);
   log("[BaseTokenTransfer] Submitted tx", { hash });
 
-  // 6) When awaitReceipt is true (the default), verify the tx confirmed.
+  // 7) When awaitReceipt is true (the default), verify the tx confirmed.
   // Confirmed revert → throw. Receipt-poll timeout / RPC error → return
   // unconfirmed so callers can show pending UI without applying success
   // semantics. The tx is already broadcast with its nonce, so the form

@@ -62,6 +62,8 @@ import { KIND_IMAGE } from "../../lib/addressBook/kindImages";
 import { avatarSeed, contactAvatar } from "../../lib/addressBook/petAvatar";
 import { initialOf } from "../../lib/addressBook/initial";
 import { copyToClipboard } from "../../lib/copyToClipboard";
+import { BIC_RE, isValidIbanChecksum, normalizeIban } from "../../lib/addressBook/contact";
+import { wirexService } from "../../services/wirex/WirexService";
 import { t } from "../../lib/i18n";
 import { toNuriUsername } from "../../lib/pay/nuriUsername";
 import { resolvePayRecipient } from "../../lib/pay/resolvePayRecipient";
@@ -80,6 +82,7 @@ import {
   destinationsFromDraft,
   draftFieldsFor,
   emptyDraftDestination,
+  fillKnownBics,
   routeDestination,
   type SaveOffer,
   type SendRoute,
@@ -366,6 +369,45 @@ const AddressBookScreen: React.FC<Props> = ({
         : d,
     );
   }, []);
+
+  // Bank rows fill their BIC from the server's bank registry. Found BICs are
+  // kept per IBAN, so a row that returns to an IBAN (or moves) gets it again;
+  // a reply only fills rows whose BIC is still empty, never a typed one. Where
+  // the registry has no BIC, Save waits for the user to type it.
+  const bicFound = useRef(new Map<string, string>());
+  const bicPending = useRef(new Set<string>());
+  useEffect(() => {
+    if (!draft) {
+      bicFound.current.clear();
+      bicPending.current.clear();
+      return;
+    }
+    const known = fillKnownBics(draft.destinations, bicFound.current);
+    if (known !== draft.destinations) {
+      setDraft({ ...draft, destinations: known });
+      return;
+    }
+    for (const entry of draft.destinations) {
+      if (entry.type !== "bank" || entry.bic.trim()) continue;
+      const iban = normalizeIban(entry.raw);
+      if (!isValidIbanChecksum(iban) || bicFound.current.has(iban)) continue;
+      if (bicPending.current.has(iban)) continue;
+      bicPending.current.add(iban);
+      void wirexService
+        .ibanLookup(iban)
+        .then((res) => {
+          if (!res.valid || !res.bic || res.needsManualBic) return;
+          bicFound.current.set(iban, res.bic);
+          setDraft((d) =>
+            d ? { ...d, destinations: fillKnownBics(d.destinations, bicFound.current) } : d,
+          );
+        })
+        .catch(() => {
+          // The lookup is an assist: the BIC field stays typable.
+        })
+        .finally(() => bicPending.current.delete(iban));
+    }
+  }, [draft]);
 
   // A recipient handed over from a finished send: an already-saved destination
   // opens its contact; a new one opens the add form with it filled in.
@@ -857,7 +899,12 @@ const AddressBookScreen: React.FC<Props> = ({
 
                   <TextField
                     value={entry.raw}
-                    onChangeText={(raw) => updateEntry(index, { raw })}
+                    onChangeText={(raw) => {
+                      // A BIC belongs to the IBAN it was found for: a new IBAN drops it.
+                      const changed =
+                        entry.type === "bank" && normalizeIban(raw) !== normalizeIban(entry.raw);
+                      updateEntry(index, changed ? { raw, bic: "" } : { raw });
+                    }}
                     placeholder={t(`${K}.placeholder_${kind.replace("-", "_")}`)}
                     autoCapitalize={entry.type === "bank" ? "characters" : "none"}
                     inputMode={
@@ -952,7 +999,12 @@ const AddressBookScreen: React.FC<Props> = ({
               disabled={
                 saving ||
                 !draft?.name.trim() ||
-                !draft?.destinations.some((entry) => entry.raw.trim())
+                !draft?.destinations.some((entry) => entry.raw.trim()) ||
+                // A bank destination is payable only with its BIC.
+                draft.destinations.some(
+                  (entry) =>
+                    entry.type === "bank" && entry.raw.trim() && !BIC_RE.test(entry.bic.trim()),
+                )
               }
               onPress={() => void saveDraft()}
             >

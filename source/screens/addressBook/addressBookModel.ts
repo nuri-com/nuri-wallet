@@ -6,6 +6,7 @@ import {
   destinationKey,
   MAX_DESTINATIONS,
   normalizeDestination,
+  normalizeIban,
 } from "../../lib/addressBook/contact";
 import { isNuriLightningAddress } from "../../lib/pay/nuriUsername";
 import { isValidEvmAddress } from "../../lib/validation";
@@ -234,6 +235,25 @@ function destinationFromDraftFields(entry: DraftDestination): Destination {
   }
 }
 
+/**
+ * Fills the empty BIC of every bank row whose IBAN has a known BIC. A typed BIC
+ * is never replaced. Returns the same array when nothing changed.
+ */
+export function fillKnownBics(
+  entries: DraftDestination[],
+  known: ReadonlyMap<string, string>,
+): DraftDestination[] {
+  let changed = false;
+  const next = entries.map((entry) => {
+    if (entry.type !== "bank" || entry.bic.trim()) return entry;
+    const bic = known.get(normalizeIban(entry.raw));
+    if (!bic) return entry;
+    changed = true;
+    return { ...entry, bic };
+  });
+  return changed ? next : entries;
+}
+
 /** Every filled-in row of the form, in order; empty rows are dropped. */
 export function destinationsFromDraft(entries: DraftDestination[]): Destination[] {
   return entries.filter((e) => e.raw.trim()).map(destinationFromDraft);
@@ -365,7 +385,8 @@ export function destinationsFromNuriUser(rails: NuriUserRails): Destination[] {
 
 function draftKey(entry: DraftDestination): string | null {
   try {
-    return destinationKey(normalizeDestination(destinationFromDraft(entry)));
+    // Identity only: a bank row is the same destination before its BIC is in.
+    return destinationKey(normalizeDestination(destinationFromDraft(entry), true));
   } catch {
     return null;
   }

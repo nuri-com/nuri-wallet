@@ -51,10 +51,10 @@ import {
 import { parsePayLink } from "../../lib/pay/payLinkPath";
 import { PAY_WALLET_AVAILABLE } from "../../lib/pay/payWallet";
 import { type PayRecipient, resolvePayRecipient } from "../../lib/pay/resolvePayRecipient";
+import { useKeypadFit } from "../../lib/useKeypadFit";
 import { isValidEvmAddress } from "../../lib/validation";
 import {
   availablePaySources,
-  type PayBitcoinMethod,
   type PayRail,
   type PaySourceAsset,
   railRequiresAmount,
@@ -67,6 +67,7 @@ import { usePayWalletSwap } from "./hooks/usePayWalletSwap";
 const K = "screen.PayLink";
 
 const BTC_LOGO = require("../../assets/rails/btc.png");
+const LIGHTNING_LOGO = require("../../assets/rails/lightning.png");
 const EUR_FLAG = require("../../assets/flags/eur.png");
 const USD_FLAG = require("../../assets/flags/usa.png");
 
@@ -84,6 +85,7 @@ const SOURCE_LOOK: Record<
   { image?: number; glyph: string | null; decimals: boolean; unit: string }
 > = {
   BTC: { image: BTC_LOGO, glyph: null, decimals: false, unit: "sats" },
+  BTC_LN: { image: LIGHTNING_LOGO, glyph: null, decimals: false, unit: "sats" },
   USDC_BASE: { image: USD_FLAG, glyph: "$", decimals: true, unit: "USDC" },
   EURC_BASE: { image: EUR_FLAG, glyph: "€", decimals: true, unit: "EURC" },
   // The payer names the token in the wallet panel; this card shows no figure.
@@ -105,7 +107,7 @@ function initialLink(): ReturnType<typeof parsePayLink> {
  * are offered on such a link, so the unit always matches.
  */
 function fixedKeypadAmount(amount: string, source: PaySourceAsset): string {
-  if (source !== "BTC") return amount;
+  if (source !== "BTC" && source !== "BTC_LN") return amount;
   const sats = exactBaseUnits(amount, 8);
   return sats === null ? "" : sats.toString();
 }
@@ -138,12 +140,11 @@ type Props = { username: string };
 const PayLinkScreen: React.FC<Props> = ({ username }) => {
   const [lookup, setLookup] = useState<Lookup>({ state: "loading" });
   const [source, setSource] = useState<PaySourceAsset | null>(null);
-  // Bitcoin is one source; the payer then says whether they send it on-chain
-  // or over Lightning (swapped into the recipient's on-chain address).
-  const [bitcoinMethod, setBitcoinMethod] = useState<PayBitcoinMethod>("onchain");
   const [picking, setPicking] = useState(false);
   const [amount, setAmount] = useState("");
   const { target, busy, failed, request, reset } = usePayLinkTarget();
+  // A short screen compacts the keypad before it scrolls.
+  const keypadFit = useKeypadFit();
   const [link] = useState(initialLink);
   const { settle } = link;
   // A link with an amount fixes it: no keypad, the recipient's figure is what
@@ -186,7 +187,7 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
   }, [source, sources]);
 
   const rail: PayRail | null =
-    recipient && source ? selectPayRail(source, recipient, settle, bitcoinMethod) : null;
+    recipient && source ? selectPayRail(source, recipient, settle) : null;
   // The connect-wallet swap pays the recipient's address for the link's
   // currency: their EVM address for a stable, their bitcoin address for BTC.
   const walletRecipient =
@@ -221,16 +222,7 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
       reset();
       setAmount("");
       setSource(next);
-      setBitcoinMethod("onchain");
       setPicking(false);
-    },
-    [reset],
-  );
-
-  const pickBitcoinMethod = useCallback(
-    (next: PayBitcoinMethod) => {
-      reset();
-      setBitcoinMethod(next);
     },
     [reset],
   );
@@ -265,7 +257,7 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
   // the same way — an amount outside the endpoint's bounds. `reset` keeps what
   // they typed, so they land back on it.
   // A Lightning payment funds a swap order; it is followed until the bitcoin
-  // lands on-chain, and a dead order withdraws its invoice.
+  // lands onchain, and a dead order withdraws its invoice.
   const order = usePayOrderStatus(target?.trackOrderId ?? null);
   const stalled = failed || order?.state === "failed";
   const overlay = stalled ? (
@@ -273,6 +265,9 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
   ) : busy ? (
     <SwapProcessingView phase="route" />
   ) : null;
+  // The amount form: the keypad scrolls with the content so a short screen can
+  // compact it, and the CTA stays in the footer.
+  const showForm = Boolean(recipient && rail && rail.kind !== "wallet-swap" && !target && !overlay);
 
   return (
     <Screen>
@@ -297,117 +292,108 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
           </Topbar>
         </Header>
 
-        <Scroll>
-          <View direction="column" align="stretch" gap="lg" paddingX="lg" fill="grow">
-            {lookup.state === "loading" ? (
-              <View direction="column" align="center" justify="center" fill="grow">
-                <Spinner />
-              </View>
-            ) : null}
+        <Scroll onLayout={keypadFit.onViewportLayout}>
+          <View
+            onLayout={keypadFit.onContentLayout}
+            direction="column"
+            align="stretch"
+            gap={keypadFit.compact ? "sm" : "lg"}
+            paddingX="lg"
+            paddingBottom={keypadFit.compact ? "sm" : "lg"}
+            fill="grow"
+          >
+            <View direction="column" align="stretch" gap="lg" fill="grow">
+              {lookup.state === "loading" ? (
+                <View direction="column" align="center" justify="center" fill="grow">
+                  <Spinner />
+                </View>
+              ) : null}
 
-            {lookup.state === "missing" ? (
-              <Text size="md" muted align="center">
-                {t(`${K}.notFound`, { username })}
-              </Text>
-            ) : null}
+              {lookup.state === "missing" ? (
+                <Text size="md" muted align="center">
+                  {t(`${K}.notFound`, { username })}
+                </Text>
+              ) : null}
 
-            {overlay}
+              {overlay}
 
-            {order?.state === "settled" ? (
-              <View direction="column" align="stretch" fill="grow">
-                <BrandStatusView
-                  title={t(`${K}.orderSettled`)}
-                  illustration={<GotPaidIllustration width={241} height={213} />}
+              {order?.state === "settled" ? (
+                <View direction="column" align="stretch" fill="grow">
+                  <BrandStatusView
+                    title={t(`${K}.orderSettled`)}
+                    illustration={<GotPaidIllustration width={241} height={213} />}
+                  />
+                </View>
+              ) : null}
+
+              {/* Summary stays visible when the keypad becomes a payment target. */}
+              {recipient && rail && look && !overlay && order?.state !== "settled" ? (
+                <PayLinkSummary
+                  username={username}
+                  sourceLabel={t(`${K}.asset.${rail.source}`)}
+                  {...(look.image !== undefined
+                    ? { image: look.image }
+                    : { icon: "wallet" as const })}
+                  amount={
+                    source && NO_KEYPAD.has(source)
+                      ? null
+                      : target?.amount !== null && target
+                        ? amountFigure(exactAmountText(target) ?? "", look)
+                        : amountFigure(typedAmount, look)
+                  }
+                  onPickSource={() => setPicking(true)}
                 />
-              </View>
-            ) : null}
+              ) : null}
 
-            {/* Summary stays visible when the keypad becomes a payment target. */}
-            {recipient && rail && look && !overlay && order?.state !== "settled" ? (
-              <PayLinkSummary
-                username={username}
-                sourceLabel={t(`${K}.asset.${rail.source}`)}
-                {...(look.image !== undefined
-                  ? { image: look.image }
-                  : { icon: "wallet" as const })}
-                amount={
-                  source && NO_KEYPAD.has(source)
-                    ? null
-                    : target?.amount !== null && target
-                      ? amountFigure(exactAmountText(target) ?? "", look)
-                      : amountFigure(typedAmount, look)
-                }
-                onPickSource={() => setPicking(true)}
-              />
-            ) : null}
-
-            {/* Bitcoin: on-chain straight to the recipient, or Lightning
-                swapped into their on-chain address. */}
-            {source === "BTC" && !target && !overlay ? (
-              <View direction="row" gap="sm" distribute="even">
-                {(["onchain", "lightning"] as const).map((method) => (
-                  <Button
-                    key={method}
-                    size="sm"
-                    variant={bitcoinMethod === method ? "solid" : "soft"}
-                    {...(bitcoinMethod === method ? { accent: "lilac" as const } : {})}
-                    onPress={() => pickBitcoinMethod(method)}
-                    accessibilityLabel={t(`${K}.bitcoinMethod.${method}`)}
-                  >
-                    <ButtonText>{t(`${K}.bitcoinMethod.${method}`)}</ButtonText>
-                  </Button>
-                ))}
-              </View>
-            ) : null}
-            {rail?.kind === "btc-lightning" && !target && !overlay ? (
-              <Text size="sm" muted align="center">
-                {t(`${K}.lightningHint`)}
-              </Text>
-            ) : null}
-
-            {/* Any token from the payer's own wallet, swapped in-page into what
+              {/* Any token from the payer's own wallet, swapped in-page into what
                 the link asks for. The wallet signs; nothing is shown as a QR. */}
-            {rail?.kind === "wallet-swap" && !overlay ? (
-              <PayWalletSwapPanel
-                state={wallet.state}
-                fixedAmount={fixedAmount}
-                holdings={wallet.holdings}
-                settleLabel={t(`${K}.asset.${settle}`)}
-                onConnect={() => void wallet.connect()}
-                onRefreshHoldings={wallet.refreshHoldings}
-                onQuote={(holding, typed) => void wallet.quote(holding, typed)}
-                onPay={() => void wallet.pay()}
-                onResume={() => void wallet.resume()}
-                onReset={wallet.reset}
-              />
-            ) : null}
+              {rail?.kind === "wallet-swap" && !overlay ? (
+                <PayWalletSwapPanel
+                  state={wallet.state}
+                  fixedAmount={fixedAmount}
+                  holdings={wallet.holdings}
+                  settleLabel={t(`${K}.asset.${settle}`)}
+                  onConnect={() => void wallet.connect()}
+                  onRefreshHoldings={wallet.refreshHoldings}
+                  onQuote={(holding, typed) => void wallet.quote(holding, typed)}
+                  onPay={() => void wallet.pay()}
+                  onResume={() => void wallet.resume()}
+                  onReset={wallet.reset}
+                />
+              ) : null}
 
-            {rail?.kind === "evm-any" && !target && !overlay ? (
-              <Text size="sm" muted align="center">
-                {t(`${K}.anyTokenHint`)}
-              </Text>
-            ) : null}
+              {rail?.kind === "evm-any" && !target && !overlay ? (
+                <Text size="sm" muted align="center">
+                  {t(`${K}.anyTokenHint`)}
+                </Text>
+              ) : null}
 
-            {rail && target && !overlay && order?.state !== "settled" ? (
-              <PayTargetView
-                target={target}
-                label={
-                  rail.kind === "btc-lightning"
-                    ? t(`${K}.bitcoinMethod.lightning`)
-                    : t(`${K}.asset.${rail.source}`)
-                }
-                {...(exactAmount ? { exactAmount } : {})}
-                {...(order?.state === "waiting"
-                  ? { status: t(`${K}.orderWaiting`) }
-                  : rail.kind === "evm-any"
-                    ? { status: t(`${K}.anyTokenHint`) }
-                    : {})}
+              {rail && target && !overlay && order?.state !== "settled" ? (
+                <PayTargetView
+                  target={target}
+                  label={t(`${K}.asset.${rail.source}`)}
+                  {...(exactAmount ? { exactAmount } : {})}
+                  {...(order?.state === "waiting"
+                    ? { status: t(`${K}.orderWaiting`) }
+                    : rail.kind === "evm-any"
+                      ? { status: t(`${K}.anyTokenHint`) }
+                      : {})}
+                />
+              ) : null}
+            </View>
+
+            {showForm && keypad ? (
+              <AmountKeypad
+                compact={keypadFit.compact}
+                onDigit={(digit) => changeAmount(`${amount}${digit}`)}
+                {...(look?.decimals ? { onDecimal: () => changeAmount(`${amount}.`) } : {})}
+                onDelete={() => changeAmount(amount.slice(0, -1))}
               />
             ) : null}
           </View>
         </Scroll>
 
-        {recipient && rail && rail.kind !== "wallet-swap" && !target && !overlay ? (
+        {showForm ? (
           <Footer
             safeAreaBottom
             direction="column"
@@ -416,13 +402,6 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
             paddingX="lg"
             paddingBottom="sm"
           >
-            {keypad ? (
-              <AmountKeypad
-                onDigit={(digit) => changeAmount(`${amount}${digit}`)}
-                {...(look?.decimals ? { onDecimal: () => changeAmount(`${amount}.`) } : {})}
-                onDelete={() => changeAmount(amount.slice(0, -1))}
-              />
-            ) : null}
             <Button
               size="lg"
               variant="solid"

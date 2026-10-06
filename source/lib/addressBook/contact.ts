@@ -29,7 +29,7 @@ export type Destination =
       label?: string;
     }
   | { type: "lightning"; raw: string; label?: string }
-  | { type: "bank"; raw: string; iban: string; bic?: string; holder?: string; label?: string }
+  | { type: "bank"; raw: string; iban: string; bic: string; holder?: string; label?: string }
   | { type: "phone"; raw: string; e164: string; label?: string }
   | { type: "email"; raw: string; email: string; label?: string };
 
@@ -64,7 +64,7 @@ const ASSET_RE = /^[A-Za-z0-9.]{1,16}$/;
 const E164_RE = /^\+[1-9][0-9]{6,14}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const IBAN_RE = /^[A-Z]{2}[0-9]{2}[A-Z0-9]{10,30}$/;
-const BIC_RE = /^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/;
+export const BIC_RE = /^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/;
 
 const trim = (value: unknown): string => String(value ?? "").trim();
 
@@ -94,8 +94,12 @@ function optionalLabel(value: unknown): string | undefined {
   return label;
 }
 
-/** Validate one destination and return it in canonical form. */
-export function normalizeDestination(input: Destination): Destination {
+/**
+ * Validate one destination and return it in canonical form. Every write needs
+ * a bank BIC; `stored` reads a record saved before that rule (BIC left empty,
+ * filled when the contact is next edited).
+ */
+export function normalizeDestination(input: Destination, stored = false): Destination {
   const raw = trim(input?.raw);
   if (!raw) throw new ContactValidationError("destination is empty");
   if (raw.length > 2048) throw new ContactValidationError("destination too long");
@@ -116,13 +120,14 @@ export function normalizeDestination(input: Destination): Destination {
       const iban = normalizeIban(input.iban || raw);
       if (!isValidIbanChecksum(iban)) throw new ContactValidationError("invalid IBAN");
       const bic = trim(input.bic).toUpperCase();
-      if (bic && !BIC_RE.test(bic)) throw new ContactValidationError("invalid BIC");
+      if (!(stored && !bic) && !BIC_RE.test(bic))
+        throw new ContactValidationError("bank destination needs a valid BIC");
       const holder = trim(input.holder);
       return {
         type: "bank",
         raw,
         iban,
-        ...(bic ? { bic } : {}),
+        bic,
         ...(holder ? { holder: holder.slice(0, MAX_LABEL_CHARS) } : {}),
         ...(label ? { label } : {}),
       };
@@ -151,7 +156,12 @@ function encodedBytes(value: unknown): number {
 }
 
 /** Build a validated contact record from user input. */
-export function buildContact(id: string, input: ContactInput, now: number): Contact {
+export function buildContact(
+  id: string,
+  input: ContactInput,
+  now: number,
+  stored = false,
+): Contact {
   const label = trim(input?.label);
   if (!label) throw new ContactValidationError("contact needs a name");
   if (label.length > MAX_LABEL_CHARS) throw new ContactValidationError("name too long");
@@ -160,7 +170,7 @@ export function buildContact(id: string, input: ContactInput, now: number): Cont
   const nuriUsername = trim(input.nuriUsername).toLowerCase().replace(/^@/, "");
   if (nuriUsername && !NURI_USERNAME_RE.test(nuriUsername))
     throw new ContactValidationError("invalid Nuri username");
-  const destinations = (input.destinations ?? []).map(normalizeDestination);
+  const destinations = (input.destinations ?? []).map((d) => normalizeDestination(d, stored));
   if (destinations.length === 0) throw new ContactValidationError("contact needs a destination");
   if (destinations.length > MAX_DESTINATIONS)
     throw new ContactValidationError("too many destinations");
@@ -203,7 +213,7 @@ export function parseContact(json: string): Contact | null {
   if (record.deleted) return tombstone(record.id, Number(record.updatedAt) || 0);
   try {
     return {
-      ...buildContact(record.id, record, Number(record.updatedAt) || 0),
+      ...buildContact(record.id, record, Number(record.updatedAt) || 0, true),
       updatedAt: Number(record.updatedAt) || 0,
     };
   } catch {

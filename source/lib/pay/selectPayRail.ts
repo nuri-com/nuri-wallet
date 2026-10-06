@@ -18,8 +18,9 @@ import type { BaseStableAssetId } from "../../services/swapkit/SwapKitStableAsse
 import type { PayRecipient } from "./resolvePayRecipient";
 
 export const PAY_SOURCE_ASSETS = [
-  // One Bitcoin source; the payer then says how they send it (PayBitcoinMethod).
   "BTC",
+  // Lightning, swapped into the recipient's onchain address (SwapKit BTC_LN -> BTC).
+  "BTC_LN",
   "USDC_BASE",
   "EURC_BASE",
   // Any token the payer's browser wallet holds, swapped in-page straight into
@@ -31,12 +32,6 @@ export const PAY_SOURCE_ASSETS = [
 ] as const;
 
 export type PaySourceAsset = (typeof PAY_SOURCE_ASSETS)[number];
-
-/**
- * How a Bitcoin payer sends. The recipient's app receives on-chain only, so
- * Lightning is swapped into their on-chain address (SwapKit BTC_LN -> BTC).
- */
-export type PayBitcoinMethod = "onchain" | "lightning";
 
 /** What the recipient ends up holding: the link's `?to=` currency. */
 export type PaySettleAsset = BaseStableAssetId | "BTC";
@@ -62,7 +57,6 @@ export function selectPayRail(
   source: PaySourceAsset,
   recipient: PayRecipient,
   settle: PaySettleAsset = "EURC_BASE",
-  bitcoinMethod: PayBitcoinMethod = "onchain",
 ): PayRail | null {
   switch (source) {
     case "EVM_WALLET": {
@@ -74,10 +68,13 @@ export function selectPayRail(
         ? { kind: "evm-any", source, address: recipient.evmAddress }
         : null;
     case "BTC":
-      if (!recipient.btcAddress) return null;
-      return bitcoinMethod === "lightning"
+      return recipient.btcAddress
+        ? { kind: "btc-onchain", source, address: recipient.btcAddress }
+        : null;
+    case "BTC_LN":
+      return recipient.btcAddress
         ? { kind: "btc-lightning", source, settleTarget: recipient.btcAddress }
-        : { kind: "btc-onchain", source, address: recipient.btcAddress };
+        : null;
     case "USDC_BASE":
       return recipient.evmAddress
         ? { kind: "evm-stable", source, asset: "USDC_BASE", address: recipient.evmAddress }
@@ -101,6 +98,7 @@ function landsIn(source: PaySourceAsset, settle: PaySettleAsset): boolean {
     case "EVM_WALLET":
       return true; // swapped in-page into the link's currency
     case "BTC":
+    case "BTC_LN":
       return settle === "BTC";
     case "EURC_BASE":
     case "USDC_BASE":

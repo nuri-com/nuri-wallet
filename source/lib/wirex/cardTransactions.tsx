@@ -271,7 +271,8 @@ export function mapWirexBankActivity(
                 type: "bank" as const,
                 raw: iban,
                 iban,
-                ...(counterparty.bic ? { bic: counterparty.bic } : {}),
+                // May be empty: saving opens the add form, which looks it up.
+                bic: counterparty.bic,
                 ...(counterparty.name ? { holder: counterparty.name } : {}),
               },
               ...(counterparty.name ? { name: counterparty.name } : {}),

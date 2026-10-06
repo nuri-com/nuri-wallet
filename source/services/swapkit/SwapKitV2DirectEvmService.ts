@@ -190,6 +190,9 @@ export async function executeV2DirectEvmSwap(params: {
         card: params.destination === "card" ? quote.settleTarget : null,
       },
       moveAmounts: { sendAmount: quote.sendAmount, receiveAmount: quote.receiveAmount },
+      // Stored on the order row: at terminal it is what keeps a card-bound
+      // swap's receive leg off the wallet balance.
+      ...(params.destination === "card" ? { destination: "card" as const } : {}),
       ...(params.destination === "card"
         ? { cardPocket: target.asset === "USDC_BASE" ? ("USD" as const) : ("EUR" as const) }
         : {}),
