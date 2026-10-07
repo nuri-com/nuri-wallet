@@ -1,4 +1,6 @@
-// Address book sync engine, shared by the app and the local CLI/MCP.
+// Address book sync engine of the app. The desktop tools do not run it: they
+// get the book through a passkey approval on connect.nuri.com, which applies
+// the same newest-per-slot and relay-ack rules there.
 //
 // Local state holds ONLY signed, encrypted events (the same bytes the relays
 // get), so nothing readable is at rest; contacts are decrypted in memory.
@@ -112,7 +114,7 @@ export class AddressBook {
   private queue: Promise<unknown> = Promise.resolve();
 
   // Plain fields (no parameter properties) so Node's type stripping can run
-  // this module directly for the local CLI/MCP.
+  // this module directly.
   private readonly keys: AddressBookKeys;
   private readonly transport: AddressBookTransport;
   private readonly storage: AddressBookStorage;
@@ -382,7 +384,7 @@ export class AddressBook {
     return run;
   }
 
-  /** Resolves when queued edits and any background sync are done (tests, CLI, MCP). */
+  /** Resolves when queued edits and any background sync are done (tests). */
   async settled(): Promise<void> {
     for (;;) {
       await this.queue;

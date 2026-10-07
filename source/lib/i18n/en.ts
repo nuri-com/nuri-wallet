@@ -837,8 +837,6 @@ export const en = {
       exportAccount_card: "Card",
       exportAccount_bank: "Bank",
       addressBook: "Address book",
-      addressBookKey: "Copy address book key for desktop",
-      addressBookKeyCopied: "Copied",
       shop: "Shop",
       esim: "eSIM",
       help: "Help",

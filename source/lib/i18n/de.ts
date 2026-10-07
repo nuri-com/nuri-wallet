@@ -850,8 +850,6 @@ export const de = {
       exportAccount_card: "Karte",
       exportAccount_bank: "Bank",
       addressBook: "Adressbuch",
-      addressBookKey: "Adressbuch-Schlüssel für Desktop kopieren",
-      addressBookKeyCopied: "Kopiert",
       shop: "Shop",
       esim: "eSIM",
       help: "Hilfe",

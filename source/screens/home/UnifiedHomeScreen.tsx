@@ -182,10 +182,7 @@ import EsimScreen from "../esim/EsimScreen";
 import { startEsimTracking } from "../../services/esim/EsimService";
 import type { SaveOffer, SendRoute } from "../addressBook/addressBookModel";
 import { isValidEvmAddress } from "../../lib/validation";
-import {
-  exportAddressBookKey,
-  getAddressBook,
-} from "../../services/addressBook/AddressBookService";
+import { getAddressBook } from "../../services/addressBook/AddressBookService";
 import { verificationRow, wirexActivationStep } from "../settings/settingsModel";
 import { closeSettings, openSettings, useSettingsOpen } from "../settings/settingsVisibility";
 import { homeOverviewGroups, orderHomeRails, overviewFigure } from "./homeOverview";
@@ -1941,7 +1938,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         onOpenAddressBook={() => setAddressBookOpen(true)}
         onOpenEsim={() => setEsimOpen(true)}
         onLogout={() => setLogoutConfirmVisible(true)}
-        exportAddressBookKey={exportAddressBookKey}
       />
 
       {/* An eSIM order's invoice opens the SAME Bitcoin send sheet a scanned

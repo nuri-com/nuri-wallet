@@ -14,7 +14,6 @@ import { zeroize } from "../../lib/crypto";
 import { getOrCreateNostrKeypair } from "../../lib/nostr/nostr";
 import { NOSTR_ADDRESS_BOOK_CACHE_KEY } from "../../lib/nostr/storage";
 import { getAuthData, storeAuthData } from "../../lib/secureKeyStorage";
-import { bech32 } from "bech32";
 
 let instance: Promise<AddressBook> | null = null;
 // The contacts last shown by any screen, so a screen mounting later can draw
@@ -89,19 +88,4 @@ export function resetAddressBook(): Promise<void> {
     resetting = null;
   });
   return resetting;
-}
-
-/**
- * The address-book-only key as an nsec, for the desktop CLI/MCP
- * (tools/address-book). It opens the address book and nothing else.
- */
-export async function exportAddressBookKey(): Promise<string> {
-  const nostr = await getOrCreateNostrKeypair();
-  const bookSk = deriveAddressBookSecret(nostr.sk);
-  zeroize(nostr.sk);
-  try {
-    return bech32.encode("nsec", bech32.toWords(bookSk));
-  } finally {
-    zeroize(bookSk);
-  }
 }

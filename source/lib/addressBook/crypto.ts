@@ -3,9 +3,10 @@
 // Keys: the address book has its OWN signing key, derived one-way from the
 // wallet's Nostr key (which is derived from the wallet seed):
 //   bookSk = HKDF-SHA256(sha256(nostrSk), salt, "nuri:address-book:sign:v1")
-// so restoring the wallet restores the book, while the key a user exports to
-// the desktop CLI/MCP grants the address book and nothing else — not support
-// chat, not the Nostr backups. From bookSk:
+// so restoring the wallet restores the book, while the book key grants the
+// address book and nothing else: not support chat, not the Nostr backups. The
+// desktop tools never hold it; they get the book through a passkey approval
+// at connect.nuri.com, which re-derives it there. From bookSk:
 //   encKey = HKDF-SHA256(sha256(bookSk), salt, "nuri:address-book:enc:v1")
 //   tagKey = HKDF-SHA256(sha256(bookSk), salt, "nuri:address-book:tag:v1")
 // The relay sees only:

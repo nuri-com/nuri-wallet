@@ -100,8 +100,6 @@ type Props = {
   onOpenEsim: () => void;
   /** Logs out right away. */
   onLogout: () => void;
-  /** The address-book-only key (nsec) for the desktop CLI/MCP. */
-  exportAddressBookKey: () => Promise<string>;
 };
 
 // What the notification rows show: the stored choice per category, which of
@@ -166,7 +164,6 @@ const SettingsScreen: React.FC<Props> = ({
   onOpenAddressBook,
   onOpenEsim,
   onLogout,
-  exportAddressBookKey,
 }) => {
   const insets = useSafeAreaInsets();
   const locale = useAppLocale();
@@ -176,7 +173,6 @@ const SettingsScreen: React.FC<Props> = ({
   const [creatingPayLink, setCreatingPayLink] = useState(false);
   const [notifications, setNotifications] = useState<NotificationsView>(null);
   const [exportState, setExportState] = useState<ExportState>({ kind: "idle" });
-  const [keyCopied, setKeyCopied] = useState(false);
 
   // Read fresh on every open: the OS permission can change while away.
   useEffect(() => {
@@ -184,7 +180,6 @@ const SettingsScreen: React.FC<Props> = ({
       setPicker(null);
       setCreatingPayLink(false);
       setExportState({ kind: "idle" });
-      setKeyCopied(false);
       return;
     }
     let cancelled = false;
@@ -386,23 +381,6 @@ const SettingsScreen: React.FC<Props> = ({
                     >
                       <ListActionText>{t(`${K}.addressBook`)}</ListActionText>
                       <ListActionTrailIcon name="chevron-right" />
-                    </ListAction>
-                    <ListAction
-                      accessibilityLabel={t(`${K}.addressBookKey`)}
-                      onPress={() =>
-                        void exportAddressBookKey()
-                          .then((nsec) => copyToClipboard(nsec))
-                          .then((ok) => setKeyCopied(Boolean(ok)))
-                      }
-                    >
-                      <ListActionText>{t(`${K}.addressBookKey`)}</ListActionText>
-                      {keyCopied ? (
-                        <ListActionTrailingText>
-                          {t(`${K}.addressBookKeyCopied`)}
-                        </ListActionTrailingText>
-                      ) : (
-                        <ListActionTrailIcon name="copy" />
-                      )}
                     </ListAction>
                     <ListAction accessibilityLabel={t(`${K}.export`)} onPress={runExport}>
                       <ListActionText>{t(`${K}.export`)}</ListActionText>
