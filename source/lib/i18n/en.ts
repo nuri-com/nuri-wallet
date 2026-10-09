@@ -625,6 +625,9 @@ export const en = {
       declineLabel: "Decline",
       approveA11yLabel: "Approve this payment",
       declineA11yLabel: "Decline this payment",
+      approvedTitle: "Approval successful",
+      approvedMessage: "You can now return to your checkout.",
+      doneLabel: "Done",
     },
     WalletSendChoiceModal: {
       title: "Send Euro",

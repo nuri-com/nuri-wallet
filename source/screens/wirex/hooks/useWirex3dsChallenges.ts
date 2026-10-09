@@ -11,13 +11,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import { EventBus } from "../../../services/events/AppEventBusService";
+import { createViewEpoch, submit3dsResponse } from "../../../lib/wirex/threeDsResponse";
 import { wirexService, type Wirex3dsChallenge } from "../../../services/wirex/WirexService";
 
 export interface Wirex3dsState {
-  challenge: Wirex3dsChallenge | null; // first pending challenge (shown one at a time)
+  // The approved challenge while its confirmation shows, else the first
+  // pending one (shown one at a time).
+  challenge: Wirex3dsChallenge | null;
+  approved: boolean;
   visible: boolean;
   responding: boolean;
   respond: (approve: boolean) => void;
+  done: () => void;
   dismiss: () => void;
 }
 
@@ -29,6 +34,9 @@ export function useWirex3dsChallenges(params: {
   const [challenges, setChallenges] = useState<Wirex3dsChallenge[]>([]);
   const [visible, setVisible] = useState(false);
   const [responding, setResponding] = useState(false);
+  // Held after the server accepted an Approve, until the user taps Done.
+  const [approved, setApproved] = useState<Wirex3dsChallenge | null>(null);
+  const [viewEpoch] = useState(createViewEpoch);
   // Generation counter: each fetch bumps it; a resolution whose token no
   // longer matches is stale (params changed or unmounted) and is ignored.
   const fetchToken = useRef(0);
@@ -78,8 +86,11 @@ export function useWirex3dsChallenges(params: {
       offCardRefresh();
       // Invalidate any in-flight fetch so it can't resolve after unmount.
       fetchToken.current += 1;
+      // A session change: no earlier response may show its confirmation.
+      viewEpoch.invalidate();
+      setApproved(null);
     };
-  }, [refetch]);
+  }, [refetch, viewEpoch]);
 
   // Hide once the list empties — respond removed the last challenge, or a
   // poll returned none. (refetch sets visibility for non-empty results.)
@@ -94,37 +105,51 @@ export function useWirex3dsChallenges(params: {
       if (!current) return;
       respondInFlight.current = true;
       setResponding(true);
+      const epoch = viewEpoch.capture();
       void (async () => {
         try {
-          await wirexService.respond3ds({ transactionId: current.transactionId, approve });
+          const outcome = await submit3dsResponse(
+            () => wirexService.respond3ds({ transactionId: current.transactionId, approve }),
+            approve,
+          );
+          if (outcome === "failed") {
+            // Silent fail: modal stays open so the user can retry.
+            console.warn(
+              `[useWirex3dsChallenges] respond failed transaction_id=${current.transactionId}`,
+            );
+            return;
+          }
+          if (outcome === "approved" && viewEpoch.isCurrent(epoch)) setApproved(current);
           // Functional update: a foreground poll can land while the respond
           // call is in flight — filter the freshest list, not the tap-time
           // closure, so its result is never overwritten.
           setChallenges((prev) => prev.filter((c) => c.transactionId !== current.transactionId));
           // Pick up any remaining/expired state from the server.
           void refetch();
-        } catch {
-          // Silent fail: modal stays open so the user can retry.
-          console.warn(
-            `[useWirex3dsChallenges] respond failed transaction_id=${current.transactionId}`,
-          );
         } finally {
           respondInFlight.current = false;
           setResponding(false);
         }
       })();
     },
-    [challenges, refetch],
+    [challenges, refetch, viewEpoch],
   );
 
+  const done = useCallback(() => setApproved(null), []);
   // Referentially stable — the screen wires this into an EventBus reset handler.
-  const dismiss = useCallback(() => setVisible(false), []);
+  const dismiss = useCallback(() => {
+    viewEpoch.invalidate();
+    setVisible(false);
+    setApproved(null);
+  }, [viewEpoch]);
 
   return {
-    challenge: challenges[0] ?? null,
-    visible,
+    challenge: approved ?? challenges[0] ?? null,
+    approved: approved != null,
+    visible: visible || approved != null,
     responding,
     respond,
+    done,
     dismiss,
   };
 }

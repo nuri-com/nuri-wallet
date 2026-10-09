@@ -352,6 +352,9 @@ async function expectedFetchStatusReason(
   if (isConfirmResultPendingStatus(url, status)) {
     return "confirm_result_pending";
   }
+  if (status === 404 && /\/esim\/complete$/i.test(path)) {
+    return "esim_checkout_not_found";
+  }
   // No swap-provider classifiers: the retired provider's endpoints are gone, so
   // there is nothing left to explain away.
   return null;

@@ -29,8 +29,10 @@ const Wirex3dsApprovalHost: React.FC = () => {
       visible={threeDs.visible}
       challenge={threeDs.challenge}
       busy={threeDs.responding}
+      approved={threeDs.approved}
       onApprove={() => threeDs.respond(true)}
       onDecline={() => threeDs.respond(false)}
+      onDone={threeDs.done}
       onClose={threeDs.dismiss}
     />
   );

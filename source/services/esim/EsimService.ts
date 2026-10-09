@@ -88,7 +88,7 @@ function apiUrl(path: string): string {
 
 async function request(
   path: string,
-  init?: { method?: "GET" | "POST"; body?: unknown },
+  init?: { method?: "GET" | "POST"; body?: unknown; answers?: number[] },
 ): Promise<{ status: number; body: unknown }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -111,7 +111,7 @@ async function request(
       // a 200; never read that as data.
       throw new Error("nadanada is unavailable right now");
     }
-    if (!res.ok && res.status !== 402) {
+    if (!res.ok && !(init?.answers ?? [402]).includes(res.status)) {
       const message =
         body && typeof body === "object" && "error" in body
           ? String((body as { error: unknown }).error)
@@ -520,9 +520,11 @@ export async function claimEsimOrder(paymentHash: string): Promise<CompleteResul
   const order = current.pending.find((p) => p.paymentHash === paymentHash);
   if (!order) return null;
   if (order.topupIccid) return claimTopup(order, gen);
+  // 404 = nadanada has no checkout for this payment: an answer, not a failure.
   const { status, body } = await request("/esim/complete", {
     method: "POST",
     body: { paymentHash },
+    answers: [402, 404],
   });
   const result = parseComplete(status, body);
   if (result.status === "unpaid") {

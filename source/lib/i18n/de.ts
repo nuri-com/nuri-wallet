@@ -634,6 +634,9 @@ export const de = {
       declineLabel: "Ablehnen",
       approveA11yLabel: "Diese Zahlung best\u00e4tigen",
       declineA11yLabel: "Diese Zahlung ablehnen",
+      approvedTitle: "Freigabe erfolgreich",
+      approvedMessage: "Du kannst jetzt zu deinem Checkout zur\u00fcckkehren.",
+      doneLabel: "Fertig",
     },
     WalletSendChoiceModal: {
       title: "Euro senden",

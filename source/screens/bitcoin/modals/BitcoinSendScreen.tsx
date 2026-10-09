@@ -191,6 +191,18 @@ export default function BitcoinSendScreen({
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [localAmountLocked, setLocalAmountLocked] = useState(false);
   const [submittedAmountLocked, setSubmittedAmountLocked] = useState(false);
+  // A send that failed holds the sheet still: keypad gone, Confirm replaced by
+  // Try again, which only returns to the form. Nothing resubmits until the user
+  // confirms again (#1546).
+  const [sendFailed, setSendFailed] = useState(false);
+  const failSend = useCallback((message: string) => {
+    setErrorMessage(message);
+    setSendFailed(true);
+  }, []);
+  const clearSendFailure = useCallback(() => {
+    setSendFailed(false);
+    setErrorMessage(null);
+  }, []);
   const [overBalanceUnlock, setOverBalanceUnlock] = useState(false);
   const recipientFieldRef = useRef<TextFieldHandle>(null);
   // Manual entry is staged: recipient first (keyboard), then — after Next —
@@ -261,7 +273,9 @@ export default function BitcoinSendScreen({
   // recipient releases only the lock this screen put on.
   const invoiceLockedAmountRef = useRef(false);
   const amountEditable =
-    !submittedAmountLocked && ((allowAmountEdit && !localAmountLocked) || overBalanceUnlock);
+    !submittedAmountLocked &&
+    !sendFailed &&
+    ((allowAmountEdit && !localAmountLocked) || overBalanceUnlock);
   // Decide focus-on-open from the preset recipient (stable for the whole modal
   // session), not the live value. Empty preset → focus the recipient field
   // (manual recipient entry); preset → keypad entry, nothing to focus.
@@ -1021,7 +1035,7 @@ export default function BitcoinSendScreen({
           takeBackFromPill();
           setSubmittedAmountLocked(false);
           if (!isUserCancelledAuth(e)) {
-            setErrorMessage(errMsgText(e, t("screen.BitcoinSendScreen.errorSendFailed")));
+            failSend(errMsgText(e, t("screen.BitcoinSendScreen.errorSendFailed")));
           }
         } finally {
           setBusy(false);
@@ -1040,7 +1054,7 @@ export default function BitcoinSendScreen({
       if (!isArk && !isBolt11 && !isLnurl && !isRemit && isValidBitcoinAddressMainnet(addr)) {
         const owner = await getEthereumAddress();
         if (!owner) {
-          setErrorMessage(t("screen.BitcoinSendScreen.errorSendFailed"));
+          failSend(t("screen.BitcoinSendScreen.errorSendFailed"));
           return;
         }
         // Success is claimed only once an ORDER EXISTS. Firing it before the
@@ -1064,7 +1078,7 @@ export default function BitcoinSendScreen({
           setSubmittedAmountLocked(false);
           // A cancelled passkey is the user's own decision, not a failure.
           if (!isUserCancelledAuth(error)) {
-            setErrorMessage(errMsgText(error, t("screen.BitcoinSendScreen.errorSendFailed")));
+            failSend(errMsgText(error, t("screen.BitcoinSendScreen.errorSendFailed")));
           }
           return;
         } finally {
@@ -1281,7 +1295,7 @@ export default function BitcoinSendScreen({
         // a just-received balance cannot exit onchain yet. Name the wait instead
         // of surfacing the server's raw rejection.
         if (isArkadeVtxoTooFreshError(e)) {
-          setErrorMessage(formatOnchainTooFreshMessage(Number(e.availableAtMs || 0)));
+          failSend(formatOnchainTooFreshMessage(Number(e.availableAtMs || 0)));
           return;
         }
         // Diagnostic: dump the raw error in every shape we can extract so
@@ -1337,7 +1351,7 @@ export default function BitcoinSendScreen({
           // sends, so the sats are still here — and no retry closes the gap that
           // caused it. Both are things "please try again" gets wrong, so that
           // one class says what actually happened.
-          setErrorMessage(
+          failSend(
             isArkadeLightningLockupMismatchError(e)
               ? t("screen.BitcoinSendScreen.errorLightningLockupUnavailable")
               : t("screen.BitcoinSendScreen.errorSendFailed"),
@@ -1381,6 +1395,7 @@ export default function BitcoinSendScreen({
     scheduleSendSuccess,
     handOffToPill,
     takeBackFromPill,
+    failSend,
   ]);
 
   // When the send modal is closed, reset the form state so each open starts fresh.
@@ -1395,6 +1410,7 @@ export default function BitcoinSendScreen({
       setInfoMessage(null);
       setLocalAmountLocked(false);
       setSubmittedAmountLocked(false);
+      setSendFailed(false);
       setOverBalanceUnlock(false);
       setRecipientConfirmed(false);
       setRecipientFocused(false);
@@ -1875,7 +1891,8 @@ export default function BitcoinSendScreen({
                 // reading zero while the service still paid the invoice's
                 // real amount — two numbers on one screen, the true one
                 // invisible. Nothing to switch between, so nothing to press.
-                toggleDisabled={invoiceLockedAmountRef.current || isRecipientTzPhone}
+                // A failed send holds its amount and reason until Try again.
+                toggleDisabled={invoiceLockedAmountRef.current || isRecipientTzPhone || sendFailed}
                 message={
                   errorMessage
                     ? { text: errorMessage, tone: "alert" }
@@ -1916,22 +1933,23 @@ export default function BitcoinSendScreen({
             size="lg"
             variant="solid"
             accent="lilac"
-            onPress={handleConfirm}
+            onPress={sendFailed ? clearSendFailure : handleConfirm}
             disabled={
               busy ||
-              exceedsBalance ||
-              exceedsSettleableForOffboard ||
-              isBelowArkadeOnchainMinimum ||
-              isBelowArkSendMinimum ||
-              isBelowLnurlMinimum ||
-              isAboveLightningMaximum ||
-              invoiceUnpayable ||
-              remitQuoting ||
-              remitQuoteFailed ||
-              (currentSats <= 0 && !isRecipientBolt11)
+              (!sendFailed &&
+                (exceedsBalance ||
+                  exceedsSettleableForOffboard ||
+                  isBelowArkadeOnchainMinimum ||
+                  isBelowArkSendMinimum ||
+                  isBelowLnurlMinimum ||
+                  isAboveLightningMaximum ||
+                  invoiceUnpayable ||
+                  remitQuoting ||
+                  remitQuoteFailed ||
+                  (currentSats <= 0 && !isRecipientBolt11)))
             }
           >
-            <ButtonText>{ctaLabel}</ButtonText>
+            <ButtonText>{sendFailed ? t("common.tryAgain") : ctaLabel}</ButtonText>
           </Button>
         )}
       </Footer>

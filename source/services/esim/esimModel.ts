@@ -299,9 +299,12 @@ export function assertInvoiceMatchesOrder(
   }
 }
 
-/** /esim/complete: 402 = not settled yet; 200 = the eSIM. */
+/**
+ * /esim/complete: 402 = not settled yet; 404 = nadanada has no checkout for
+ * this payment, so nothing was paid to it either; 200 = the eSIM.
+ */
 export function parseComplete(status: number, body: unknown): CompleteResult {
-  if (status === 402) return { status: "unpaid" };
+  if (status === 402 || status === 404) return { status: "unpaid" };
   const data = unwrap(body, "complete");
   const nested = isRecord(data.esimData) ? data.esimData : {};
   const install = isRecord(data.installationDetails) ? data.installationDetails : nested;
