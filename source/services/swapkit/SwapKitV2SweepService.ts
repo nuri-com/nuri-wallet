@@ -14,7 +14,7 @@ import { getCacheValue, setCacheValue } from "../balance/TransactionCacheService
 import { sendTokenOnBase } from "../base/BaseTokenTransferService";
 import { BASE_CHAIN_ID } from "../../config/network";
 import { EURC_BASE_TOKEN, USDC_BASE_TOKEN } from "./SwapKitStableAssets";
-import { SWAPKIT_SWEEP_CHAIN_IDS } from "./SwapKitEvmSigner";
+import { SWAPKIT_SWEEP_CHAIN_IDS, signAndBroadcastSwapKitEvmTx } from "./SwapKitEvmSigner";
 import { isSignableChain, resolveCanonicalToken, type RegistryToken } from "./SwapKitTokenRegistry";
 import { sendErc20OnChain as sendSweepErc20OnChain } from "./SwapKitSweepService";
 import {
@@ -31,9 +31,14 @@ import {
 } from "./SwapKitV2Service";
 import type { SwapKitV2ActionContext, SwapKitV2Executors } from "./SwapKitV2ActionService";
 import { makeStandardV2Executors } from "./SwapKitV2Executors";
-import { formatUnits } from "viem";
+import { encodeFunctionData, formatUnits, getAddress, parseAbi } from "viem";
 import { decimalUnits } from "./SwapKitV2ApprovalBounds";
-import { settleBindingForOrder, type SwapKitV2SettleBinding } from "./SwapKitV2EvmRouteBinding";
+import {
+  assertEvmCallBoundToRoute,
+  settleBindingForOrder,
+  type SwapKitV2EvmRouteBinding,
+  type SwapKitV2SettleBinding,
+} from "./SwapKitV2EvmRouteBinding";
 import { emitV2SwapRefresh, startSwapKitV2Tracking } from "./SwapKitV2PendingTracker";
 import { noteV2MoveCommitted } from "./SwapKitV2MoveStatus";
 import { getSwapKitV2RecoveryKey } from "./SwapKitV2RecoveryKey";
@@ -75,6 +80,8 @@ export type SwapKitV2SweepItem = {
   address?: string;
   /** Display decimal. Never a money bound — see `amountRaw`. */
   amount?: number | string;
+  /** Approval first (server): the allowance this sweep needs before its order is created. */
+  approval?: { chainId?: number; token?: string; spender?: string; units?: string };
   /** The exact on-chain balance the server scanned (src/amounts.mjs tokenAmount). */
   amountRaw?: { asset?: string; decimals?: number; units?: string };
   usd?: number | string;
@@ -402,6 +409,50 @@ let claimInFlight: Promise<SwapKitClaimOutcome> | null = null;
  * user's part is over and the claim screen may close. */
 export type SwapKitClaimHandoff = () => void;
 
+const ERC20_APPROVE = parseAbi([
+  "function approve(address spender, uint256 amount) returns (bool)",
+]);
+
+/** Approve exactly the scanned units of the item's own token to the server's
+ * quoted spender, on the item's own chain; true once the approval is mined. */
+async function approveSweepItem(item: SwapKitV2SweepItem, wallet: string): Promise<boolean> {
+  const approval = item.approval;
+  const token = await canonicalSweepToken(item);
+  if (!approval?.spender || !approval.token || !token) return false;
+  if (Number(approval.chainId) !== token.chainId)
+    throw new Error("approval chain does not match the scanned token");
+  if (getAddress(approval.token) !== getAddress(token.address))
+    throw new Error("approval token does not match the scanned token");
+  const detected = sweepItemUnits(item, token);
+  const units = BigInt(String(approval.units ?? "0"));
+  if (detected === null || units <= 0n || units > detected)
+    throw new Error("approval exceeds the scanned balance");
+  const call = {
+    chainId: token.chainId,
+    to: getAddress(token.address),
+    data: encodeFunctionData({
+      abi: ERC20_APPROVE,
+      functionName: "approve",
+      args: [getAddress(approval.spender), units],
+    }),
+  };
+  // The same route guard every sweep order's approval passes: only a known
+  // route spender, at most the scanned units. Checked here before anything is
+  // signed, and again by the signer through the route binding.
+  const route: SwapKitV2EvmRouteBinding = {
+    chainId: token.chainId,
+    sourceToken: getAddress(token.address),
+    settle: null,
+  };
+  assertEvmCallBoundToRoute(call, route, detected, getAddress(wallet));
+  await signAndBroadcastSwapKitEvmTx(
+    { ...call, value: 0n, from: getAddress(wallet) },
+    { maxApprovalUnits: detected, route },
+  );
+  console.log(`[SwapKitV2Sweep] approved ${assetLabel(item)} for the sweep`);
+  return true;
+}
+
 /** One claim at a time, app-wide (a second tap observes the same outcome). */
 export function claimSwapKitSweep(onHandoff?: SwapKitClaimHandoff): Promise<SwapKitClaimOutcome> {
   if (!claimInFlight) {
@@ -421,23 +472,46 @@ export function claimSwapKitSweep(onHandoff?: SwapKitClaimHandoff): Promise<Swap
 async function runClaimSwapKitSweep(onHandoff?: SwapKitClaimHandoff): Promise<SwapKitClaimOutcome> {
   const wallet = await getEthereumAddress();
   if (!wallet) throw new Error("Ethereum wallet address is missing.");
-  const armed = (await sweepSwapKitV2({
-    wallet,
-    baseCurrency: await getSwapKitBaseCurrency(),
-    confirm: true,
-    minUsd: MIN_USD,
-    signableChains: CLAIMABLE_SWEEP_CHAIN_IDS,
-    capabilities: SWEEP_CAPABILITIES,
-    signerClass: { evm: "eoa" },
-  })) as SwapKitV2SweepResult;
-
-  // The sweep endpoint creates the orders server-side; the wallet re-adopts and
-  // drives them via status/submit carrying its recoveryKey. Derive it once and
-  // persist it on each sweep row so a restart reuses the exact value (never a
-  // live re-derivation that could flip EOA↔credId — see #4).
+  // The server commits each sweep order under this recoveryKey (it refuses a
+  // commit without one), and the wallet re-adopts and drives the orders with
+  // it. Derive it once, before the sweep, and persist it on each sweep row so a
+  // restart reuses the exact value (never a live re-derivation that could flip
+  // EOA↔credId — see #4).
   const sweepRecoveryKey = await getSwapKitV2RecoveryKey().catch(
     () => undefined as string | undefined,
   );
+  const confirmSweep = async (): Promise<SwapKitV2SweepResult> =>
+    (await sweepSwapKitV2({
+      wallet,
+      baseCurrency: await getSwapKitBaseCurrency(),
+      confirm: true,
+      minUsd: MIN_USD,
+      signableChains: CLAIMABLE_SWEEP_CHAIN_IDS,
+      capabilities: SWEEP_CAPABILITIES,
+      signerClass: { evm: "eoa" },
+      ...(sweepRecoveryKey ? { recoveryKey: sweepRecoveryKey } : {}),
+    })) as SwapKitV2SweepResult;
+  let armed = await confirmSweep();
+
+  // Approval first: an item the server returns with `approval` and no order
+  // needs its allowance before the order is created, so the order's swap is
+  // ready the moment it exists and cannot expire behind a slow approval. Approve
+  // exactly the scanned units to the quoted spender, then confirm once more.
+  // A run killed in between resumes on the next tap: the allowance is on chain.
+  const approvals = (armed.items ?? []).filter((item) => !item.order?.orderId && item.approval);
+  if (approvals.length > 0) {
+    let approved = 0;
+    for (const item of approvals) {
+      try {
+        if (await approveSweepItem(item, wallet)) approved++;
+      } catch (e) {
+        console.log(
+          `[SwapKitV2Sweep] approval failed for ${assetLabel(item)} — ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    if (approved > 0) armed = await confirmSweep();
+  }
 
   let started = 0;
   let refusedLocally = 0;

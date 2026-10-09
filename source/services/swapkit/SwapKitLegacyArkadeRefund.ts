@@ -78,7 +78,8 @@ const asRecord = (value: unknown): Record<string, unknown> =>
  */
 export function legacyArkadeRefundsOf(order: unknown): LegacyArkadeRefund[] {
   const o = asRecord(order);
-  const txId = String(o.txId || "").trim();
+  // swap_track answers with `id`; swap_list rows carry `txId`.
+  const txId = String(o.txId || o.id || "").trim();
   if (!txId || o.terminal === true) return [];
   const actions = Array.isArray(o.actions) ? o.actions : [];
   const out: LegacyArkadeRefund[] = [];

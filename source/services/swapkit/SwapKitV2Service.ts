@@ -543,6 +543,8 @@ export async function sweepSwapKitV2(args: {
   capabilities?: readonly string[];
   signerClass?: SwapKitV2SignerClass;
   idempotencyKey?: string;
+  /** Required by the server to commit (confirm:true) an order. */
+  recoveryKey?: string;
 }): Promise<SwapKitV2SweepResponse> {
   if (args.confirm) await getSwapKitV2Capabilities();
   return callSwapKitV2Tool<SwapKitV2SweepResponse>("swap_sweep", args);
