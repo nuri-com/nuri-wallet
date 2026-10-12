@@ -2,7 +2,7 @@
 // Send from Visa & Banking to a card: pick a saved payout card (or add one),
 // then the amount. The hand-off between sheets is the screen's, so each step
 // opens through `handOff`.
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { wirexService, type WirexPayoutCard } from "../../../services/wirex/WirexService";
 import type { CardPayoutPrefill } from "../modals/CardPayoutAddModal";
 
@@ -16,17 +16,24 @@ export function useCardPayoutFlow(handOff: (open: () => void) => void) {
   // A card picked in the address book: the add screen opens filled in.
   const [prefill, setPrefill] = useState<CardPayoutPrefill | null>(null);
   const [card, setCard] = useState<WirexPayoutCard | null>(null);
+  // Bumped whenever the flow closes or restarts: a card list that answers
+  // late never opens a sheet over whatever the user moved on to.
+  const generation = useRef(0);
 
   const start = useCallback(async () => {
+    const mine = ++generation.current;
+    const current = () => generation.current === mine;
     setLoadFailed(false);
     try {
       const list = await wirexService.listPayoutCards();
+      if (!current()) return;
       // No saved card yet: straight to adding one.
-      if (list.length === 0) handOff(() => setAddVisible(true));
-      else handOff(() => setCards(list));
+      if (list.length === 0) handOff(() => current() && setAddVisible(true));
+      else handOff(() => current() && setCards(list));
     } catch {
+      if (!current()) return;
       setLoadFailed(true);
-      handOff(() => setCards([]));
+      handOff(() => current() && setCards([]));
     }
   }, [handOff]);
 
@@ -60,6 +67,7 @@ export function useCardPayoutFlow(handOff: (open: () => void) => void) {
   );
 
   const closeAll = useCallback(() => {
+    generation.current += 1;
     setCards(null);
     setAddVisible(false);
     setPrefill(null);
@@ -69,7 +77,10 @@ export function useCardPayoutFlow(handOff: (open: () => void) => void) {
   return {
     cards,
     loadFailed,
-    closePick: () => setCards(null),
+    closePick: () => {
+      generation.current += 1;
+      setCards(null);
+    },
     pick,
     addVisible,
     closeAdd: () => {

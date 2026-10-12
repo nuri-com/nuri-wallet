@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from "react";
-import { StyleSheet } from "react-native";
+import { type ImageSourcePropType, StyleSheet } from "react-native";
 
 import {
   Header,
@@ -68,6 +68,8 @@ export type ActivityItem = {
    * row: in reads "Emil sent", out "Emil received". Unset keeps the label.
    */
   incoming?: boolean;
+  /** The counterpart's mark (a currency flag, Bitcoin, Visa), drawn like a contact's picture. */
+  image?: ImageSourcePropType;
   /** Arkade: the other party's output scripts (hex), matched against saved contacts. */
   counterpartyScripts?: string[];
   /** The other party's address (a sender, for money in), matched against saved contacts. */
@@ -280,6 +282,8 @@ const ActivitySheet: React.FC<Props> = ({
                       >
                         {contact && !item.pending ? (
                           <ListActionLeadingAvatar source={contactAvatar(contact)} />
+                        ) : item.image && !item.pending ? (
+                          <ListActionLeadingAvatar source={item.image} />
                         ) : (
                           <ListActionLeadingAvatar
                             name={item.pending ? "spinner" : item.icon}

@@ -38,7 +38,7 @@ import { inFlightActivityItem } from "../../../services/money/inFlightActivity";
 import { t } from "../../../lib/i18n";
 import { getArkadeWalletSummarySnapshot } from "../../../services/arkade/ArkadeWalletService";
 import SwapStatusDetailSheet from "../../swapkit/SwapStatusDetailSheet";
-import { swapRowTitle, useSwapLegs } from "../../../services/swapkit/swapActivity";
+import { swapRow, useSwapLegs } from "../../../services/swapkit/swapActivity";
 import { groupCount } from "../../../lib/formatting";
 
 type Props = BitcoinTransactionsProps;
@@ -306,7 +306,7 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
   }, [visible, homeSym]);
 
   // A leg of a swap reads as the other side of it: "From Euro", "To Dollar".
-  const swapLegs = useSwapLegs();
+  const swapLegs = useSwapLegs(visible);
   const items = useMemo(() => {
     const list: ActivityItem[] = [];
     // Sats that are in the wallet but cannot be spent yet: a VTXO still being
@@ -379,7 +379,10 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
           sublabel: subtitle,
           label: atx.isMigrationTx
             ? "Migration"
-            : (swapRowTitle(swapLegs, atx.id, isIncoming) ?? title),
+            : (swapRow(swapLegs, atx.id, isIncoming)?.title ?? title),
+          ...(swapRow(swapLegs, atx.id, isIncoming)?.image
+            ? { image: swapRow(swapLegs, atx.id, isIncoming)?.image }
+            : {}),
           amount: `${sign}BTC ${atx.amountSats}`,
           amountSecondary: fiatLine ?? `${homeSym} —`,
           pending: isPending,
@@ -450,7 +453,10 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
         key: `${txAddress}:${t.txid}`,
         icon: isIncoming ? "plus" : "arrow-up",
         sublabel: subtitle,
-        label: swapRowTitle(swapLegs, t.txid, isIncoming) ?? title,
+        label: swapRow(swapLegs, t.txid, isIncoming)?.title ?? title,
+        ...(swapRow(swapLegs, t.txid, isIncoming)?.image
+          ? { image: swapRow(swapLegs, t.txid, isIncoming)?.image }
+          : {}),
         onPress: onOpenExplorer,
         onPressLabel: viewInExplorerLabel,
         saveOffer: recipient

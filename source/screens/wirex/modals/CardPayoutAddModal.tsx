@@ -3,7 +3,7 @@
 // saved cards from the address book; a picked one fills the number. The number
 // goes to the server once, which has Wirex tokenize it; only the last four come
 // back. A newly typed card is saved to the address book.
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   Button,
   ButtonText,
@@ -50,9 +50,15 @@ const CardPayoutAddModal: React.FC<Props> = ({ visible, onClose, onAdded, prefil
   // The name a saved card filled in; the suggestions hide until it changes.
   const [pickedName, setPickedName] = useState<string | null>(null);
 
+  // Bumped on every open and close: a save that answers after the sheet closed
+  // or reopened never opens the next step for the screen now showing.
+  const opening = useRef(0);
+
   // A new start never shows the last card number typed.
   useEffect(() => {
+    opening.current += 1;
     if (!visible) return;
+    setSaving(false);
     setName(prefill?.name ?? "");
     setNumber(prefill ? formatCardNumberInput(prefill.number) : "");
     setPickedName(prefill ? prefill.name.trim() : null);
@@ -73,6 +79,7 @@ const CardPayoutAddModal: React.FC<Props> = ({ visible, onClose, onAdded, prefil
 
   const save = async () => {
     if (!canSave) return;
+    const mine = opening.current;
     setSaving(true);
     setError(null);
     // The submitting account's book, fixed now: a wallet switch while Wirex
@@ -88,13 +95,14 @@ const CardPayoutAddModal: React.FC<Props> = ({ visible, onClose, onAdded, prefil
         .catch(() => {
           // Never log the card number.
         });
-      onAdded(card);
+      if (opening.current === mine) onAdded(card);
     } catch (err) {
+      if (opening.current !== mine) return;
       // Never log the card number.
       const notActive = err instanceof Error && err.message.includes("card_transfer_not_active");
       setError(t(notActive ? "screen.CardPayout.notActive" : "screen.CardPayout.addFailed"));
     } finally {
-      setSaving(false);
+      if (opening.current === mine) setSaving(false);
     }
   };
 

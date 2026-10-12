@@ -91,15 +91,12 @@ import { BASE_CHAIN_ID, BASE_EURC, BASE_USDC } from "../../config/network";
 // and each network's own logo for the rest. All eight are 512px RGBA circles
 // bleeding to the edge, so one row cannot sit differently from the next. PNG
 // because the DS avatar takes an image source, and RN's Image cannot render SVG.
-const EUR_FLAG = require("../../assets/flags/eur.png");
-const USD_FLAG = require("../../assets/flags/usa.png");
-const BTC_LOGO = require("../../assets/rails/btc.png");
 const LIGHTNING_LOGO = require("../../assets/rails/lightning.png");
-const VISA_LOGO = require("../../assets/rails/visa.png");
 // The card's two faces have a logo each — the same Visa mark over the currency's
 // own flag. The plain mark stays on the board row, where the card is one thing.
 const SEPA_LOGO = require("../../assets/rails/sepa.png");
 import { ENS_PARENT_DOMAIN } from "../../config/constants";
+import { BTC_LOGO, EUR_FLAG, USD_FLAG, VISA_LOGO } from "../../lib/railMarks";
 import { getEthereumAddress } from "../../lib/secureKeyStorage";
 import { getArkadeLnurlStatusPersisted } from "../../services/arkade/ArkadeLnurlService";
 import { emitArkadeOpenUnlockWallet } from "../../services/arkade/ArkadeReceiveUnlockService";
@@ -2595,7 +2592,11 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                   key: "someone",
                   icon: "arrow-up" as const,
                   accent: "lilac" as const,
-                  label: t("screen.HomeScreen.sendToSomeone"),
+                  label: t(
+                    cardSheet?.card === "visa"
+                      ? "screen.HomeScreen.sendToBank"
+                      : "screen.HomeScreen.sendToSomeone",
+                  ),
                   // A bank transfer needs the IBAN, which can come after the card.
                   disabled: cardSheet?.card === "visa" && !wirexBankReady,
                 },
@@ -2637,15 +2638,13 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         items={[
           {
             key: "arkade",
-            icon: "lightning" as const,
-            accent: "lilac" as const,
+            image: LIGHTNING_LOGO,
             label: t("screen.HomeScreen.railBitcoinLightning"),
             sublabel: satsStr(arkadeSats),
           },
           {
             key: "onchain",
-            icon: "bitcoin" as const,
-            accent: "orange" as const,
+            image: BTC_LOGO,
             label: t("screen.HomeScreen.railBitcoin"),
             sublabel: satsStr(onchainSats),
           },
@@ -2665,15 +2664,13 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         items={[
           {
             key: "wallet",
-            accent: "lilac" as const,
-            icon: "euro-wallet" as const,
+            image: EUR_FLAG,
             label: t("screen.HomeScreen.railEuro"),
             sublabel: heldStr(walletEur, "EUR"),
           },
           {
             key: "dollar",
-            accent: "neutral" as const,
-            icon: "wallet" as const,
+            image: USD_FLAG,
             label: t("screen.HomeScreen.railDollar"),
             sublabel: heldStr(usdcBalance ?? 0, "USD"),
           },
@@ -2695,15 +2692,13 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
             ? [
                 {
                   key: "arkade",
-                  icon: "lightning" as const,
-                  accent: "lilac" as const,
+                  image: LIGHTNING_LOGO,
                   label: t("screen.HomeScreen.railBitcoinLightning"),
                   sublabel: satsStr(arkadeSats),
                 },
                 {
                   key: "onchain",
-                  icon: "bitcoin" as const,
-                  accent: "orange" as const,
+                  image: BTC_LOGO,
                   label: t("screen.HomeScreen.railBitcoin"),
                   sublabel: satsStr(onchainSats),
                 },
@@ -2711,15 +2706,13 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
             : [
                 {
                   key: "wallet",
-                  accent: "lilac" as const,
-                  icon: "euro-wallet" as const,
+                  image: EUR_FLAG,
                   label: t("screen.HomeScreen.railEuro"),
                   sublabel: heldStr(walletEur, "EUR"),
                 },
                 {
                   key: "dollar",
-                  accent: "neutral" as const,
-                  icon: "wallet" as const,
+                  image: USD_FLAG,
                   label: t("screen.HomeScreen.railDollar"),
                   sublabel: heldStr(usdcBalance ?? 0, "USD"),
                 },

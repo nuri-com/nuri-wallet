@@ -174,7 +174,7 @@ function quoteArgs(request: PayWalletQuoteRequest, asset: string): Record<string
 export async function quotePayWalletSwap(
   request: PayWalletQuoteRequest,
   deps: Pick<PayWalletDeps, "quote">,
-): Promise<PayWalletQuote | null> {
+): Promise<(PayWalletQuote & { options: SwapKitV2QuoteOption[] }) | null> {
   const asset = payWalletAssetId(request.token);
   if (!asset) return null;
   const settleSide = sideOf(request) === "settle";
@@ -202,17 +202,23 @@ export async function quotePayWalletSwap(
   );
   if (usable.length === 0) return null;
   // Exact decimal comparison: a float turns a long figure into Infinity.
-  // Deposit side: most arriving wins. Settle side: least spent wins.
-  const best = usable.reduce((a, b) =>
+  // Deposit side: most arriving first. Settle side: least spent first. The
+  // first is offered; the rest are the alternatives the payer may pick.
+  const options = [...usable].sort((a, b) =>
     settleSide
-      ? compareDecimals(b.depositAmount, a.depositAmount) < 0
-        ? b
-        : a
-      : compareDecimals(b.settleAmount, a.settleAmount) > 0
-        ? b
-        : a,
+      ? compareDecimals(a.depositAmount, b.depositAmount)
+      : compareDecimals(b.settleAmount, a.settleAmount),
   );
-  return { request, asset, option: best };
+  return { request, asset, option: options[0] as SwapKitV2QuoteOption, options };
+}
+
+/** Whether a token holding covers what a route spends, exactly in the token's units. */
+export function payWalletRouteFits(
+  option: Pick<SwapKitV2QuoteOption, "depositAmount">,
+  holding: { decimals: number; units: bigint },
+): boolean {
+  const spend = exactBaseUnits(option.depositAmount, holding.decimals);
+  return spend !== null && spend <= holding.units;
 }
 
 /** Compare two plain non-negative decimals exactly, as text (-1, 0, 1). */

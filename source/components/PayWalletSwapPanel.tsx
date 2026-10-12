@@ -11,6 +11,9 @@ import AmountKeypad from "./AmountKeypad";
 import BrandStatusView from "./BrandStatusView";
 import PayLinkSummary from "./PayLinkSummary";
 import SwapProcessingView, { SwapTryAgainView } from "./SwapProcessingView";
+import SwapRouteChoices from "./SwapRouteChoices";
+import { swapRouteCardDetail } from "../lib/formatting";
+import type { SwapKitV2QuoteOption } from "../services/swapkit/SwapKitV2Service";
 import PayWalletTokenPicker, {
   PAY_WALLET_CHAIN_NAME,
   payWalletHoldingKey,
@@ -44,6 +47,8 @@ type Props = {
   onConnect: () => void;
   onRefreshHoldings: () => void;
   onQuote: (holding: PayWalletHolding, amount: string) => void;
+  /** Picks another of the quoted routes. */
+  onSelectOption: (optionId: string) => void;
   onPay: () => void;
   onResume: () => void;
   onReset: () => void;
@@ -72,6 +77,7 @@ const PayWalletSwapPanel: React.FC<Props> = ({
   onConnect,
   onRefreshHoldings,
   onQuote,
+  onSelectOption,
   onPay,
   onResume,
   onReset,
@@ -87,7 +93,6 @@ const PayWalletSwapPanel: React.FC<Props> = ({
   useEffect(() => {
     if (holdings.status !== "ready" || selected) return;
     setSelectedKey(first ? payWalletHoldingKey(first) : null);
-    setAmount("");
   }, [holdings.status, selected, first]);
 
   if (state.step === "unavailable") {
@@ -156,8 +161,18 @@ const PayWalletSwapPanel: React.FC<Props> = ({
     );
   }
 
-  const busy = state.step === "busy";
+  // Pricing is the swap screens' own wait.
+  if (state.step === "busy") return <SwapProcessingView phase="route" />;
+
   const quoted = state.step === "quoted" ? state.quote : null;
+  const writeSettle = (value: string) =>
+    formatSettle ? formatSettle(value) : `${exactDecimal(value)} ${settleLabel}`;
+  // The Move sheet's price: the chosen route's detail, the others behind "Show more".
+  const routeDetail = (option: SwapKitV2QuoteOption) =>
+    swapRouteCardDetail({
+      providers: [option.optionId.split(":")[0]],
+      etaSeconds: option.expectedSettlement?.p50Seconds ?? null,
+    });
   const typed = amount.replace(",", ".").trim();
   const units = selected ? exactBaseUnits(typed, selected.decimals) : null;
   const tooMuch = !fixedAmount && !!selected && units !== null && units > selected.units;
@@ -169,9 +184,8 @@ const PayWalletSwapPanel: React.FC<Props> = ({
       onReset();
   };
   const changeAmount = (next: string) => {
-    if (!selected || busy) return;
     const [, fraction = ""] = next.split(".");
-    if (!/^\d*\.?\d*$/.test(next) || fraction.length > selected.decimals) return;
+    if (!/^\d*\.?\d*$/.test(next) || fraction.length > (selected?.decimals ?? 18)) return;
     setAmount(next.startsWith(".") ? `0${next}` : next.replace(/^0+(?=\d)/, ""));
     clearQuote();
   };
@@ -198,11 +212,9 @@ const PayWalletSwapPanel: React.FC<Props> = ({
       ? t("screen.MoveSheet.noRoute")
       : tooMuch || state.step === "insufficient"
         ? t(`${K}.moreThanBalance`)
-        : busy
-          ? t(`${K}.quoting`)
-          : quoted
-            ? t("screen.MoveSheet.confirm")
-            : t("screen.MoveSheet.next");
+        : quoted
+          ? t("screen.MoveSheet.confirm")
+          : t("screen.MoveSheet.next");
 
   return (
     <View direction="column" align="stretch" gap="lg" fill="grow">
@@ -211,26 +223,45 @@ const PayWalletSwapPanel: React.FC<Props> = ({
         to={toLabel ?? settleLabel}
         toAmount={(() => {
           const arrives = fixedAmount ?? quoted?.option.settleAmount ?? null;
-          if (arrives === null) return null;
-          return formatSettle ? formatSettle(arrives) : `${exactDecimal(arrives)} ${settleLabel}`;
+          return arrives === null ? null : writeSettle(arrives);
         })()}
         sourceLabel={sourceLabel}
         {...(logo ? { image: logo } : { icon: "wallet" as const })}
-        amount={selected && spend !== null ? `${spend} ${selected.symbol}` : null}
+        amount={spend === null ? null : selected ? `${spend} ${selected.symbol}` : spend}
         onPickSource={() =>
-          holdings.status === "failed"
-            ? onRefreshHoldings()
-            : list.length > 0 && !busy
-              ? setPicking(true)
-              : undefined
+          quoted
+            ? clearQuote()
+            : holdings.status === "failed"
+              ? onRefreshHoldings()
+              : list.length > 0
+                ? setPicking(true)
+                : undefined
         }
         {...(onPickSource ? { onArrowPress: onPickSource } : {})}
       />
 
-      {selected && !fixedAmount ? (
+      {state.step === "quoted" ? (
+        <View direction="column" align="stretch" justify="center" gap="sm">
+          {routeDetail(state.quote.option) ? (
+            <Text size="md" muted align="center">
+              {routeDetail(state.quote.option)}
+            </Text>
+          ) : null}
+          <SwapRouteChoices
+            options={state.options.map((option) => ({
+              id: option.optionId,
+              label: writeSettle(option.settleAmount),
+              sublabel: routeDetail(option),
+            }))}
+            selectedId={state.quote.option.optionId}
+            onSelect={onSelectOption}
+          />
+        </View>
+      ) : /* The amount is typed while the tokens load; the token only bounds it. */
+      !fixedAmount ? (
         <AmountKeypad
           onDigit={(digit) => changeAmount(`${amount}${digit}`)}
-          {...(selected.decimals > 0 ? { onDecimal: () => changeAmount(`${amount}.`) } : {})}
+          {...(selected?.decimals !== 0 ? { onDecimal: () => changeAmount(`${amount}.`) } : {})}
           onDelete={() => changeAmount(amount.slice(0, -1))}
         />
       ) : null}
@@ -241,7 +272,6 @@ const PayWalletSwapPanel: React.FC<Props> = ({
         accent="lilac"
         disabled={
           !selected ||
-          busy ||
           state.step === "no-route" ||
           state.step === "insufficient" ||
           (!quoted && !canQuote)
@@ -259,7 +289,6 @@ const PayWalletSwapPanel: React.FC<Props> = ({
           setPicking(false);
           if (key !== selectedKey) {
             setSelectedKey(key);
-            setAmount("");
             clearQuote();
           }
         }}

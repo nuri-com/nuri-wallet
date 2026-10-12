@@ -1,7 +1,7 @@
 // @screen wirex.card-payout-amount
 // How much goes to a saved card. Send asks the server for a quote, refuses one
 // that does not fit the balance, then signs that exact quote.
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Footer,
@@ -20,7 +20,8 @@ import DsSheetHost from "../../../components/DsSheetHost";
 import { t } from "../../../lib/i18n";
 import { useKeypadFit } from "../../../lib/useKeypadFit";
 import {
-  pickPayoutDebitToken,
+  isPayoutCurrencyToken,
+  payoutDebitCandidates,
   type PayoutCurrency,
   type PayoutDebitToken,
 } from "../../../lib/wirex/cardPayout";
@@ -56,24 +57,29 @@ const CardPayoutAmountModal: React.FC<Props> = ({
   onSuccess,
 }) => {
   const [amount, setAmount] = useState("");
-  const [token, setToken] = useState<PayoutDebitToken | null>(null);
+  const [tokens, setTokens] = useState<PayoutDebitToken[] | null>(null);
+  // Bumped on every open and close: an answer that arrives for an earlier
+  // opening never signs, and never closes or speaks for the sheet now open.
+  const opening = useRef(0);
   const [submitting, setSubmitting] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const keypadFit = useKeypadFit();
 
   useEffect(() => {
+    opening.current += 1;
     if (!visible) return;
     setAmount("");
     setSendError(null);
-    setToken(null);
+    setSubmitting(false);
+    setTokens(null);
     let cancelled = false;
     wirexService
       .getWallet(wallet)
       .then((result) => {
-        if (!cancelled) setToken(pickPayoutDebitToken(result.balances, currency));
+        if (!cancelled) setTokens(payoutDebitCandidates(result.balances, currency));
       })
       .catch(() => {
-        if (!cancelled) setToken(null);
+        if (!cancelled) setTokens([]);
       });
     return () => {
       cancelled = true;
@@ -82,8 +88,15 @@ const CardPayoutAmountModal: React.FC<Props> = ({
 
   const typed = amount || "0";
   const value = Number(typed);
-  const exceeds = token != null && value > token.balance;
-  const disabled = submitting || !card || !token || !(value > 0) || exceeds;
+  // The card's own currency is the one the title states. A same-currency token
+  // too small for the amount is out; a token in another currency is judged by
+  // its quote (the fee-inclusive debit in that token), never against this figure.
+  const own = tokens?.find((x) => isPayoutCurrencyToken(x, currency)) ?? null;
+  const payable = (tokens ?? []).filter(
+    (x) => !isPayoutCurrencyToken(x, currency) || value <= x.balance,
+  );
+  const exceeds = tokens != null && tokens.length > 0 && payable.length === 0;
+  const disabled = submitting || !card || !tokens?.length || !(value > 0) || exceeds;
 
   const edit = (next: string) => {
     if (submitting) return;
@@ -92,48 +105,65 @@ const CardPayoutAmountModal: React.FC<Props> = ({
   };
 
   const send = useCallback(async () => {
-    if (disabled || !card || !token) return;
+    if (disabled || !card) return;
+    const mine = opening.current;
+    const current = () => opening.current === mine;
     setSubmitting(true);
     try {
-      const quote = await wirexService.cardTransferEstimate({
-        recipientId: card.recipientId,
-        amount: typed,
-        currency,
-        tokenAddress: token.tokenAddress,
-      });
-      // The debit includes the fee: refuse before signing when it does not fit.
-      if (quote.debitAmount != null && quote.debitAmount > token.balance) {
+      // The first token whose quote fits pays: the debit includes the fee and
+      // is stated in that token, so it is compared with that token's balance.
+      let quote: Awaited<ReturnType<typeof wirexService.cardTransferEstimate>> | null = null;
+      for (const token of payable) {
+        const estimate = await wirexService.cardTransferEstimate({
+          recipientId: card.recipientId,
+          amount: typed,
+          currency,
+          tokenAddress: token.tokenAddress,
+        });
+        if (!current()) return;
+        if (estimate.debitAmount == null || estimate.debitAmount <= token.balance) {
+          quote = estimate;
+          break;
+        }
+      }
+      if (!quote) {
         setSendError(t("screen.CardPayout.feeHint"));
         return;
       }
+      // Closed or reopened while quoting: nothing is signed for it.
+      if (!current()) return;
       const transfer = await wirexService.cardTransfer(quote);
       if (!transfer.ok) throw new Error("wirex_card_transfer_rejected");
-      // Followed like a bank send: the bank feed lists the card transfer by id.
+      // Followed like a bank send: the bank feed lists the card transfer by
+      // id. Kept even when the sheet moved on, so the money is still tracked.
       if (transfer.transferId) {
         void startSepaInFlight({
           transferId: transfer.transferId,
           amount: value,
           fiat: currency,
         }).catch(() => {});
+        startMovePill().settleByRows(transfer.transferId);
       }
-      startMovePill().settleByRows(transfer.transferId);
-      onSuccess();
+      // Accepted without an id: nothing to follow, so no pill ever says
+      // "Completed" for it.
+      if (current()) onSuccess();
     } catch {
       // Keep the sheet open and say so. Never log card or amount details.
       console.warn("[CardPayoutAmountModal] send failed");
-      setSendError(t("screen.CardPayout.sendFailedHint"));
+      if (current()) setSendError(t("screen.CardPayout.sendFailedHint"));
     } finally {
-      setSubmitting(false);
+      if (current()) setSubmitting(false);
     }
-  }, [disabled, card, token, typed, currency, value, onSuccess]);
+  }, [disabled, card, payable, typed, currency, value, onSuccess]);
 
-  const hint = !token
-    ? t("screen.SepaAmountConfirmationModal.noTokenHint")
-    : exceeds
-      ? t("screen.SepaAmountConfirmationModal.insufficientHint")
-      : sendError;
-  const title = token
-    ? t("screen.CardPayout.amountTitleWithBalance", { amount: token.balance.toFixed(2) })
+  const hint =
+    tokens != null && tokens.length === 0
+      ? t("screen.SepaAmountConfirmationModal.noTokenHint")
+      : exceeds
+        ? t("screen.SepaAmountConfirmationModal.insufficientHint")
+        : sendError;
+  const title = own
+    ? t("screen.CardPayout.amountTitleWithBalance", { amount: own.balance.toFixed(2) })
     : t("screen.CardPayout.amountTitle");
   const cardLabel = useMemo(
     () => (card ? t("screen.CardPayout.cardRow", { last4: card.last4 }) : ""),

@@ -37,11 +37,8 @@ import {
   getSwapKitV2StatusMessage,
 } from "../../../services/swapkit/SwapKitV2PendingTracker";
 import SwapStatusDetailSheet from "../../swapkit/SwapStatusDetailSheet";
-import {
-  swapCounterpartName,
-  swapLegFor,
-  useSwapLegs,
-} from "../../../services/swapkit/swapActivity";
+import { VISA_LOGO } from "../../../lib/railMarks";
+import { swapRow, useSwapLegs } from "../../../services/swapkit/swapActivity";
 
 // Display-only: the amount as the sheet prints it.
 const formatFiatAmount = (
@@ -171,7 +168,7 @@ const WalletTransactionsModal: React.FC<Props> = ({
     return fetchAll();
   };
 
-  const swapLegs = useSwapLegs();
+  const swapLegs = useSwapLegs(visible);
   const items = useMemo(() => {
     const list = buildWalletTransactionRows(orders, pendingTransfers, pendingWalletFiat);
     console.log("[WalletTxModal] building items", {
@@ -193,8 +190,9 @@ const WalletTransactionsModal: React.FC<Props> = ({
       const isCard =
         (o?.meta?.source === "onchain_card" || kind.startsWith("card_")) &&
         kind !== "wallet_transfer_in";
-      let displayName = chainAddr ? "Wallet" : "";
-      const isWalletTransferOut = kind === "wallet_transfer_out";
+      // Empty: a counterparty known only by its address, read as someone, or
+      // as your own wallet when it is this wallet's address.
+      let displayName = "";
       if (isCard || kind === "card_topup_pending") {
         displayName = kind === "card_withdrawal" ? "Card Transfer" : "Card Top-Up";
       }
@@ -217,9 +215,6 @@ const WalletTransactionsModal: React.FC<Props> = ({
       if (isPendingLocal && kind === "swapkit_swap_pending") {
         displayName = isTopup ? t("screen.WalletTransactionsModal.topUp") : "SwapKit EUR → BTC";
       }
-      if (isWalletTransferOut) {
-        displayName = "Wallet";
-      }
       // A plain transfer to or from the card's own deposit address is the
       // user's own move: it reads as the card, never as a stranger's wallet.
       const cardAddress = (wirexAccountService.depositAddress() ?? "").toLowerCase();
@@ -227,19 +222,36 @@ const WalletTransactionsModal: React.FC<Props> = ({
       if (isOwnCard) {
         displayName = t("screen.HomeScreen.groupCardBanking");
       }
-      // A leg of a swap reads as the other side of it: "From Bitcoin", "To Euro".
-      const swapLeg =
-        isPendingBalance || isPendingLocal ? null : swapLegFor(swapLegs, pickOrderTxHash(o));
-      if (swapLeg) displayName = swapCounterpartName(swapLeg);
-      const title =
+      // A leg of a swap reads as the swap: "Euro → Dollar", "From Bitcoin".
+      const swap =
         isPendingBalance || isPendingLocal
+          ? null
+          : swapRow(swapLegs, pickOrderTxHash(o), isIncoming);
+      const own = [primaryAddress, address].some(
+        (mine) => Boolean(mine) && mine?.toLowerCase() === chainAddr.toLowerCase(),
+      );
+      const title =
+        swap?.title ??
+        (isPendingBalance || isPendingLocal
           ? displayName
-          : `${isIncoming ? "From" : "To"} ${displayName}`;
+          : !displayName
+            ? t(
+                own
+                  ? isIncoming
+                    ? "screen.WalletTransactionsModal.fromYourWallet"
+                    : "screen.WalletTransactionsModal.toYourWallet"
+                  : isIncoming
+                    ? "screen.WalletTransactionsModal.fromSomeone"
+                    : "screen.WalletTransactionsModal.toSomeone",
+              )
+            : `${isIncoming ? "From" : "To"} ${displayName}`);
+      // The counterpart's mark, as a contact's picture: Visa for the card.
+      const image = swap ? swap.image : isCard || isOwnCard ? VISA_LOGO : undefined;
       const dateIso = getOrderDateIso(o);
       const extra =
         isPendingBalance || isPendingLocal
           ? ""
-          : isCard || isOwnCard || swapLeg
+          : isCard || isOwnCard || swap
             ? ""
             : chainAddr
               ? maskAddress(chainAddr)
@@ -320,6 +332,7 @@ const WalletTransactionsModal: React.FC<Props> = ({
               : "arrow-up",
         sublabel: subtitle,
         label: title,
+        ...(image ? { image } : {}),
         onPress: handlePress,
         onPressLabel:
           kind === "swapkit_swap_pending"

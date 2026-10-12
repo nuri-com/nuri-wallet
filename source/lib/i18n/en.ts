@@ -391,6 +391,10 @@ export const en = {
       statusIncorrectSecurityCode: "Incorrect Security Code",
     },
     WalletTransactionsModal: {
+      fromSomeone: "From someone",
+      toSomeone: "To someone",
+      fromYourWallet: "From your wallet",
+      toYourWallet: "To your wallet",
       statusRejected: "Rejected",
       topUp: "Top up",
     },
@@ -705,6 +709,7 @@ export const en = {
       addFromWallet: "From another wallet",
       sendToBalances: "To my balances",
       sendToSomeone: "To someone",
+      sendToBank: "To bank",
       addMoneyPay: "Apple / Google Pay",
       railEuro: "Euro",
       railDollar: "Dollar",

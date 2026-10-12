@@ -15,6 +15,7 @@ import {
   isPayWalletPayer,
   matchesPayLinkIntent,
   isWalletRejection,
+  payWalletRouteFits,
   payWithWallet,
   pendingPayWallet,
   quotePayWalletSwap,
@@ -33,6 +34,7 @@ import {
   getSwapKitV2Status,
   quoteSwapKitV2,
   submitSwapKitV2Evidence,
+  type SwapKitV2QuoteOption,
 } from "../../../services/swapkit/SwapKitV2Service";
 
 const deps: PayWalletDeps = {
@@ -59,7 +61,14 @@ export type PayWalletState =
   | { step: "unavailable" }
   | { step: "connected"; account: `0x${string}`; chainId: number }
   | { step: "busy"; account: `0x${string}`; chainId: number }
-  | { step: "quoted"; account: `0x${string}`; chainId: number; quote: PayWalletQuote }
+  | {
+      step: "quoted";
+      account: `0x${string}`;
+      chainId: number;
+      quote: PayWalletQuote;
+      /** Every route the holding can pay, best first; `quote.option` is the one chosen. */
+      options: SwapKitV2QuoteOption[];
+    }
   | { step: "no-route"; account: `0x${string}`; chainId: number }
   /** Fixed-amount link: the route needs more of the token than the wallet holds. */
   | { step: "insufficient"; account: `0x${string}`; chainId: number; quote: PayWalletQuote }
@@ -276,20 +285,35 @@ export function usePayWalletSwap(
           ? exactBaseUnits(accepted.option.depositAmount, holding.decimals)
           : null;
         if (accepted && fixedAmount && (spend === null || spend > holding.units)) {
-          setState({ step: "insufficient", account, chainId, quote: accepted });
+          const { options: _alternatives, ...quote } = accepted;
+          setState({ step: "insufficient", account, chainId, quote });
           return;
         }
-        setState(
-          accepted
-            ? { step: "quoted", account, chainId, quote: accepted }
-            : { step: "no-route", account, chainId },
-        );
+        if (!accepted) {
+          setState({ step: "no-route", account, chainId });
+          return;
+        }
+        const { options: routes, ...quote } = accepted;
+        // Only routes this holding can pay are offered: an alternative that
+        // spends more than it holds never reaches commit or a wallet prompt.
+        const options = routes.filter((option) => payWalletRouteFits(option, holding));
+        setState({ step: "quoted", account, chainId, quote, options });
       } catch {
         if (requestId.current === id) setState({ step: "no-route", account, chainId });
       }
     },
     [recipient, settle, state, fixedAmount],
   );
+
+  /** Pick another of the quoted routes, as the swap screens' "Show more" does. */
+  const selectOption = useCallback((optionId: string) => {
+    setState((current) => {
+      if (current.step !== "quoted") return current;
+      // `options` holds only routes the holding can pay.
+      const option = current.options.find((candidate) => candidate.optionId === optionId);
+      return option ? { ...current, quote: { ...current.quote, option } } : current;
+    });
+  }, []);
 
   const pay = useCallback(async () => {
     if (state.step !== "quoted") return;
@@ -329,5 +353,5 @@ export function usePayWalletSwap(
     setState(account && chainId ? { step: "connected", account, chainId } : { step: "idle" });
   }, [account, chainId]);
 
-  return { state, holdings, refreshHoldings, connect, quote, pay, resume, reset };
+  return { state, holdings, refreshHoldings, connect, quote, selectOption, pay, resume, reset };
 }

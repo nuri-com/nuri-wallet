@@ -369,6 +369,7 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
                   onConnect={() => void wallet.connect()}
                   onRefreshHoldings={wallet.refreshHoldings}
                   onQuote={(holding, typed) => void wallet.quote(holding, typed)}
+                  onSelectOption={wallet.selectOption}
                   onPay={() => void wallet.pay()}
                   onResume={() => void wallet.resume()}
                   onReset={wallet.reset}

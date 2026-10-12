@@ -46,9 +46,9 @@ JavaScript, connect a wallet, sign transactions or deploy anything.
 For this snapshot, success prints:
 
 ```text
-PASS: 263 live files match release e08c304edd9312daecc0491ea3b71fdf1b0b2a99
-WAICT manifest: /waict/3U8jW1ogn4OrkM90G9HqE2
-Release manifest SHA-256: 83b9de1cfb6532cb814e917a7f565f06ece9cd4563c47d377e1a7c05b254ed54
+PASS: 263 live files match release befb1dfaae4608c2929fb903e5ad12c252facca6
+WAICT manifest: /waict/WdsByER8labRFc_fKdpewP
+Release manifest SHA-256: 94572f2102d32b8964fef52c85d78ac2233ef8ad519507b8140a0ebbb7ca02ad
 ```
 
 A failed request or mismatch produces a nonzero exit status. It is not proof of an
@@ -70,11 +70,11 @@ freshly downloaded from the same server. First identify the intended release.
 
 The release contains **217 Expo JavaScript chunks**, 2 other JavaScript files
 (nuri-service-worker.js, jsQR.js), HTML, CSS, assets, 3 JSON files and the WAICT integrity manifest.
-The full inventory is **263 files / 25,508,598 bytes**. Checking only the main
+The full inventory is **263 files / 25,513,366 bytes**. Checking only the main
 JavaScript file would leave other executable code and resources unchecked.
 
 The source subset was selected from Metro's emitted module graph, not by guessing
-which filenames looked unused. Its **638 emitted project source/asset files** were
+which filenames looked unused. Its **639 emitted project source/asset files** were
 preserved byte for byte; necessary build inputs are included as well. Shared code
 or a runtime debug helper can remain if it is part of that graph. Operational tools,
 plan archives, native projects and deployment workflows are not in the current tree.
@@ -94,7 +94,7 @@ There are three distinct identifiers:
 **Release manifest SHA-256:**
 
 ```text
-83b9de1cfb6532cb814e917a7f565f06ece9cd4563c47d377e1a7c05b254ed54
+94572f2102d32b8964fef52c85d78ac2233ef8ad519507b8140a0ebbb7ca02ad
 ```
 
 Compute it independently with Node.js:
@@ -104,17 +104,17 @@ node -e 'const fs=require("node:fs"),crypto=require("node:crypto"); console.log(
 ```
 
 The main application bundle is
-[`index-cb6ba63aa8aaf7d376305a4b26233844.js`](web/_expo/static/js/web/index-cb6ba63aa8aaf7d376305a4b26233844.js).
+[`index-4ea790e41f5c1863f46351fe2f67f865.js`](web/_expo/static/js/web/index-4ea790e41f5c1863f46351fe2f67f865.js).
 Its SHA-256 is:
 
 ```text
-d8ed1d86008f28efdb5f0695fa8998e032cd0c4ccdd10d84cecaa03c81cb5ba2
+97c1157020d2127d59391f8bde5157756a14720f444e136cfe8c85fd8b02c634
 ```
 
 To compare it with the live site without cloning anything:
 
 ```sh
-curl -s https://app.nuri.com/_expo/static/js/web/index-cb6ba63aa8aaf7d376305a4b26233844.js | shasum -a 256
+curl -s https://app.nuri.com/_expo/static/js/web/index-4ea790e41f5c1863f46351fe2f67f865.js | shasum -a 256
 ```
 
 This checks one file. `node verify.mjs` checks all of them.
@@ -179,7 +179,7 @@ flowchart LR
 ### Why 261 rebuilt files but 263 release files?
 
 `web/deployment.json` records deployment-time information, including the source SHA,
-release ID and timestamp. `web/waict/3U8jW1ogn4OrkM90G9HqE2` is the WAICT integrity manifest written
+release ID and timestamp. `web/waict/WdsByER8labRFc_fKdpewP` is the WAICT integrity manifest written
 at deploy time. Expo produces neither file. Rebuild mode excludes **only those two
 files** from the expected build output; it does not silently ignore arbitrary
 differences. The WAICT manifest is then recomputed from the rebuilt files and must match
@@ -193,9 +193,9 @@ the resulting application bytes were then checked, not assumed to be unchanged.
 | Recorded evidence | Value |
 | --- | --- |
 | Application version | `0.102.0` |
-| Deployment ID | `pwa-e08c304edd93` |
-| Original deployment source | `e08c304edd9312daecc0491ea3b71fdf1b0b2a99` |
-| Deployment timestamp | `2026-10-12T17:35:01Z` |
+| Deployment ID | `pwa-befb1dfaae46` |
+| Original deployment source | `befb1dfaae4608c2929fb903e5ad12c252facca6` |
+| Deployment timestamp | `2026-10-12T20:23:23Z` |
 | Last complete live comparison for this snapshot | `2026-10-12` |
 | Rebuild environment | GitHub Actions, Node `22.23.3`, npm `10.9.9`, clean directory |
 | Original production CI | nuri-expo Deploy PWA, Node 22 |
