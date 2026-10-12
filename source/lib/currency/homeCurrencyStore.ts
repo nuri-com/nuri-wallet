@@ -1,7 +1,8 @@
-// The display (home) currency the user picked: every figure the app converts or
-// aggregates is stated in it. It is a DEVICE preference, like the language —
-// stored on the device, kept across logout — and it never changes the currency a
-// balance is held in or an amount that is signed, quoted or sent.
+// The user's main currency: every figure the app converts or aggregates is
+// stated in it, and the card settles in it (anything sent to the card is
+// swapped into this currency's stable; card money in the other currency is
+// offered back as found money). It is a DEVICE preference, like the language:
+// stored on the device, kept across logout.
 //
 // Plain logic with its storage and change signal injected, so it is testable
 // without React Native. `HomeCurrencyService` wires the real ones.

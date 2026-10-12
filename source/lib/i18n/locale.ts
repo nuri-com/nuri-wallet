@@ -29,3 +29,27 @@ export function pickStartupLocale<L extends string>(
   if (storedCode && supported.includes(storedCode as L)) return storedCode as L;
   return resolveAppLocale(device, supported);
 }
+
+/**
+ * The string at a dotted `scope` in one locale's tree, with `%{name}`
+ * placeholders filled from `values`. No fallback to another locale: a missing
+ * key or value renders as a visible marker, as i18n-js rendered it.
+ */
+export function translate(
+  tree: unknown,
+  locale: string,
+  scope: string,
+  values?: Record<string, unknown>,
+): string {
+  let node: unknown = tree;
+  for (const key of scope.split(".")) {
+    node =
+      node != null && typeof node === "object" ? (node as Record<string, unknown>)[key] : undefined;
+  }
+  if (node == null) return `[missing "${locale}.${scope}" translation]`;
+  if (typeof node !== "string") return node as string;
+  return node.replace(/%\{([^}]+)\}/g, (placeholder, name: string) => {
+    const value = values?.[name];
+    return value == null ? `[missing "${placeholder}" value]` : String(value);
+  });
+}

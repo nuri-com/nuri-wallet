@@ -27,7 +27,10 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   result: SwapKitV2SweepResult | null;
-  /** Called after the sweep was armed successfully. */
+  /** The found amount, when the caller states it instead of a sweep result. */
+  amountText?: string;
+  /** The caller's own claim (the card's other currency): runs instead of the sweep. */
+  onClaim?: () => Promise<void>;
 };
 
 const formatUsd = (value: unknown): string => {
@@ -35,7 +38,7 @@ const formatUsd = (value: unknown): string => {
   return Number.isFinite(usd) && usd > 0 ? `~USD ${usd.toFixed(2)}` : "";
 };
 
-const SweepClaimSheet: FC<Props> = ({ visible, onClose, result }) => {
+const SweepClaimSheet: FC<Props> = ({ visible, onClose, result, amountText, onClaim }) => {
   const [busy, setBusy] = useState(false);
 
   const claim = async () => {
@@ -50,6 +53,15 @@ const SweepClaimSheet: FC<Props> = ({ visible, onClose, result }) => {
       setBusy(false);
       onClose();
     };
+    if (onClaim) {
+      // The sheet closes at once; the status pill and the balances carry the
+      // withdrawal from here.
+      handOff();
+      void onClaim().catch((e) => {
+        console.log(`[SweepClaim] claim failed: ${e instanceof Error ? e.message : String(e)}`);
+      });
+      return;
+    }
     try {
       // No success callback: `started` counts transfers SUBMITTED, not swaps
       // completed. The conversion runs afterwards and the pending rows carry it.
@@ -103,7 +115,7 @@ const SweepClaimSheet: FC<Props> = ({ visible, onClose, result }) => {
       <RNView style={styles.body}>
         <BrandStatusView
           title={t("screen.SweepClaimSheet.title")}
-          amount={formatUsd(result?.totalUsd)}
+          amount={amountText ?? formatUsd(result?.totalUsd)}
           illustration={<GeldsackIllustration width={240} height={219} />}
         />
       </RNView>

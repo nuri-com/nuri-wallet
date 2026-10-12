@@ -1,7 +1,7 @@
 // @screen v1-wallet-migration-screen
 import { useEffect, useRef } from "react";
 import { Platform } from "react-native";
-import * as Linking from "expo-linking";
+import Constants from "expo-constants";
 import * as WebBrowser from "expo-web-browser";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { IconButton, useNuriTheme, View } from "@ds";
@@ -40,8 +40,9 @@ export default function V1WalletMigrationScreen({
   // Tell v1 which scheme to redirect back to. From a Custom Tab the WebView
   // postMessage close path is unavailable, so v1 deep-links back into the app —
   // but dev/preview builds register nuri-dev:// / nuri-preview://, not nuri://.
-  // Linking.createURL uses THIS build's registered scheme.
-  const returnScheme = Linking.createURL("").replace(/:.*$/, "");
+  // THIS build's first registered scheme.
+  const scheme = Constants.expoConfig?.scheme;
+  const returnScheme = (Array.isArray(scheme) ? scheme[0] : scheme) ?? "";
   if (returnScheme) searchParams.set("returnScheme", returnScheme);
   const sourceUrl = `${V1_WALLET_URL}?${searchParams.toString()}`;
   // Android WebView has no WebAuthn (native opt-in was reverted for OTA), so the

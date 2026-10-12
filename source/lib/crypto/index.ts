@@ -25,7 +25,6 @@ import { xchacha20poly1305 as _xchacha20poly1305 } from "@noble/ciphers/chacha";
 import { gcm as _aesGcm } from "@noble/ciphers/aes";
 
 // StableLib - Additional ciphers
-import { XChaCha20Poly1305 as _XChaCha20Poly1305 } from "@stablelib/xchacha20poly1305";
 
 // Base64url helpers - canonical implementation in ../bytes
 import { bytesToBase64url, base64urlToBytes } from "../bytes";
@@ -75,8 +74,6 @@ export const secp256k1Module = _secp256k1Module;
 
 export const xchacha20poly1305 = _xchacha20poly1305;
 export const aesGcm = _aesGcm;
-
-export const XChaCha20Poly1305 = _XChaCha20Poly1305;
 
 // Type exports
 export type Bytes = Uint8Array;

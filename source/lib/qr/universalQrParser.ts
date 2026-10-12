@@ -2,7 +2,6 @@ import { decode as decodeBolt11 } from "light-bolt11-decoder";
 import { decode as decodeBolt12 } from "light-bolt12-decoder";
 import { isEpcQR, parse as parseEpc, validateIBAN } from "eu-payment-qr";
 import { bech32 } from "@scure/base";
-import { AccountId } from "caip";
 import { isAddress } from "viem";
 import {
   canonicalizeBitcoinAddress,
@@ -434,27 +433,18 @@ function parseCaip10(input: string): QrParseResult | null {
   // Quick check: must have exactly 2 colons (namespace:reference:address)
   const parts = input.split(":");
   if (parts.length !== 3) return null;
-
-  try {
-    const parsed = AccountId.parse(input);
-    const chainId =
-      typeof parsed.chainId === "string"
-        ? {
-            namespace: parsed.chainId.split(":")[0] || "",
-            reference: parsed.chainId.split(":")[1] || "",
-          }
-        : parsed.chainId;
-    const address =
-      chainId.namespace === "bip122" ? canonicalizeBitcoinAddress(parsed.address) : parsed.address;
-    return {
-      type: "caip10",
-      namespace: chainId.namespace,
-      chainRef: chainId.reference,
-      address,
-    };
-  } catch {
+  const [namespace, chainRef, rawAddress] = parts;
+  // The CAIP-10 spec patterns, applied as the caip package applied them.
+  if (
+    !/[-:a-zA-Z0-9]{7,106}/.test(input) ||
+    !/[-a-z0-9]{3,8}/.test(namespace) ||
+    !/[-a-zA-Z0-9]{1,32}/.test(chainRef) ||
+    !/[a-zA-Z0-9]{1,64}/.test(rawAddress)
+  ) {
     return null;
   }
+  const address = namespace === "bip122" ? canonicalizeBitcoinAddress(rawAddress) : rawAddress;
+  return { type: "caip10", namespace, chainRef, address };
 }
 
 /**

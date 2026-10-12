@@ -22,26 +22,26 @@
 //
 // Rendered as its own Layer so the home stays mounted behind it, like the
 // asset screen. Pickers are ChoiceSheets stacked above it.
-import type * as React from "react";
+import * as React from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Linking, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
+  Button,
+  ButtonText,
   Header,
   IconButton,
   List,
   ListAction,
   ListActionText,
   ListActionTrailIcon,
+  ListActionTextMuted,
   ListActionTrailingText,
+  ListActionTrailingTextMuted,
+  ListSeparator,
   NuriSafeAreaProvider,
   Screen,
   Scroll,
-  SelectField,
-  SelectFieldAvatar,
-  SelectFieldChevron,
-  SelectFieldLabel,
-  SelectFieldValue,
   Text,
   Topbar,
   TopbarTitle,
@@ -65,6 +65,11 @@ import { useAppLocale } from "../../lib/i18n/useAppLocale";
 import { getAppVersion } from "../../lib/loadedAppVersion";
 import { useSupportUnreadCount } from "../../lib/nostr/useSupportUnreadCount";
 import { payLinkUrl } from "../../lib/pay/payLinkPath";
+import {
+  PAY_WALLET_AVAILABLE,
+  PayWalletProvider,
+  usePayWalletConnection,
+} from "../../lib/pay/payWallet";
 import { setLanguagePreference } from "../../services/app/LanguagePreferenceService";
 import { EventBus } from "../../services/events/AppEventBusService";
 import { exportAllTransactionsCsv } from "../../services/export/AllTransactionsExport";
@@ -128,17 +133,6 @@ function categoryOn(view: NonNullable<NotificationsView>, category: Notification
   return view.blocked ? view.preferences[category] : view.active[category];
 }
 
-// What a tap asks for. Always derived from the stored choice, so a category
-// the user switched off can never be left opted in. The one exception: chosen
-// but not reaching the device (Face ID cancelled, server unreachable) — a tap
-// on that "Off" row retries turning it on.
-function categoryTarget(
-  view: NonNullable<NotificationsView>,
-  category: NotificationCategory,
-): boolean {
-  if (!view.preferences[category]) return true;
-  return !view.blocked && !view.active[category];
-}
 type ExportState =
   | { kind: "idle" | "busy" | "empty" | "failed" }
   | { kind: "incomplete"; missing: ExportAccount[] };
@@ -150,9 +144,60 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title
         {title}
       </Text>
     </View>
-    <List>{children}</List>
+    <List>
+      {React.Children.toArray(children).map((row, index) => (
+        <React.Fragment key={(row as React.ReactElement).key ?? index}>
+          {index > 0 ? <ListSeparator /> : null}
+          {row}
+        </React.Fragment>
+      ))}
+    </List>
   </View>
 );
+
+/**
+ * The wallet Add money → From another wallet pays from: connect one ahead of
+ * time, or see and end the current connection. Mounted only while Settings is
+ * open, inside its own PayWalletProvider, so the wallet clients are not built
+ * for a session that never looks at them.
+ */
+const OtherWalletsSection: React.FC = () => {
+  const wallet = usePayWalletConnection();
+  const [confirming, setConfirming] = useState(false);
+  if (!wallet.available) return null;
+  const name = wallet.walletName ?? t(`${K}.walletFallback`);
+  const short = wallet.account ? `${wallet.account.slice(0, 6)}…${wallet.account.slice(-4)}` : "";
+  return (
+    <>
+      <Section title={t(`${K}.otherWallets`)}>
+        {wallet.account ? (
+          <ListAction accessibilityLabel={`${name}, ${short}`} onPress={() => setConfirming(true)}>
+            <ListActionText>{name}</ListActionText>
+            <ListActionTextMuted>{short}</ListActionTextMuted>
+            <ListActionTrailIcon name="chevron-right" />
+          </ListAction>
+        ) : (
+          <ListAction accessibilityLabel={t(`${K}.connectWallet`)} onPress={wallet.openConnect}>
+            <ListActionText>{t(`${K}.connectWallet`)}</ListActionText>
+            <ListActionTextMuted>{t(`${K}.connectWalletHint`)}</ListActionTextMuted>
+            <ListActionTrailIcon name="chevron-right" />
+          </ListAction>
+        )}
+      </Section>
+      <ChoiceSheet<"disconnect">
+        visible={confirming && wallet.account !== null}
+        onClose={() => setConfirming(false)}
+        title={name}
+        subtitle={short}
+        items={[{ key: "disconnect", label: t(`${K}.walletDisconnect`) }]}
+        onSelect={() => {
+          setConfirming(false);
+          void wallet.disconnect();
+        }}
+      />
+    </>
+  );
+};
 
 const SettingsScreen: React.FC<Props> = ({
   visible,
@@ -169,7 +214,7 @@ const SettingsScreen: React.FC<Props> = ({
   const locale = useAppLocale();
   const currency = useHomeCurrency();
   const supportUnread = useSupportUnreadCount();
-  const [picker, setPicker] = useState<"language" | "currency" | null>(null);
+  const [picker, setPicker] = useState<"language" | "currency" | NotificationCategory | null>(null);
   const [creatingPayLink, setCreatingPayLink] = useState(false);
   const [notifications, setNotifications] = useState<NotificationsView>(null);
   const [exportState, setExportState] = useState<ExportState>({ kind: "idle" });
@@ -192,10 +237,19 @@ const SettingsScreen: React.FC<Props> = ({
     };
   }, [visible]);
 
-  const toggleCategory = useCallback(
-    (category: NotificationCategory) => {
+  const chooseCategory = useCallback(
+    (category: NotificationCategory, enabled: boolean) => {
+      setPicker(null);
       if (!notifications || notifications.busy) return;
-      const enabled = categoryTarget(notifications, category);
+      // Nothing to do only when both the stored choice and what the row shows
+      // already match. "On" on a row that is chosen but not reaching the device
+      // retries turning it on; "Off" there still stores the opt-out.
+      if (
+        enabled === categoryOn(notifications, category) &&
+        enabled === notifications.preferences[category]
+      ) {
+        return;
+      }
       setNotifications({ ...notifications, busy: category });
       void (async () => {
         await setNotificationCategory(category, enabled);
@@ -278,7 +332,10 @@ const SettingsScreen: React.FC<Props> = ({
                           accessibilityLabel={t(`${K}.payLinkA11yLabel`)}
                           onPress={() => void copyToClipboard(payLink)}
                         >
-                          <ListActionText>{payLink.replace(/^https?:\/\//, "")}</ListActionText>
+                          <ListActionText>{t(`${K}.payLink`)}</ListActionText>
+                          <ListActionTextMuted>
+                            {payLink.replace(/^https?:\/\//, "")}
+                          </ListActionTextMuted>
                           <ListActionTrailIcon name="copy" />
                         </ListAction>
                       ) : null}
@@ -305,9 +362,9 @@ const SettingsScreen: React.FC<Props> = ({
                       onPress={verification.action ? onVerify : undefined}
                     >
                       <ListActionText>{t(`${K}.verificationRow`)}</ListActionText>
-                      <ListActionTrailingText>
+                      <ListActionTrailingTextMuted>
                         {t(`${K}.verification_${verification.state}`)}
-                      </ListActionTrailingText>
+                      </ListActionTrailingTextMuted>
                       {verification.state === "verified" ? (
                         <ListActionTrailIcon name="check-circle" />
                       ) : verification.action ? (
@@ -342,38 +399,45 @@ const SettingsScreen: React.FC<Props> = ({
                         <ListAction
                           key={category}
                           accessibilityLabel={`${t(`${K}.notify_${category}`)}, ${status}`}
-                          onPress={() => toggleCategory(category)}
+                          onPress={() => {
+                            if (notifications && !notifications.busy) setPicker(category);
+                          }}
                         >
                           <ListActionText>{t(`${K}.notify_${category}`)}</ListActionText>
-                          <ListActionTrailingText>{status}</ListActionTrailingText>
+                          <ListActionTrailingTextMuted>{status}</ListActionTrailingTextMuted>
+                          <ListActionTrailIcon name="chevron-right" />
                         </ListAction>
                       );
                     })}
                   </Section>
 
-                  <View direction="column" align="stretch" gap="lg" paddingX="lg">
-                    <SelectField
+                  <Section title={t(`${K}.general`)}>
+                    <ListAction
+                      accessibilityLabel={`${t(`${K}.language`)}, ${LANGUAGE_OPTIONS[locale].label}`}
                       onPress={() => setPicker("language")}
-                      accessibilityLabel={t(`${K}.language`)}
-                      accessibilityValue={LANGUAGE_OPTIONS[locale].label}
                     >
-                      <SelectFieldLabel>{t(`${K}.language`)}</SelectFieldLabel>
-                      <SelectFieldAvatar source={LANGUAGE_OPTIONS[locale].flag} />
-                      <SelectFieldValue>{LANGUAGE_OPTIONS[locale].label}</SelectFieldValue>
-                      <SelectFieldChevron name="caret-down" />
-                    </SelectField>
-                    <SelectField
+                      <ListActionText>{t(`${K}.language`)}</ListActionText>
+                      <ListActionTrailingTextMuted>
+                        {LANGUAGE_OPTIONS[locale].label}
+                      </ListActionTrailingTextMuted>
+                      <ListActionTrailIcon name="chevron-right" />
+                    </ListAction>
+                    <ListAction
+                      accessibilityLabel={`${t(`${K}.currency`)}, ${t(`${K}.currency_${currency}`)}`}
                       onPress={() => setPicker("currency")}
-                      accessibilityLabel={t(`${K}.currency`)}
-                      accessibilityValue={t(`${K}.currency_${currency}`)}
                     >
-                      <SelectFieldLabel>{t(`${K}.currency`)}</SelectFieldLabel>
-                      <SelectFieldAvatar source={CURRENCY_FLAGS[currency]} />
-                      <SelectFieldValue>{t(`${K}.currency_${currency}`)}</SelectFieldValue>
-                      <SelectFieldChevron name="caret-down" />
-                    </SelectField>
-                  </View>
-
+                      <ListActionText>{t(`${K}.currency`)}</ListActionText>
+                      <ListActionTrailingTextMuted>
+                        {t(`${K}.currency_${currency}`)}
+                      </ListActionTrailingTextMuted>
+                      <ListActionTrailIcon name="chevron-right" />
+                    </ListAction>
+                  </Section>
+                  {visible && PAY_WALLET_AVAILABLE ? (
+                    <PayWalletProvider>
+                      <OtherWalletsSection />
+                    </PayWalletProvider>
+                  ) : null}
                   <Section title={t(`${K}.data`)}>
                     <ListAction
                       accessibilityLabel={t(`${K}.addressBook`)}
@@ -385,7 +449,7 @@ const SettingsScreen: React.FC<Props> = ({
                     <ListAction accessibilityLabel={t(`${K}.export`)} onPress={runExport}>
                       <ListActionText>{t(`${K}.export`)}</ListActionText>
                       {exportLabel ? (
-                        <ListActionTrailingText>{exportLabel}</ListActionTrailingText>
+                        <ListActionTrailingTextMuted>{exportLabel}</ListActionTrailingTextMuted>
                       ) : null}
                     </ListAction>
                   </Section>
@@ -409,11 +473,16 @@ const SettingsScreen: React.FC<Props> = ({
                     </ListAction>
                   </Section>
 
-                  <List>
-                    <ListAction accessibilityLabel={t(`${K}.logout`)} onPress={onLogout}>
-                      <ListActionText>{t(`${K}.logout`)}</ListActionText>
-                    </ListAction>
-                  </List>
+                  <View direction="column" align="stretch" paddingX="lg">
+                    <Button
+                      size="lg"
+                      variant="soft"
+                      accessibilityLabel={t(`${K}.logout`)}
+                      onPress={onLogout}
+                    >
+                      <ButtonText>{t(`${K}.logout`)}</ButtonText>
+                    </Button>
+                  </View>
 
                   <View paddingX="lg">
                     <Text size="sm" emphasis muted align="center">
@@ -467,6 +536,23 @@ const SettingsScreen: React.FC<Props> = ({
           void homeCurrencyService.setHomeCurrency(code);
         }}
       />
+      {NOTIFICATION_CATEGORIES.map((category) => {
+        const on = notifications ? categoryOn(notifications, category) : false;
+        return (
+          <ChoiceSheet<"on" | "off">
+            key={category}
+            visible={visible && picker === category}
+            onClose={() => setPicker(null)}
+            title={t(`${K}.notify_${category}`)}
+            items={(["on", "off"] as const).map((key) => ({
+              key,
+              label: t(key === "on" ? `${K}.notificationsOn` : `${K}.notificationsOff`),
+              ...((key === "on") === on ? { sublabel: t(`${K}.selected`) } : {}),
+            }))}
+            onSelect={(key) => chooseCategory(category, key === "on")}
+          />
+        );
+      })}
     </>
   );
 };

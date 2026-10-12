@@ -5,6 +5,7 @@ import { getPrivateKey } from "../../lib/secureKeyStorage";
 import { getChainRpcUrl } from "../../lib/rpc/chainRpc";
 import type { ChainId } from "../../lib/tokens";
 import { getSweepViemChain } from "./SwapKitEvmSigner";
+import { ethereumFees } from "./ethereumFees";
 import type { RegistryToken } from "./SwapKitTokenRegistry";
 
 // What is left of the v1 sweep service: the bounded off-Base ERC-20 transfer
@@ -67,8 +68,13 @@ export async function sendErc20OnChain(
   // SwapKitHtlcActionService: sendTransaction's request generic mis-infers here
   // and demands the EIP-4844 `kzg` field for a plain transfer that carries no
   // blobs. Account and chain are already bound on walletClient.
+  // Fees before the STARTED marker: an interrupted read leaves the transfer retryable.
+  const fees = await ethereumFees(publicClient, token.chainId);
   await onBeforeBroadcast?.();
-  return walletClient.sendTransaction({ to: token.address, data, gas } as unknown as Parameters<
-    typeof walletClient.sendTransaction
-  >[0]);
+  return walletClient.sendTransaction({
+    to: token.address,
+    data,
+    gas,
+    ...fees,
+  } as unknown as Parameters<typeof walletClient.sendTransaction>[0]);
 }

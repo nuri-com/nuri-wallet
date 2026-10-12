@@ -3,12 +3,10 @@
  * wallet holds on Base.
  */
 
-import { ethers } from "ethers";
-import { withFallback } from "../../lib/rpc/chainRpc";
+import { decodeFunctionResult, encodeFunctionData, erc20Abi, formatUnits } from "viem";
+import { type RpcClient, withFallback } from "../../lib/rpc/chainRpc";
 import { BASE_EURC } from "../../config/network";
 import { newOp, LOG_EMOJI } from "../../lib/OperationLogUtils";
-
-const ERC20_ABI = ["function balanceOf(address) view returns (uint256)"];
 
 /**
  * Read a single ERC20 balanceOf. THROWS on RPC/call failure — callers must
@@ -17,15 +15,29 @@ const ERC20_ABI = ["function balanceOf(address) view returns (uint256)"];
  * zero and wipe the displayed balance instead of failing over.
  */
 async function readBalance(
-  provider: ethers.JsonRpcProvider,
+  client: RpcClient,
   tokenAddress: `0x${string}`,
   walletAddress: string,
   decimals: number,
 ): Promise<number> {
-  const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
-  const raw: bigint = await contract.balanceOf(walletAddress);
-  const bal = Number(ethers.formatUnits(raw, decimals));
+  const raw = await balanceOf(client, tokenAddress, walletAddress);
+  const bal = Number(formatUnits(raw, decimals));
   return Number.isFinite(bal) ? bal : 0;
+}
+
+async function balanceOf(
+  client: RpcClient,
+  tokenAddress: `0x${string}`,
+  walletAddress: string,
+): Promise<bigint> {
+  const data = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [walletAddress as `0x${string}`],
+  });
+  const { data: out } = await client.call({ to: tokenAddress, data });
+  if (!out) throw new Error(`balanceOf returned no data from ${tokenAddress}`);
+  return decodeFunctionResult({ abi: erc20Abi, functionName: "balanceOf", data: out });
 }
 
 /**
@@ -38,10 +50,9 @@ export async function getErc20BalanceUnits(
   tokenAddress: `0x${string}`,
   walletAddress: string,
 ): Promise<bigint> {
-  return withFallback(chainId as Parameters<typeof withFallback>[0], async (provider) => {
-    const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
-    return (await contract.balanceOf(walletAddress)) as bigint;
-  });
+  return withFallback(chainId as Parameters<typeof withFallback>[0], (client) =>
+    balanceOf(client, tokenAddress, walletAddress),
+  );
 }
 
 /**
@@ -56,8 +67,8 @@ export async function getErc20Balance(
   walletAddress: string,
   decimals: number,
 ): Promise<number> {
-  return withFallback(chainId as Parameters<typeof withFallback>[0], (provider) =>
-    readBalance(provider, tokenAddress, walletAddress, decimals),
+  return withFallback(chainId as Parameters<typeof withFallback>[0], (client) =>
+    readBalance(client, tokenAddress, walletAddress, decimals),
   );
 }
 
@@ -65,8 +76,8 @@ export async function getBaseWalletEurcBalance(address: string): Promise<number>
   const op = newOp("MultiCurrencyBalanceService", "getBaseWalletEurcBalance", LOG_EMOJI.wallet);
   op.log(`chain=${BASE_EURC.chainId} token=EURC`);
   try {
-    const balance = await withFallback(BASE_EURC.chainId, (provider) =>
-      readBalance(provider, BASE_EURC.address, address, BASE_EURC.decimals),
+    const balance = await withFallback(BASE_EURC.chainId, (client) =>
+      readBalance(client, BASE_EURC.address, address, BASE_EURC.decimals),
     );
     op.end("OK");
     return balance;

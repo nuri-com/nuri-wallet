@@ -14,7 +14,8 @@ import {
   AUTH_STORAGE_KEYS,
 } from "../../lib/secureKeyStorage";
 import { newOp, LOG_EMOJI } from "../../lib/OperationLogUtils";
-import { randomBytes, bytesToHex } from "../../lib/bytes";
+import { randomBytes, bytesToHex, hexToBytes } from "../../lib/bytes";
+import { hmacSha256, utf8ToBytes } from "../../lib/crypto/index";
 import { disableSharedCookiesOnce } from "../app/WebViewSessionService";
 import { homeCurrencyService } from "../../lib/currency/HomeCurrencyService";
 
@@ -258,11 +259,9 @@ class AuthStateManager {
     const bodyStr = body == null ? "" : typeof body === "string" ? body : JSON.stringify(body);
     const message = `${method}\n${path}\n${bodyStr}\n${timestamp}|${nonce}`;
 
-    // Import crypto-js for HMAC
-    const CryptoJS = require("crypto-js");
-    const key = CryptoJS.enc.Hex.parse(this.authState.authKeyHex);
-    const hmac = CryptoJS.HmacSHA256(message, key);
-    const signature = hmac.toString(CryptoJS.enc.Hex);
+    const signature = bytesToHex(
+      hmacSha256(hexToBytes(this.authState.authKeyHex), utf8ToBytes(message)),
+    );
 
     const headers = {
       "X-User-Id": this.authState.userId,

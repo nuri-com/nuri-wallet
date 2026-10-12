@@ -1,4 +1,4 @@
-import { bech32 } from "bech32";
+import { bech32 } from "@scure/base";
 import { cbc } from "@noble/ciphers/aes";
 import { chacha20 } from "@noble/ciphers/chacha";
 import { hmac } from "@noble/hashes/hmac";
@@ -81,9 +81,9 @@ export function normalizeNostrPubkey(value: string): string | null {
   if (/^[0-9a-f]{64}$/.test(lower)) return lower;
   if (lower.startsWith("npub")) {
     try {
-      const decoded = bech32.decode(lower);
+      const decoded = bech32.decode(lower as `${string}1${string}`);
       if (decoded.prefix !== "npub") return null;
-      const bytes = new Uint8Array(bech32.fromWords(decoded.words));
+      const bytes = bech32.fromWords(decoded.words);
       if (bytes.length !== 32) return null;
       return bytesToHex(bytes);
     } catch {

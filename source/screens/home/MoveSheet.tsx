@@ -180,6 +180,8 @@ type Props = {
   onConfirm: (sourceAmount: number) => MoveOutcome | Promise<MoveOutcome>;
   /** A priced move that ran, with what it bought — for the destination's books. */
   onExecuted?: (result: MoveSwapExecuted) => void;
+  /** The end fixed by the caller: stated, not picked, and the flip is not offered. */
+  locked?: Side | null;
 };
 
 // Both ends are always seeded with a real rail, so there is no unknown state to
@@ -230,6 +232,7 @@ const MoveSheet: React.FC<Props> = ({
   onFlip,
   onConfirm,
   onExecuted,
+  locked = null,
 }) => {
   const insets = useSafeAreaInsets();
   // Which side the keypad is typing into. The other side shows its value small
@@ -561,16 +564,28 @@ const MoveSheet: React.FC<Props> = ({
       side === "from" && rail?.available != null
         ? railAmount(rail.available, rail.key).replace(/^\S+\s+/, "")
         : undefined;
-    const trigger = (
-      <View direction="row" align="center">
-        <RailTrigger
-          rail={rail}
-          side={side}
-          availableAmount={availableAmount}
-          onPress={() => setPicking(side)}
-        />
-      </View>
-    );
+    // A fixed end is stated, not offered: the same line the pay page shows
+    // for its recipient.
+    const trigger =
+      locked === side ? (
+        <View direction="row" align="center" gap="sm">
+          <Text size="md" muted>
+            {side === "from" ? t("screen.MoveSheet.from") : t("screen.MoveSheet.to")}
+          </Text>
+          <Text size="md">
+            {`${rail?.label ?? ""}${side === "from" && availableAmount ? ` (${availableAmount})` : ""}`}
+          </Text>
+        </View>
+      ) : (
+        <View direction="row" align="center">
+          <RailTrigger
+            rail={rail}
+            side={side}
+            availableAmount={availableAmount}
+            onPress={() => setPicking(side)}
+          />
+        </View>
+      );
     const focusLabel = t("screen.MoveSheet.focusA11yLabel", { rail: rail?.label ?? side });
 
     // The collapsed half is an intrinsic strip — one `xl` row: the trigger, and
@@ -661,6 +676,7 @@ const MoveSheet: React.FC<Props> = ({
                       <IconButton
                         icon="arrow-down"
                         variant="solid"
+                        disabled={locked !== null}
                         accessibilityLabel={t("screen.MoveSheet.flipA11yLabel")}
                         onPress={flip}
                       />
@@ -800,11 +816,23 @@ const MoveSheet: React.FC<Props> = ({
             image: rail.image,
             // Every source is pickable (the destination follows it); only a
             // destination the source cannot reach, or the source itself, is not.
-            disabled: picking === "to" && (rail.key === other?.key || !open),
+            disabled:
+              (picking === "to" && (rail.key === other?.key || !open)) ||
+              // With the destination fixed, a source is offered only when it
+              // can reach it.
+              (picking === "from" &&
+                locked === "to" &&
+                (rail.key === toKey || !toKey || !pairOpen(rail.key, toKey))),
           };
         })}
         onSelect={(key) => {
-          if (picking && pairOpenFor(picking, key)) pickRail(picking, key);
+          const unreachable =
+            picking === "from" &&
+            locked === "to" &&
+            (key === toKey || !toKey || !pairOpen(key, toKey));
+          if (picking && picking !== locked && !unreachable && pairOpenFor(picking, key)) {
+            pickRail(picking, key);
+          }
           setPicking(null);
         }}
       />

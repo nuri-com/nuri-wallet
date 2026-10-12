@@ -35,8 +35,6 @@ export type PendingWalletTransfer = {
   maxSellEurc?: number | null;
 };
 
-export type WalletSendChoiceKey = "card" | "bitcoin" | "wallet";
-
 export type WalletDetailsProps = {
   visible: boolean;
   onClose: () => void;
@@ -72,11 +70,7 @@ export type WalletSendStablecoinProps = {
     /** Accessibility/copy code, e.g. "EUR" / "USD". */
     code: string;
   };
-  onSuccess?: (payload: {
-    amount: number;
-    txHash?: string | null;
-    confirmed: boolean;
-  }) => void;
+  onSuccess?: (payload: { amount: number; txHash?: string | null; confirmed: boolean }) => void;
 };
 
 export type WalletIbanRecipientProps = {
@@ -135,11 +129,7 @@ export type WalletTransactionsProps = {
     /** Which stable rail the row belongs to; absent means the euro one. */
     fiat?: "EUR" | "USD";
   }>;
-  onRepeatIbanSend?: (data: {
-    iban: string;
-    firstName: string;
-    lastName: string;
-  }) => void;
+  onRepeatIbanSend?: (data: { iban: string; firstName: string; lastName: string }) => void;
 };
 
 export type WalletOrderState = "placed" | "pending" | "processed" | "rejected";

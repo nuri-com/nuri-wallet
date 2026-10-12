@@ -2,7 +2,7 @@
 // Reads fiat FX rates relative to USD: Frankfurter API primary, Chainlink
 // onchain oracles (Base mainnet) fallback.
 
-import { ethers } from "ethers";
+import { decodeFunctionResult, encodeFunctionData, parseAbi } from "viem";
 import { FRANKFURTER_URL } from "../../config/endpoints";
 import { newOp, LOG_EMOJI } from "../../lib/OperationLogUtils";
 import { withFallback } from "../../lib/rpc/chainRpc";
@@ -19,7 +19,7 @@ const CACHE_TTL_MS = FX_RATE_CACHE_TTL_MS;
 
 // Base mainnet — FX reference data is read from mainnet regardless of APP_NETWORK.
 const FX_FEED_CHAIN_ID = 8453;
-const CHAINLINK_ABI = ["function latestAnswer() view returns (int256)"];
+const CHAINLINK_ABI = parseAbi(["function latestAnswer() view returns (int256)"]);
 
 // --- Types ---
 
@@ -91,14 +91,18 @@ class FxRateService {
   private async fetchChainlinkRates(op: ReturnType<typeof newOp>): Promise<FxRates> {
     // Both EUR/USD and GBP/USD proxies live on Base mainnet; read them through a
     // single provider with primary→fallback RPC resilience.
-    const [eurUsdRaw, gbpUsdRaw] = await withFallback(FX_FEED_CHAIN_ID, async (provider) => {
-      const eurUsdContract = new ethers.Contract(CHAINLINK_EUR_USD_FEED, CHAINLINK_ABI, provider);
-      const gbpUsdContract = new ethers.Contract(CHAINLINK_GBP_USD_FEED, CHAINLINK_ABI, provider);
-      return Promise.all([
-        eurUsdContract.latestAnswer() as Promise<bigint>,
-        gbpUsdContract.latestAnswer() as Promise<bigint>,
-      ]);
-    });
+    const [eurUsdRaw, gbpUsdRaw] = await withFallback(FX_FEED_CHAIN_ID, (client) =>
+      Promise.all(
+        [CHAINLINK_EUR_USD_FEED, CHAINLINK_GBP_USD_FEED].map(async (feed) => {
+          const { data } = await client.call({
+            to: feed as `0x${string}`,
+            data: encodeFunctionData({ abi: CHAINLINK_ABI, functionName: "latestAnswer" }),
+          });
+          if (!data) throw new Error(`latestAnswer returned no data from ${feed}`);
+          return decodeFunctionResult({ abi: CHAINLINK_ABI, functionName: "latestAnswer", data });
+        }),
+      ),
+    );
 
     const eurUsd = Number(eurUsdRaw) / 10 ** CHAINLINK_DECIMALS;
     const gbpUsd = Number(gbpUsdRaw) / 10 ** CHAINLINK_DECIMALS;

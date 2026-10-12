@@ -35,6 +35,7 @@ import {
 
 import { resetAddressBook } from "../addressBook/AddressBookService";
 import { resetEsims } from "../esim/EsimService";
+import { resetPayWallet } from "../../lib/pay/payWallet";
 
 type Options = {
   onClose?: () => void;
@@ -69,6 +70,12 @@ export const wipeLocalWalletData = async ({ onClose }: Options = {}) => {
     await resetEsims();
   } catch (e) {
     console.warn("[FactoryReset] resetEsims failed:", e);
+  }
+  // A connected external wallet (and its stored session) belongs to this user.
+  try {
+    await resetPayWallet();
+  } catch (e) {
+    console.warn("[FactoryReset] resetPayWallet failed:", e);
   }
   const extraKeychainServers = walletForEmailWipe
     ? [

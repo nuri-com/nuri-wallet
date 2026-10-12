@@ -11,7 +11,16 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "react-native";
-import { IconAvatar, IconButton, NuriScope, Text, typeStyle, useNuriTheme, View } from "@ds";
+import {
+  Button,
+  ButtonText,
+  IconAvatar,
+  NuriScope,
+  Text,
+  typeStyle,
+  useNuriTheme,
+  View,
+} from "@ds";
 import NuriVisaCardArtwork from "../assets/cards/nuri-visa-platinum.svg";
 import {
   createHomeCarouselSettleController,
@@ -137,12 +146,9 @@ const BalanceCard: React.FC<{
         </View>
         {onDetails && detailsLabel ? (
           <NuriScope mode="light">
-            <IconButton
-              icon="eye"
-              variant="soft"
-              accessibilityLabel={detailsLabel}
-              onPress={onDetails}
-            />
+            <Button size="sm" variant="soft" accessibilityLabel={detailsLabel} onPress={onDetails}>
+              <ButtonText>{detailsLabel}</ButtonText>
+            </Button>
           </NuriScope>
         ) : null}
       </View>

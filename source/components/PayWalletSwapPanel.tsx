@@ -5,15 +5,23 @@
 // usePayWalletSwap; this is the shell.
 import type React from "react";
 import { useEffect, useState } from "react";
-import { Button, ButtonIcon, ButtonText, Text, TextField, View } from "@ds";
+import { Button, ButtonIcon, ButtonText, Text, View } from "@ds";
+import GotPaidIllustration from "../assets/illustrations/gotpaid.svg";
+import AmountKeypad from "./AmountKeypad";
+import BrandStatusView from "./BrandStatusView";
+import PayLinkSummary from "./PayLinkSummary";
+import SwapProcessingView, { SwapTryAgainView } from "./SwapProcessingView";
 import PayWalletTokenPicker, {
   PAY_WALLET_CHAIN_NAME,
   payWalletHoldingKey,
 } from "./PayWalletTokenPicker";
 import { t } from "../lib/i18n";
 import { exactBaseUnits } from "../lib/pay/payTarget";
-import type { PayWalletHolding } from "../services/pay/PayWalletBalanceService";
-import { displayDecimal, exactDecimal } from "../services/pay/PayWalletSwapService";
+import {
+  type PayWalletHolding,
+  payWalletLogoSource,
+} from "../services/pay/PayWalletBalanceService";
+import { exactDecimal } from "../services/pay/PayWalletSwapService";
 import type { PayWalletHoldingsState, PayWalletState } from "../screens/pay/hooks/usePayWalletSwap";
 
 const K = "screen.PayLink.wallet";
@@ -27,6 +35,12 @@ type Props = {
   fixedAmount?: string | null;
   holdings: PayWalletHoldingsState;
   settleLabel: string;
+  /** Who or what the To card names; the settled asset when not given. */
+  toLabel?: string;
+  /** Writes what arrives; "<amount> <settleLabel>" when not given. */
+  formatSettle?: (amount: string) => string;
+  /** Changes how to pay at all (the pay page's other ways); the arrow opens it. */
+  onPickSource?: () => void;
   onConnect: () => void;
   onRefreshHoldings: () => void;
   onQuote: (holding: PayWalletHolding, amount: string) => void;
@@ -52,6 +66,9 @@ const PayWalletSwapPanel: React.FC<Props> = ({
   fixedAmount = null,
   holdings,
   settleLabel,
+  toLabel,
+  formatSettle,
+  onPickSource,
   onConnect,
   onRefreshHoldings,
   onQuote,
@@ -64,13 +81,14 @@ const PayWalletSwapPanel: React.FC<Props> = ({
   const [amount, setAmount] = useState("");
   const list = holdings.status === "ready" ? holdings.holdings : [];
   const selected = list.find((holding) => payWalletHoldingKey(holding) === selectedKey) ?? null;
-  // A new account's balances replace the list: drop a pick it no longer holds.
+  // The largest balance is picked up front (the list comes sorted by value); a
+  // new account's balances replace the pick when it no longer holds it.
+  const first = list[0] ?? null;
   useEffect(() => {
-    if (selectedKey && holdings.status === "ready" && !selected) {
-      setSelectedKey(null);
-      setAmount("");
-    }
-  }, [holdings.status, selected, selectedKey]);
+    if (holdings.status !== "ready" || selected) return;
+    setSelectedKey(first ? payWalletHoldingKey(first) : null);
+    setAmount("");
+  }, [holdings.status, selected, first]);
 
   if (state.step === "unavailable") {
     return (
@@ -123,22 +141,23 @@ const PayWalletSwapPanel: React.FC<Props> = ({
     );
   }
 
-  if (state.step === "paying" || state.step === "done") {
-    return (
-      <View direction="column" align="stretch" gap="sm">
-        <Text size="md" align="center">
-          {progressText(state)}
-        </Text>
-        {state.step === "done" && state.progress.state !== "settled" ? (
-          <Button size="lg" variant="soft" onPress={onReset}>
-            <ButtonText>{t(`${K}.tryAgain`)}</ButtonText>
-          </Button>
-        ) : null}
-      </View>
+  // The wait, the result and the failure are the swap screens' own.
+  if (state.step === "paying" || (state.step === "done" && state.progress.state === "waiting")) {
+    return <SwapProcessingView phase="transfer" statusText={progressText(state)} />;
+  }
+  if (state.step === "done") {
+    return state.progress.state === "settled" ? (
+      <BrandStatusView
+        title={t(`${K}.settled`)}
+        illustration={<GotPaidIllustration width={241} height={213} />}
+      />
+    ) : (
+      <SwapTryAgainView onRetry={onReset} title={progressText(state) ?? undefined} />
     );
   }
 
   const busy = state.step === "busy";
+  const quoted = state.step === "quoted" ? state.quote : null;
   const typed = amount.replace(",", ".").trim();
   const units = selected ? exactBaseUnits(typed, selected.decimals) : null;
   const tooMuch = !fixedAmount && !!selected && units !== null && units > selected.units;
@@ -149,138 +168,88 @@ const PayWalletSwapPanel: React.FC<Props> = ({
     if (state.step === "quoted" || state.step === "no-route" || state.step === "insufficient")
       onReset();
   };
+  const changeAmount = (next: string) => {
+    if (!selected || busy) return;
+    const [, fraction = ""] = next.split(".");
+    if (!/^\d*\.?\d*$/.test(next) || fraction.length > selected.decimals) return;
+    setAmount(next.startsWith(".") ? `0${next}` : next.replace(/^0+(?=\d)/, ""));
+    clearQuote();
+  };
+
+  const chain = selected
+    ? (PAY_WALLET_CHAIN_NAME[selected.chainId] ?? String(selected.chainId))
+    : null;
+  const logo = selected ? payWalletLogoSource(selected.logoURI) : null;
+  const sourceLabel = selected
+    ? t(`${K}.selectedToken`, { token: selected.symbol, chain })
+    : holdings.status === "ready"
+      ? t(`${K}.noHoldings`)
+      : holdings.status === "failed"
+        ? t(`${K}.balancesFailed`)
+        : t(`${K}.loadingBalances`);
+  const spend = fixedAmount
+    ? quoted
+      ? exactDecimal(quoted.option.depositAmount)
+      : null
+    : amount || "0";
+  // The Move sheet's one button: it names what is wrong, or what happens next.
+  const ctaLabel =
+    state.step === "no-route"
+      ? t("screen.MoveSheet.noRoute")
+      : tooMuch || state.step === "insufficient"
+        ? t(`${K}.moreThanBalance`)
+        : busy
+          ? t(`${K}.quoting`)
+          : quoted
+            ? t("screen.MoveSheet.confirm")
+            : t("screen.MoveSheet.next");
 
   return (
-    <View direction="column" align="stretch" gap="sm">
-      <Button size="sm" variant="soft" onPress={onConnect}>
-        <ButtonIcon name="wallet" />
-        <ButtonText>
-          {t(`${K}.connected`, {
-            account: `${state.account.slice(0, 6)}…${state.account.slice(-4)}`,
-          })}
-        </ButtonText>
-      </Button>
-
-      {holdings.status === "loading" || holdings.status === "idle" ? (
-        <Text size="sm" muted align="center">
-          {t(`${K}.loadingBalances`)}
-        </Text>
-      ) : null}
-      {holdings.status === "failed" ? (
-        <Button size="sm" variant="soft" onPress={onRefreshHoldings}>
-          <ButtonText>{t(`${K}.balancesFailed`)}</ButtonText>
-        </Button>
-      ) : null}
-      {holdings.status === "ready" && list.length === 0 ? (
-        <Text size="sm" muted align="center">
-          {t(`${K}.noHoldings`)}
-        </Text>
-      ) : null}
-
-      {list.length > 0 ? (
-        <Button
-          size="lg"
-          variant="soft"
-          disabled={busy}
-          onPress={() => setPicking(true)}
-          accessibilityLabel={t(`${K}.tokenLabel`)}
-        >
-          <ButtonText>
-            {selected
-              ? t(`${K}.selectedToken`, {
-                  token: selected.symbol,
-                  chain: PAY_WALLET_CHAIN_NAME[selected.chainId] ?? String(selected.chainId),
-                })
-              : t(`${K}.chooseToken`)}
-          </ButtonText>
-          <ButtonIcon name="chevron-down" />
-        </Button>
-      ) : null}
-
-      {fixedAmount ? (
-        <Text size="md" align="center">
-          {t(`${K}.fixedAmount`, { amount: exactDecimal(fixedAmount), asset: settleLabel })}
-        </Text>
-      ) : null}
+    <View direction="column" align="stretch" gap="lg" fill="grow">
+      <PayLinkSummary
+        grow
+        to={toLabel ?? settleLabel}
+        toAmount={(() => {
+          const arrives = fixedAmount ?? quoted?.option.settleAmount ?? null;
+          if (arrives === null) return null;
+          return formatSettle ? formatSettle(arrives) : `${exactDecimal(arrives)} ${settleLabel}`;
+        })()}
+        sourceLabel={sourceLabel}
+        {...(logo ? { image: logo } : { icon: "wallet" as const })}
+        amount={selected && spend !== null ? `${spend} ${selected.symbol}` : null}
+        onPickSource={() =>
+          holdings.status === "failed"
+            ? onRefreshHoldings()
+            : list.length > 0 && !busy
+              ? setPicking(true)
+              : undefined
+        }
+        {...(onPickSource ? { onArrowPress: onPickSource } : {})}
+      />
 
       {selected && !fixedAmount ? (
-        <View direction="column" align="stretch" gap="sm">
-          <TextField
-            value={amount}
-            onChangeText={(next) => {
-              setAmount(next);
-              clearQuote();
-            }}
-            inputMode="decimal"
-            disabled={busy}
-            placeholder={t(`${K}.amountPlaceholder`)}
-            accessibilityLabel={t(`${K}.amountLabel`)}
-          />
-          <Button
-            size="sm"
-            variant="soft"
-            disabled={busy}
-            onPress={() => {
-              setAmount(selected.amount);
-              clearQuote();
-            }}
-          >
-            <ButtonText>
-              {t(`${K}.max`, { balance: displayDecimal(selected.amount, 4) })}
-            </ButtonText>
-          </Button>
-        </View>
-      ) : null}
-      {tooMuch ? (
-        <Text size="sm" muted align="center">
-          {t(`${K}.moreThanBalance`)}
-        </Text>
+        <AmountKeypad
+          onDigit={(digit) => changeAmount(`${amount}${digit}`)}
+          {...(selected.decimals > 0 ? { onDecimal: () => changeAmount(`${amount}.`) } : {})}
+          onDelete={() => changeAmount(amount.slice(0, -1))}
+        />
       ) : null}
 
-      {state.step === "quoted" && !fixedAmount ? (
-        <Text size="md" align="center">
-          {t(`${K}.receives`, {
-            amount: exactDecimal(state.quote.option.settleAmount),
-            asset: settleLabel,
-          })}
-        </Text>
-      ) : null}
-      {(state.step === "quoted" || state.step === "insufficient") && fixedAmount && selected ? (
-        <Text size="md" align="center">
-          {t(`${K}.youPay`, {
-            amount: exactDecimal(state.quote.option.depositAmount),
-            token: selected.symbol,
-          })}
-        </Text>
-      ) : null}
-      {state.step === "insufficient" ? (
-        <Text size="sm" muted align="center">
-          {t(`${K}.moreThanBalance`)}
-        </Text>
-      ) : null}
-      {state.step === "no-route" ? (
-        <Text size="sm" muted align="center">
-          {t(`${K}.noRoute`)}
-        </Text>
-      ) : null}
-      {selected ? (
-        state.step === "quoted" ? (
-          <Button size="lg" variant="solid" accent="lilac" onPress={onPay}>
-            <ButtonIcon name="chevron-right" />
-            <ButtonText>{t(`${K}.pay`)}</ButtonText>
-          </Button>
-        ) : (
-          <Button
-            size="lg"
-            variant="solid"
-            accent="lilac"
-            disabled={!canQuote || busy || state.step === "insufficient"}
-            onPress={() => onQuote(selected, fixedAmount ?? typed)}
-          >
-            <ButtonText>{busy ? t(`${K}.quoting`) : t(`${K}.quote`)}</ButtonText>
-          </Button>
-        )
-      ) : null}
+      <Button
+        size="lg"
+        variant="solid"
+        accent="lilac"
+        disabled={
+          !selected ||
+          busy ||
+          state.step === "no-route" ||
+          state.step === "insufficient" ||
+          (!quoted && !canQuote)
+        }
+        onPress={() => (quoted ? onPay() : selected && onQuote(selected, fixedAmount ?? typed))}
+      >
+        <ButtonText>{ctaLabel}</ButtonText>
+      </Button>
 
       <PayWalletTokenPicker
         visible={picking}

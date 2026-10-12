@@ -1,10 +1,27 @@
 import { formatFiat, sumKnown } from "../../lib/currency/displayFiat";
 import type { FiatCode } from "../../lib/tokens";
 
-export const HOME_RAIL_ORDER = ["onchain", "arkade", "wallet", "dollar", "visa", "iban"] as const;
+// The home shows three cards. Each is named by the rail key that already stood
+// for it on the overview: Bitcoin (onchain + Lightning), Cash (euro + dollar)
+// and Visa & Banking (card + bank account, one Wirex balance).
+export const HOME_GROUP_KEYS = ["onchain", "wallet", "visa"] as const;
+export type HomeGroupKey = (typeof HOME_GROUP_KEYS)[number];
 
-export function orderHomeRails<T extends { key: string }>(rails: readonly T[]): T[] {
-  return HOME_RAIL_ORDER.flatMap((key) => rails.filter((rail) => rail.key === key));
+/** The home card a rail belongs to; deep links and rows name rails. */
+export function homeGroupOf(key: string | null | undefined): HomeGroupKey | null {
+  switch (key) {
+    case "onchain":
+    case "arkade":
+      return "onchain";
+    case "wallet":
+    case "dollar":
+      return "wallet";
+    case "visa":
+    case "iban":
+      return "visa";
+    default:
+      return null;
+  }
 }
 
 /** An overview group's figure, in the display currency. Unknown → "—". */

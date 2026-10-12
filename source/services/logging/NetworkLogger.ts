@@ -1,4 +1,3 @@
-import axios from "axios";
 import {
   NETWORK_STATS_LOG_INTERVAL_MS,
   NETWORK_STATS_TOP_N,
@@ -14,7 +13,6 @@ import { EventBus } from "../events/AppEventBusService";
 const NETWORK_STATS_GLOBAL_KEY = "__nuriNetworkLoggingInitialized";
 const NETWORK_STATS_FETCH_WRAPPED_KEY = "__nuriNetworkFetchWrapped";
 const NETWORK_STATS_FETCH_ORIGINAL_KEY = "__nuriNetworkFetchOriginal";
-const NETWORK_STATS_AXIOS_WRAPPED_KEY = "__nuriNetworkAxiosWrapped";
 const NETWORK_SILENT_PATHS = [/\/symbolicate$/i];
 const NETWORK_STACK_INTERNAL_MARKERS = [
   "services/NetworkLogger",
@@ -503,75 +501,4 @@ export function initializeNetworkLogging() {
     (wrappedFetch as any)[NETWORK_STATS_FETCH_ORIGINAL_KEY] = originalFetch;
     g.fetch = wrappedFetch;
   }
-
-  // Axios interceptors
-  if ((axios as any)[NETWORK_STATS_AXIOS_WRAPPED_KEY]) {
-    return;
-  }
-  (axios as any)[NETWORK_STATS_AXIOS_WRAPPED_KEY] = true;
-  axios.interceptors.request.use((config) => {
-    const method = (config.method || "GET").toUpperCase();
-    const rawUrl = config.url || "";
-    const { path } = parseUrl(rawUrl);
-    const shouldLog = !isSilentPath(path);
-    const source = resolveSource(
-      (config as any).__nuriSource || inferRequestSourceFromStack((config as any).__nuriSource),
-      rawUrl,
-    );
-    const context = inferContextFromSource(source);
-    (config as any).__nuriSource = source;
-    (config as any).__nuriContext = context;
-    const op = shouldLog ? newOp("Network", "axios", LOG_EMOJI.network, source, context) : null;
-    (config as any).__op = op; // attach for response stage
-    recordRequest(method, rawUrl, source);
-    return config;
-  });
-
-  axios.interceptors.response.use(
-    (response) => {
-      reportNetworkSuccess();
-      const op = (response.config as any).__op;
-      if (op) {
-        const method = (response.config.method || "GET").toUpperCase();
-        const rawUrl = response.config.url || "";
-        const source = (response.config as any).__nuriSource || inferRequestSourceFromUrl(rawUrl);
-        if (shouldEmitSuccessLog(method, rawUrl, response.status, source)) {
-          op.end(`${compactEndpoint(method, rawUrl)} ←${response.status}`);
-        }
-      }
-      recordResponse(
-        (response.config.method || "GET").toUpperCase(),
-        response.config.url || "",
-        response.status,
-      );
-      return response;
-    },
-    (error) => {
-      networkStats.windowFailures += 1;
-      reportNetworkFailure();
-      try {
-        const cfg = error?.config || {};
-        const op = (cfg as any).__op;
-        if (op) {
-          const status = error?.response?.status ?? "ERR";
-          const respData = error?.response?.data;
-          const respMessage =
-            typeof respData === "string" ? respData : respData?.message || respData?.error;
-          const message = respMessage
-            ? `${error?.message || error} (${respMessage})`
-            : error?.message || error;
-          const extra = respData !== undefined ? { message, responseData: respData } : message;
-          const method = (cfg.method || "GET").toUpperCase();
-          op.error(`${compactEndpoint(method, cfg.url || "")} ×${status}`, extra);
-          op.end("ERR");
-        }
-      } catch {}
-      recordResponse(
-        (error?.config?.method || "GET").toUpperCase(),
-        error?.config?.url || "",
-        error?.response?.status ?? "ERR",
-      );
-      return Promise.reject(error);
-    },
-  );
 }

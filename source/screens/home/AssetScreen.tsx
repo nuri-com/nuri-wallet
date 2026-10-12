@@ -49,6 +49,8 @@ export type WealthPendingRow = {
   amount: string;
   /** The same amount converted, muted underneath. */
   converted: string;
+  /** Opens the history of the rail this row belongs to; else the list's own. */
+  onPress?: () => void;
 };
 
 /**
@@ -63,6 +65,8 @@ export type WealthBalanceRow = {
   image: number;
   /** The holding, e.g. "USD 74.60 | EUR 68.20". */
   figure: string;
+  /** Opens this row's own history; omitted = not pressable. */
+  onPress?: () => void;
 };
 
 export type WealthAssetView = {
@@ -106,6 +110,8 @@ type AssetActivityListProps = {
   onHistory: () => void;
   extra?: React.ReactNode;
   detail?: AssetDetailAction;
+  /** False when each balance row opens its own history instead. */
+  showHistory?: boolean;
 };
 
 /** Shared account rows for the full detail layer and the home-carousel canary. */
@@ -116,16 +122,18 @@ export const AssetActivityList: React.FC<AssetActivityListProps> = ({
   onHistory,
   extra,
   detail,
+  showHistory = true,
 }) => (
   <>
     {extra}
     <List>
       {balances.map((row) => (
         <Fragment key={row.key}>
-          <ListAction accessibilityLabel={`${row.label}, ${row.figure}`}>
+          <ListAction accessibilityLabel={`${row.label}, ${row.figure}`} onPress={row.onPress}>
             <ListActionLeadingAvatar source={row.image} />
             <ListActionText>{row.label}</ListActionText>
             <ListActionTextMuted>{row.figure}</ListActionTextMuted>
+            {row.onPress ? <ListActionTrailIcon name="chevron-right" /> : null}
           </ListAction>
           <ListSeparator />
         </Fragment>
@@ -136,7 +144,7 @@ export const AssetActivityList: React.FC<AssetActivityListProps> = ({
             accessibilityLabel={t("screen.AssetScreen.pendingA11yLabel", {
               label: row.label,
             })}
-            onPress={onHistory}
+            onPress={row.onPress ?? onHistory}
           >
             <ListActionLeadingAvatar name="spinner" variant="outline" />
             <ListActionText>{row.label}</ListActionText>
@@ -147,20 +155,22 @@ export const AssetActivityList: React.FC<AssetActivityListProps> = ({
           <ListSeparator />
         </Fragment>
       ))}
-      <ListAction
-        accessibilityLabel={t("screen.AssetScreen.transactionHistory")}
-        onPress={onHistory}
-      >
-        <ListActionLeadingAvatar name="list-bullets" variant="outline" />
-        <ListActionText>{t("screen.AssetScreen.transactionHistory")}</ListActionText>
-        <ListActionTextMuted>
-          {t("screen.AssetScreen.transactionHistorySubtitle", { asset: assetLabel })}
-        </ListActionTextMuted>
-        <ListActionTrailIcon name="chevron-right" />
-      </ListAction>
+      {showHistory ? (
+        <ListAction
+          accessibilityLabel={t("screen.AssetScreen.transactionHistory")}
+          onPress={onHistory}
+        >
+          <ListActionLeadingAvatar name="list-bullets" variant="outline" />
+          <ListActionText>{t("screen.AssetScreen.transactionHistory")}</ListActionText>
+          <ListActionTextMuted>
+            {t("screen.AssetScreen.transactionHistorySubtitle", { asset: assetLabel })}
+          </ListActionTextMuted>
+          <ListActionTrailIcon name="chevron-right" />
+        </ListAction>
+      ) : null}
       {detail ? (
         <>
-          <ListSeparator />
+          {showHistory ? <ListSeparator /> : null}
           <ListAction accessibilityLabel={detail.label} onPress={detail.onPress}>
             <ListActionLeadingAvatar name={detail.icon} variant="outline" />
             <ListActionText>{detail.label}</ListActionText>

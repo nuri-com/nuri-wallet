@@ -63,14 +63,25 @@ const CHAIN_SUFFIX: Readonly<Record<number, string>> = {
 
 export const PAY_WALLET_CHAIN_IDS = Object.keys(CHAIN_SUFFIX).map(Number);
 
-/** The SwapKit asset id for a token on a chain, or null for an unsupported chain. */
-export function payWalletAssetId(symbol: string, chainId: number): string | null {
-  const suffix = CHAIN_SUFFIX[chainId];
-  const clean = String(symbol || "")
-    .trim()
-    .toUpperCase();
-  if (!suffix || !/^[A-Z0-9.]{1,20}$/.test(clean)) return null;
-  return `${clean}_${suffix}`;
+/**
+ * The SwapKit asset id for the exact token the wallet holds, or null for an
+ * unsupported chain. The contract is part of the id (`USDT0_ARBITRUM@0xfd08…`):
+ * SwapKit resolves the token by that address, so a renamed ticker or two tokens
+ * sharing a symbol still quote the contract the payer picked.
+ */
+export function payWalletAssetId(
+  token: Pick<PayWalletToken, "symbol" | "chainId" | "address">,
+): string | null {
+  const suffix = CHAIN_SUFFIX[token.chainId];
+  const address = String(token.address || "").toLowerCase();
+  if (!suffix || !/^0x[0-9a-f]{40}$/.test(address)) return null;
+  // Only a label once the address names the token.
+  const label =
+    String(token.symbol || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9.]/g, "")
+      .slice(0, 20) || "TOKEN";
+  return `${label}_${suffix}@${address}`;
 }
 
 export type PayWalletDeps = {
@@ -164,7 +175,7 @@ export async function quotePayWalletSwap(
   request: PayWalletQuoteRequest,
   deps: Pick<PayWalletDeps, "quote">,
 ): Promise<PayWalletQuote | null> {
-  const asset = payWalletAssetId(request.token.symbol, request.token.chainId);
+  const asset = payWalletAssetId(request.token);
   if (!asset) return null;
   const settleSide = sideOf(request) === "settle";
   const amountDecimals = settleSide

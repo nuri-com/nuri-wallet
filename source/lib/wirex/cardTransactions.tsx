@@ -252,9 +252,18 @@ export function mapWirexBankActivity(
         bic: (subject?.bank_account?.bic || "").trim(),
         name: bankCounterpartyName(item),
       };
+      // A push to card names the card it went to; it has no bank counterparty.
+      const cardLast4 =
+        item.type === "CardTransfer" ? (item.destination?.card?.pan_last ?? "").trim() : "";
       const row = wirexActivityRow(item, rates, home, {
-        title: counterparty.name || t("screen.WirexSendChoice.sepaTitle"),
-        settledLabel: t("screen.WirexSendChoice.sepaTitle"),
+        title: cardLast4
+          ? t("screen.CardPayout.cardRow", { last4: cardLast4 })
+          : counterparty.name || t("screen.WirexSendChoice.sepaTitle"),
+        settledLabel: t(
+          item.type === "CardTransfer"
+            ? "screen.CardPayout.activityLabel"
+            : "screen.WirexSendChoice.sepaTitle",
+        ),
         onPress:
           onCounterpartyPress && counterparty.iban
             ? () => onCounterpartyPress(counterparty)

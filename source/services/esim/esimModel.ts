@@ -3,8 +3,11 @@
 // no network, no storage, so it is testable as-is (services/esim/EsimService
 // does the I/O).
 
-/** Nuri's nadanada referral code, sent on every purchase. */
-export const NADANADA_REF_CODE = "nuri-wallet";
+/**
+ * Nuri's nadanada referral code, sent on every purchase and top-up. Its
+ * commission is paid out to our BTC fee collector.
+ */
+export const NADANADA_REF_CODE = "nuri-store";
 
 /**
  * How long an order nobody is known to have paid is kept after its invoice

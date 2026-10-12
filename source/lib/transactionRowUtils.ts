@@ -1,4 +1,4 @@
-import { i18n } from "./i18n";
+import { getAppLocale } from "./i18n";
 
 /** Format an ISO string or unix timestamp (seconds) to "HH:MM" local time. */
 const formatTxTime = (iso?: string | null, unixSeconds?: number | null): string => {
@@ -29,5 +29,5 @@ export const formatActivityTime = (iso?: string | null, unixSeconds?: number | n
   if (!d || Number.isNaN(d.getTime())) return "";
   const now = new Date();
   if (d.toDateString() === now.toDateString()) return formatTxTime(iso, unixSeconds);
-  return d.toLocaleDateString(i18n.locale, { weekday: "short", day: "numeric", month: "short" });
+  return d.toLocaleDateString(getAppLocale(), { weekday: "short", day: "numeric", month: "short" });
 };

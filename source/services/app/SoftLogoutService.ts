@@ -25,6 +25,7 @@ import { MercuryoOrderStore } from "../mercuryo/MercuryoOrderStore";
 import { stopAllMercuryoTracking } from "../mercuryo/MercuryoPendingTracker";
 import { WIPE_EXTRA_STORAGE_KEYS } from "./wipeStorageKeys";
 import { resetEsims } from "../esim/EsimService";
+import { resetPayWallet } from "../../lib/pay/payWallet";
 import {
   clearPushNotificationStorage,
   unregisterPushDevice,
@@ -100,6 +101,12 @@ export const performSoftLogoutForRelogin = async (opts?: {
     await resetEsims();
   } catch (e) {
     console.warn("[SoftLogout] resetEsims failed:", e);
+  }
+  // A connected external wallet (and its stored session) belongs to this user.
+  try {
+    await resetPayWallet();
+  } catch (e) {
+    console.warn("[SoftLogout] resetPayWallet failed:", e);
   }
   const extraKeychainServers = walletForEmailWipe
     ? [

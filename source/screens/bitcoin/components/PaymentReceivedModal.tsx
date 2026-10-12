@@ -184,9 +184,7 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
   return (
     <FullscreenLayer visible={visible} onRequestClose={onClose}>
       <View direction="column" align="center" gap="md" paddingTop="lg">
-        <BrandDisplayTitle>
-          {t("screen.PaymentReceivedModal.title", "Payment Received")}
-        </BrandDisplayTitle>
+        <BrandDisplayTitle>{t("screen.PaymentReceivedModal.title")}</BrandDisplayTitle>
         <Text size="xl" emphasis align="center">
           {`BTC ${formatSats(state.actionableSats)} sats`}
         </Text>
@@ -206,18 +204,16 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
             accent="lilac"
             disabled={running || state.actionableCount <= 0}
             onPress={handleUnlock}
-            accessibilityLabel={t("screen.PaymentReceivedModal.unlockButton", "Passkey Unlock")}
+            accessibilityLabel={t("screen.PaymentReceivedModal.unlockButton")}
           >
-            <ButtonText>
-              {t("screen.PaymentReceivedModal.unlockButton", "Passkey Unlock")}
-            </ButtonText>
+            <ButtonText>{t("screen.PaymentReceivedModal.unlockButton")}</ButtonText>
           </Button>
           {usesReceiveClaimPasskey && passkeyPrefetch && !running && state.actionableCount > 0 ? (
             <RNView style={StyleSheet.absoluteFill}>
               <PasskeyWebAuthnPrfView
                 mode="assertion"
                 overlay
-                buttonLabel={t("screen.PaymentReceivedModal.unlockButton", "Passkey Unlock")}
+                buttonLabel={t("screen.PaymentReceivedModal.unlockButton")}
                 rpId={passkeyPrefetch.rpId}
                 challengeB64u={passkeyPrefetch.challengeB64u}
                 credIdB64u={passkeyPrefetch.credIdB64u}
@@ -239,9 +235,9 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
           variant="soft"
           disabled={running}
           onPress={onClose}
-          accessibilityLabel={t("screen.PaymentReceivedModal.laterButton", "Claim later")}
+          accessibilityLabel={t("screen.PaymentReceivedModal.laterButton")}
         >
-          <ButtonText>{t("screen.PaymentReceivedModal.laterButton", "Claim later")}</ButtonText>
+          <ButtonText>{t("screen.PaymentReceivedModal.laterButton")}</ButtonText>
         </Button>
       </View>
     </FullscreenLayer>

@@ -41,6 +41,22 @@ export function buildWirexSepaTransferMessage(params: {
   return `Nuri Wirex: sepa transfer ${amount} to ${iban} at ${ts}`;
 }
 
+// The EXACT string the MCP verifies for a push to card (money-out). Every value
+// comes from the server's quote (wirex_card_transfer_estimate): the server
+// rebuilds this from its stored quote, so it MUST match nuri-wirex-mcp
+// src/card-payouts.mjs cardTransferMessage byte-for-byte. `amount` is the
+// quote's number, stringified as JavaScript does on both sides.
+export function buildWirexCardTransferMessage(params: {
+  amount: number;
+  currency: string;
+  last4: string;
+  estimationId: string;
+  ts: number; // unix seconds; the server accepts ±5 minutes
+}): string {
+  const { amount, currency, last4, estimationId, ts } = params;
+  return `Nuri Wirex: card transfer ${amount} ${currency} to card ending ${last4} quote ${estimationId} at ${ts}`;
+}
+
 // The EXACT string the MCP verifies when issuing an ADDITIONAL virtual card.
 // Same contract as the other builders (byte-for-byte match with nuri-wirex-mcp).
 // Both name fields are always present in the message: an omitted name signs as

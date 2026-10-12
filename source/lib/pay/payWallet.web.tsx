@@ -36,7 +36,8 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
 import { useCallback, useMemo, useState } from "react";
-import { http, WagmiProvider, createConfig, useAccount } from "wagmi";
+import { http, WagmiProvider, createConfig, useAccount, useDisconnect } from "wagmi";
+import { disconnect } from "wagmi/actions";
 import { arbitrum, base, gnosis, mainnet, optimism, polygon } from "wagmi/chains";
 import { WALLETCONNECT_PROJECT_ID } from "../../config/endpoints";
 import { getChainRpcUrl } from "../rpc/chainRpc";
@@ -120,7 +121,30 @@ export function payWalletClientsCreated(): boolean {
   return created !== null;
 }
 
-export function PayWalletProvider({ children }: { children: React.ReactNode }) {
+/** What wagmi, WalletConnect and RainbowKit keep in this origin's storage. */
+const PAY_WALLET_STORAGE = /^(wagmi\.|wc@2:|rk-)/;
+
+/**
+ * Logout and wallet replacement: the next user must not inherit this one's
+ * connected wallet. Disconnects, drops the config and every stored session.
+ */
+export async function resetPayWallet(): Promise<void> {
+  const clients = created;
+  created = null;
+  if (clients) await disconnect(clients.config).catch(() => {});
+  if (typeof localStorage === "undefined") return;
+  for (const key of Object.keys(localStorage)) {
+    if (PAY_WALLET_STORAGE.test(key)) localStorage.removeItem(key);
+  }
+}
+
+export function PayWalletProvider({
+  children,
+}: {
+  children: React.ReactNode;
+  /** Native only (AppKit's modal); RainbowKit opens its modal from any provider. */
+  modal?: boolean;
+}) {
   const [clients] = useState(() => (PAY_WALLET_AVAILABLE ? payWalletClients() : null));
   if (!clients) return <>{children}</>;
   return (
@@ -136,10 +160,11 @@ export function PayWalletProvider({ children }: { children: React.ReactNode }) {
 
 function useConnectedWallet(): PayWalletConnection {
   const { address, chainId, connector, isConnected } = useAccount();
-  const { openConnectModal } = useConnectModal();
+  const { openConnectModal, connectModalOpen } = useConnectModal();
   // Once connected RainbowKit withholds the connect modal; the account modal
   // is where the payer switches or disconnects the wallet.
-  const { openAccountModal } = useAccountModal();
+  const { openAccountModal, accountModalOpen } = useAccountModal();
+  const { disconnectAsync } = useDisconnect();
   const openConnect = useCallback(
     () => (openConnectModal ?? openAccountModal)?.(),
     [openConnectModal, openAccountModal],
@@ -149,24 +174,43 @@ function useConnectedWallet(): PayWalletConnection {
     const provider = (await connector.getProvider()) as Eip1193Provider | undefined;
     return provider && typeof provider.request === "function" ? provider : null;
   }, [connector]);
+  const disconnect = useCallback(async () => {
+    await disconnectAsync().catch(() => {});
+  }, [disconnectAsync]);
   return useMemo(
     () => ({
       available: true,
       account: isConnected && address ? (address as `0x${string}`) : null,
+      walletName: isConnected ? connector?.name || null : null,
       chainId: isConnected && chainId ? chainId : null,
       openConnect,
+      pickerOpen: connectModalOpen || accountModalOpen,
       getProvider,
+      disconnect,
     }),
-    [isConnected, address, chainId, openConnect, getProvider],
+    [
+      isConnected,
+      address,
+      connector?.name,
+      chainId,
+      openConnect,
+      connectModalOpen,
+      accountModalOpen,
+      getProvider,
+      disconnect,
+    ],
   );
 }
 
 const UNAVAILABLE: PayWalletConnection = {
   available: false,
   account: null,
+  walletName: null,
   chainId: null,
   openConnect: () => {},
+  pickerOpen: false,
   getProvider: async () => null,
+  disconnect: async () => {},
 };
 
 function useNoWallet(): PayWalletConnection {

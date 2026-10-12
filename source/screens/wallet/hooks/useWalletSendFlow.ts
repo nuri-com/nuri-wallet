@@ -17,7 +17,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 import { isValidEvmAddress } from "../../../lib/validation";
 import { EventBus } from "../../../services/events/AppEventBusService";
-import type { WalletSendChoiceKey } from "../../../types/wallet";
 
 const MODAL_PRESENTATION_DELAY = Platform.OS === "ios" ? 350 : 0;
 
@@ -28,7 +27,6 @@ type Params = {
 
 export function useWalletSendFlow(p?: Params) {
   const isActive = p?.isActive ?? true;
-  const [isWalletSendChoiceVisible, setIsWalletSendChoiceVisible] = useState(false);
   const [isSendToWalletVisible, setIsSendToWalletVisible] = useState(false);
   const [sendToWalletAddress, setSendToWalletAddress] = useState<string | null>(null);
   const [sendToWalletAmount, setSendToWalletAmount] = useState<string | null>(null);
@@ -71,20 +69,10 @@ export function useWalletSendFlow(p?: Params) {
     return off;
   }, [clearPendingModalHandoff]);
 
-  const handleSendPress = useCallback(() => {
-    setIsWalletSendChoiceVisible(true);
-  }, []);
-
-  const handleWalletSendChoiceSelect = useCallback(
-    (choice: WalletSendChoiceKey) => {
-      setIsWalletSendChoiceVisible(false);
-      if (choice === "wallet") {
-        scheduleModalHandoff(() => setShowWalletScan(true));
-        return;
-      }
-    },
-    [scheduleModalHandoff],
-  );
+  // Send "To someone" from Cash: the recipient scanner.
+  const startRecipientScan = useCallback(() => {
+    scheduleModalHandoff(() => setShowWalletScan(true));
+  }, [scheduleModalHandoff]);
 
   const handleWalletScanResult = useCallback(
     (addr: string, amount?: string | null, rail?: "wallet" | "dollar" | null): boolean => {
@@ -114,7 +102,6 @@ export function useWalletSendFlow(p?: Params) {
    */
   const closeAll = useCallback(() => {
     clearPendingModalHandoff();
-    setIsWalletSendChoiceVisible(false);
     setIsSendToWalletVisible(false);
     setSendToWalletAddress(null);
     setSendToWalletAmount(null);
@@ -125,8 +112,6 @@ export function useWalletSendFlow(p?: Params) {
 
   return {
     closeAll,
-    isWalletSendChoiceVisible,
-    setIsWalletSendChoiceVisible,
     isSendToWalletVisible,
     setIsSendToWalletVisible,
     sendToWalletAddress,
@@ -138,8 +123,7 @@ export function useWalletSendFlow(p?: Params) {
     setSendToWalletRail,
     showWalletScan,
     setShowWalletScan,
-    handleSendPress,
-    handleWalletSendChoiceSelect,
+    startRecipientScan,
     handleWalletScanResult,
   };
 }

@@ -15,7 +15,7 @@ export const MAX_DESTINATIONS = 20;
 export const MAX_LABEL_CHARS = 120;
 export const MAX_NOTE_CHARS = 1000;
 
-export type DestinationType = "crypto" | "lightning" | "bank" | "phone" | "email";
+export type DestinationType = "crypto" | "lightning" | "bank" | "card" | "phone" | "email";
 
 export type Destination =
   | {
@@ -30,6 +30,8 @@ export type Destination =
     }
   | { type: "lightning"; raw: string; label?: string }
   | { type: "bank"; raw: string; iban: string; bic: string; holder?: string; label?: string }
+  /** A Visa or Mastercard to send money to; `number` is the digits only. */
+  | { type: "card"; raw: string; number: string; holder?: string; label?: string }
   | { type: "phone"; raw: string; e164: string; label?: string }
   | { type: "email"; raw: string; email: string; label?: string };
 
@@ -72,6 +74,22 @@ export function normalizeIban(value: string): string {
   return trim(value)
     .replace(/[^A-Za-z0-9]/g, "")
     .toUpperCase();
+}
+
+/** Digits of a card number, 12 to 19 long and passing the Luhn check; else "". */
+export function normalizeCardNumber(value: string): string {
+  const digits = trim(value).replace(/[\s-]/g, "");
+  if (!/^\d{12,19}$/.test(digits)) return "";
+  let sum = 0;
+  for (let i = 0; i < digits.length; i++) {
+    let d = Number(digits[digits.length - 1 - i]);
+    if (i % 2 === 1) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+  }
+  return sum % 10 === 0 ? digits : "";
 }
 
 /** ISO 13616 mod-97 check. */
@@ -128,6 +146,18 @@ export function normalizeDestination(input: Destination, stored = false): Destin
         raw,
         iban,
         bic,
+        ...(holder ? { holder: holder.slice(0, MAX_LABEL_CHARS) } : {}),
+        ...(label ? { label } : {}),
+      };
+    }
+    case "card": {
+      const number = normalizeCardNumber(input.number || raw);
+      if (!number) throw new ContactValidationError("invalid card number");
+      const holder = trim(input.holder);
+      return {
+        type: "card",
+        raw,
+        number,
         ...(holder ? { holder: holder.slice(0, MAX_LABEL_CHARS) } : {}),
         ...(label ? { label } : {}),
       };
@@ -255,6 +285,8 @@ export function destinationKey(destination: Destination): string {
       return `lightning:${destination.raw.trim().toLowerCase()}`;
     case "bank":
       return `bank:${destination.iban}`;
+    case "card":
+      return `card:${destination.number}`;
     case "phone":
       return `phone:${destination.e164}`;
     case "email":
@@ -319,7 +351,8 @@ export function suggestDestinations(
     out.some(
       (s) =>
         compact(s.destination.raw) === cq ||
-        (s.destination.type === "bank" && s.destination.iban.toLowerCase() === cq),
+        (s.destination.type === "bank" && s.destination.iban.toLowerCase() === cq) ||
+        (s.destination.type === "card" && s.destination.number === cq.replace(/-/g, "")),
     )
   ) {
     return [];
@@ -348,7 +381,11 @@ function sameAddress(a: string, b: string): boolean {
 /** A saved contact already holds this destination (same address or IBAN, any kind). */
 export function isRecipientSaved(contacts: Contact[], destination: Destination): boolean {
   const address =
-    destination.type === "bank" ? destination.iban || destination.raw : destination.raw;
+    destination.type === "bank"
+      ? destination.iban || destination.raw
+      : destination.type === "card"
+        ? destination.number || destination.raw
+        : destination.raw;
   return savedContactFor(contacts, address, () => true) !== null;
 }
 
@@ -367,7 +404,8 @@ export function savedContactFor(
             accepts(d) &&
             (sameAddress(d.raw, recipient) ||
               (d.type === "bank" &&
-                sameAddress(d.iban, recipient.replace(/\s+/g, "").toUpperCase()))),
+                sameAddress(d.iban, recipient.replace(/\s+/g, "").toUpperCase())) ||
+              (d.type === "card" && d.number === recipient.replace(/[\s-]/g, ""))),
         ),
     ) ?? null
   );

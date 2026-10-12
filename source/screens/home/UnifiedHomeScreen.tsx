@@ -83,6 +83,7 @@ import {
 } from "../../lib/currency/displayFiat";
 import { useHomeCurrency } from "../../lib/currency/useHomeCurrency";
 import { t } from "../../lib/i18n";
+import { toSatsFromBtcAmount } from "../../lib/amounts";
 import { BASE_CHAIN_ID, BASE_EURC, BASE_USDC } from "../../config/network";
 
 // Every rail is drawn with the mark the money is actually known by, not a
@@ -97,8 +98,6 @@ const LIGHTNING_LOGO = require("../../assets/rails/lightning.png");
 const VISA_LOGO = require("../../assets/rails/visa.png");
 // The card's two faces have a logo each — the same Visa mark over the currency's
 // own flag. The plain mark stays on the board row, where the card is one thing.
-const VISA_EUR_LOGO = require("../../assets/rails/visa-eur.png");
-const VISA_USD_LOGO = require("../../assets/rails/visa-usd.png");
 const SEPA_LOGO = require("../../assets/rails/sepa.png");
 import { ENS_PARENT_DOMAIN } from "../../config/constants";
 import { getEthereumAddress } from "../../lib/secureKeyStorage";
@@ -123,16 +122,17 @@ import { hydrateMusig2Address } from "../../services/bitcoin/BitcoinBootstrapSer
 import { EventBus } from "../../services/events/AppEventBusService";
 import { useWirexCard } from "../wirex/hooks/useWirexCard";
 import { useWalletSendFlow } from "../wallet/hooks/useWalletSendFlow";
-import WalletSendChoiceModal from "../wallet/modals/WalletSendChoiceModal";
 import WalletSendStablecoinModal from "../wallet/modals/WalletSendStablecoinModal";
 import QrScannerModal from "../../components/QrScannerModal";
 import { useWirexCardLifecycle } from "../wirex/hooks/useWirexCardLifecycle";
 import { useWirexSendFlow } from "../wirex/hooks/useWirexSendFlow";
+import { ADD_PAYOUT_CARD_KEY, useCardPayoutFlow } from "../wirex/hooks/useCardPayoutFlow";
 import WirexAppleWalletModal from "../wirex/modals/WirexAppleWalletModal";
 import type { WirexBankCounterparty } from "../../lib/wirex/cardTransactions";
-import WirexSendChoiceModal from "../wirex/modals/WirexSendChoiceModal";
 import SepaRecipientModal from "../wirex/modals/SepaRecipientModal";
 import SepaAmountConfirmationModal from "../wirex/modals/SepaAmountConfirmationModal";
+import CardPayoutAddModal from "../wirex/modals/CardPayoutAddModal";
+import CardPayoutAmountModal from "../wirex/modals/CardPayoutAmountModal";
 import WirexCardTransactionsModal from "../wirex/WirexCardTransactionsModal";
 import BitcoinSendScreen from "../bitcoin/modals/BitcoinSendScreen";
 import BitcoinTransactionsModal from "../bitcoin/modals/BitcoinTransactionsModal";
@@ -147,7 +147,7 @@ import WirexEmailEntryModal from "../wirex/modals/WirexEmailEntryModal";
 import WirexCardDetailsModal from "../wirex/WirexCardDetailsModal";
 import { detailsSheetCardId } from "../../lib/wirex/cardState";
 import MoveSheet, { type MoveOutcome } from "./MoveSheet";
-import { CARD_USD_RAIL, cardCreditForMove, cardSwapTargetFor } from "./moveBookkeeping";
+import { cardCreditForMove, cardSettleWalletRail, cardSwapTargetFor } from "./moveBookkeeping";
 import { moveDestinationsFor as moveDestinationsForKey, moveSourcePick } from "./movePairs";
 import { stableAmountText } from "../../lib/amounts";
 import {
@@ -167,14 +167,15 @@ import {
   type MoneyRail,
 } from "../../services/money/MoneyInFlightStore";
 import { inFlightAsWalletTransfers, inFlightRowsFor } from "../../services/money/inFlightRows";
-import AddMoneyChoiceModal, { type AddMoneyChoiceKey } from "./AddMoneyChoiceModal";
+import WalletTopUp from "./WalletTopUp";
+import type { PayWalletSettle } from "../../services/pay/PayWalletSwapService";
 import {
   clearPendingHomeRail,
   HOME_OPEN_RAIL_EVENT,
   type RailKey,
   takePendingHomeRail,
 } from "./rails";
-import { homeCarouselEligibleKey, sortByHomeValueDescending, ungroupedCount } from "./homeCarousel";
+import { homeCarouselEligibleKey, ungroupedCount } from "./homeCarousel";
 import { applyVerifiedHomeHandle } from "./homeIdentity";
 import SettingsScreen from "../settings/SettingsScreen";
 import AddressBookScreen from "../addressBook/AddressBookScreen";
@@ -185,7 +186,7 @@ import { isValidEvmAddress } from "../../lib/validation";
 import { getAddressBook } from "../../services/addressBook/AddressBookService";
 import { verificationRow, wirexActivationStep } from "../settings/settingsModel";
 import { closeSettings, openSettings, useSettingsOpen } from "../settings/settingsVisibility";
-import { homeOverviewGroups, orderHomeRails, overviewFigure } from "./homeOverview";
+import { homeGroupOf, homeOverviewGroups, overviewFigure } from "./homeOverview";
 import { useCardDetailDeepLink } from "./hooks/useCardDetailDeepLink";
 import { useWirexCardReadyPoll } from "./hooks/useWirexCardReadyPoll";
 import { useBitcoinBuyFlow } from "../bitcoin/hooks/useBitcoinBuyFlow";
@@ -269,17 +270,12 @@ const MODAL_HANDOFF_DELAY_MS = Platform.OS === "ios" ? 350 : 0;
 // The rails counted in dollars. Everything else on this screen is the home
 // currency or sats, so this is the one question a figure has to ask before it
 // picks a formatter or a conversion.
-const isUsdRail = (key: string | null | undefined) => key === "dollar" || key === CARD_USD_RAIL;
-// The Wirex account, whichever face or pocket names it.
-const isCardRail = (key: string | null | undefined) =>
-  key === "iban" || key === "visa" || key === CARD_USD_RAIL;
+// The card counts in the user's main currency, which it settles in.
+const railFiat = (key: string | null | undefined, home: FiatCode): FiatCode =>
+  key === "dollar" ? "USD" : isCardRail(key) ? home : "EUR";
+// The Wirex account, whichever face names it.
+const isCardRail = (key: string | null | undefined) => key === "iban" || key === "visa";
 const isBtcRail = (key: string | null | undefined) => key === "arkade" || key === "onchain";
-
-// Where a source may send — the card's pockets only reach the wallet holding
-// the same currency (see movePairs). The IBAN is not a Move-sheet rail: it is
-// the same Wirex euro money the card's euro pocket already states.
-const moveDestinationsFor = (fromKey: RailKey | null): RailKey[] | null =>
-  moveDestinationsForKey(fromKey) as RailKey[] | null;
 
 const RAIL_SWAP_ASSET: Partial<Record<RailKey, SwapAssetId>> = {
   wallet: EURC_BASE_TOKEN.asset,
@@ -381,6 +377,19 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       moveHandoffTimerRef.current = null;
     }
   }, []);
+  // Opening a sheet as another closes (iOS cannot present both in one tick).
+  // One timer for all of them, so the app-wide reset cancels any that is
+  // still waiting instead of opening it over a lock or a logout.
+  const handOff = useCallback(
+    (open: () => void) => {
+      cancelMoveHandoff();
+      moveHandoffTimerRef.current = setTimeout(() => {
+        moveHandoffTimerRef.current = null;
+        open();
+      }, MODAL_HANDOFF_DELAY_MS);
+    },
+    [cancelMoveHandoff],
+  );
 
   const handleGreetingPress = useCallback(() => {
     if (!DEBUG_UI_ENABLED) return;
@@ -420,6 +429,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // Withdraw + SEPA for the two Wirex faces.
   const wirexBankReady = isWirexBankReady(wirex);
   const wirexSend = useWirexSendFlow({ bankReady: wirexBankReady });
+  const cardPayout = useCardPayoutFlow(handOff);
   // Subscribe-only: the App-level monitor owns the refreshing. Read here for the
   // arkade rail's pending-sweep row.
   const unlockState = useArkadeReceiveUnlockState();
@@ -458,6 +468,34 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   const [swapVisible, setSwapVisible] = useState(false);
   const [swapFrom, setSwapFrom] = useState<RailKey | null>(null);
   const [swapTo, setSwapTo] = useState<RailKey | null>(null);
+  // Add money fixes the card's end as the destination, Send as the source.
+  const [moveLock, setMoveLock] = useState<"from" | "to" | null>(null);
+  // The two buttons: which card's Add money or Send list is open, which list
+  // waits for a card to be picked (the total has none), and the user's own pay
+  // page shown for "From another wallet".
+  type HomeCard = "onchain" | "wallet" | "visa";
+  const [cardSheet, setCardSheet] = useState<{ kind: "add" | "send"; card: HomeCard } | null>(null);
+  const [cardPickFor, setCardPickFor] = useState<"add" | "send" | null>(null);
+  // `id`: each request starts a fresh flow, even while the last one is still
+  // waiting out a closed picker.
+  const [topUp, setTopUp] = useState<{
+    id: number;
+    settle: PayWalletSettle;
+    payoutAddress: string;
+    label: string;
+    formatReceive: (amount: string) => string;
+  } | null>(null);
+  const closeTopUp = useCallback(() => setTopUp(null), []);
+  // Cash with money in both currencies: Send asks which one first; the pick
+  // lives until the Cash card closes.
+  const [cashChoice, setCashChoice] = useState(false);
+  const [cashPick, setCashPick] = useState<"wallet" | "dollar" | null>(null);
+  const [btcChoice, setBtcChoice] = useState(false);
+  const [btcPick, setBtcPick] = useState<"onchain" | "arkade" | null>(null);
+  useEffect(() => {
+    if (openRail !== "wallet") setCashPick(null);
+    if (openRail !== "onchain") setBtcPick(null);
+  }, [openRail]);
   const [onchainToArkadeAvailableSats, setOnchainToArkadeAvailableSats] = useState<number | null>(
     null,
   );
@@ -467,7 +505,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // destination rail the move named is the only thing that says which.
   // Sats the Move sheet already collected. Null when the top-up was opened on
   // its own (Add money), where the keypad is where the amount comes from.
-  const [addMoneyVisible, setAddMoneyVisible] = useState(false);
   // Buying bitcoin through Mercuryo. The order outlives this sheet, so nothing
   // about a purchase depends on it staying open.
   const buyFlow = useBitcoinBuyFlow();
@@ -723,7 +760,9 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   const openEvmSend = useCallback(
     (address: string, amount: string | null): string | undefined => {
       const hasUsd = (usdcBalance ?? 0) > 0;
-      if (walletEur > 0 && hasUsd) {
+      // Send on Cash already asked which currency pays; its scan keeps that pick.
+      const picked = walletSend.showWalletScan ? cashPick : null;
+      if (walletEur > 0 && hasUsd && !picked) {
         setScanChoice({ kind: "evm", address, amount });
         return undefined;
       }
@@ -731,12 +770,18 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       return walletSend.handleWalletScanResult(
         address,
         amount,
-        hasUsd && walletEur <= 0 ? "dollar" : "wallet",
+        picked ?? (hasUsd && walletEur <= 0 ? "dollar" : "wallet"),
       )
         ? undefined
         : t("screen.HomeScreen.scanNothingToSend");
     },
-    [usdcBalance, walletEur, walletSend.handleWalletScanResult],
+    [
+      usdcBalance,
+      walletEur,
+      walletSend.showWalletScan,
+      cashPick,
+      walletSend.handleWalletScanResult,
+    ],
   );
 
   // Home includes every rail, even before its address/account is ready.
@@ -884,6 +929,18 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     cash: t("screen.HomeScreen.groupCash"),
     banking: t("screen.HomeScreen.groupCardBanking"),
   };
+  // Which stable a Send or Move from Cash spends. With money in both, the user
+  // picks it in a sheet; with money in one, that one; with none, the main one.
+  const cashBoth = walletEur > 0 && (usdcBalance ?? 0) > 0;
+  const cashOnly: "wallet" | "dollar" =
+    walletEur > 0 ? "wallet" : (usdcBalance ?? 0) > 0 ? "dollar" : cardSettleWalletRail(home);
+  const cashRail: "wallet" | "dollar" = cashPick ?? cashOnly;
+  // Which bitcoin rail a Send or Move from Bitcoin spends, as Send does today.
+  // Which bitcoin rail a Send from Bitcoin spends: with money on both, the user
+  // picks it in a sheet (lives until the Bitcoin card closes); else the funded one.
+  const btcBoth = onchainActive && onchainSats > 0 && arkadeSats > 0;
+  const btcRail: "onchain" | "arkade" =
+    btcPick ?? (onchainActive && onchainSats > 0 ? "onchain" : "arkade");
   const overviewImages = { bitcoin: BTC_LOGO, cash: EUR_FLAG, banking: VISA_LOGO };
   const total = formatFiat(sumKnown(overviewGroups.map((group) => group.amountHome)), home, {
     style: "glyph",
@@ -910,11 +967,13 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       const railsHere: MoneyRail[] =
         key === "visa"
           ? ["visa", "visaUsd"]
-          : key === "iban"
-            ? ["visa"]
-            : MONEY_RAILS.includes(key as MoneyRail)
-              ? [key as MoneyRail]
-              : [];
+          : key === "onchain"
+            ? ["onchain", "arkade"]
+            : key === "wallet"
+              ? ["wallet", "dollar"]
+              : MONEY_RAILS.includes(key as MoneyRail)
+                ? [key as MoneyRail]
+                : [];
       if (railsHere.length > 0) {
         for (const row of inFlightRowsFor(moneyInFlight, railsHere)) {
           const amount = row.leg.amount;
@@ -932,8 +991,10 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
             figure = heldStr(amount, row.leg.unit);
             converted = sats === null ? UNKNOWN_FIGURE : `${sign} ${satsStr(sats)}`;
           }
+          const rowRail = row.key.slice(row.key.lastIndexOf("-") + 1) as RailKey;
           rows.push({
             key: row.key,
+            onPress: () => setHistoryRail(rowRail === "visaUsd" ? "visa" : rowRail),
             label: t(`screen.HomeScreen.${row.label}`),
             amount: `${sign} ${figure}`,
             converted,
@@ -942,9 +1003,10 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       }
       // The arkade rail's unspendable sats, as the board draws them: one
       // spinner row above the history entry.
-      if (key === "arkade" && pendingVtxoSats > 0) {
+      if (key === "onchain" && pendingVtxoSats > 0) {
         rows.push({
           key: "pending-vtxo-balance",
+          onPress: () => setHistoryRail("arkade"),
           label: t("screen.BitcoinTransactionsModal.pendingBalanceLabel"),
           amount: satsStr(pendingVtxoSats),
           converted: homeStr(satsToHome(pendingVtxoSats)),
@@ -958,55 +1020,97 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // The transfer sheet is reached from a rail row or from a scan. A scan that
   // opened the sheet decided for itself, and that decision lives and dies with
   // the sheet; otherwise the open row names the currency.
-  const sendTokenRail =
-    walletSend.sendToWalletRail ??
-    (openRail === "dollar" || openRail === "wallet" ? openRail : "wallet");
+  const sendTokenRail = walletSend.sendToWalletRail ?? cashRail;
 
-  // The card settles in whatever currency was loaded onto it — dollars stay
-  // dollars until they are spent — while the region above states one total in
-  // the display currency. These rows say which money is actually on the card,
-  // each in its own currency with its display-currency equivalent.
-  const cardBalanceRows: WealthBalanceRow[] = useMemo(() => {
-    // Both Wirex faces state the same account, so both itemise it the same way.
-    const byFiat = isCardRail(openRail) && cardActive ? wirex.balancesByFiat : null;
-    if (!byFiat) return [];
-    // Both currencies stay visible at zero; their display values decide order.
-    const usd = byFiat.USD ?? 0;
-    const eur = byFiat.EUR ?? 0;
-    return sortByHomeValueDescending([
-      {
-        key: "EUR",
-        label: t("screen.HomeScreen.railEuro"),
-        image: EUR_FLAG,
-        figure: heldList(eur, "EUR"),
-        homeValue: toHome(eur, "EUR"),
-      },
-      {
-        key: "USD",
-        label: t("screen.HomeScreen.railDollar"),
-        image: USD_FLAG,
-        figure: heldList(usd, "USD"),
-        homeValue: toHome(usd, "USD"),
-      },
-    ]).map(({ homeValue: _homeValue, ...row }) => row);
-  }, [openRail, cardActive, wirex.balancesByFiat, heldList, toHome]);
+  // What the open home card holds, one row per rail: Bitcoin = Onchain and
+  // Lightning, Cash = euro and dollar, Visa & Banking = the money on the card in
+  // each currency it holds. Tapping a row opens that rail's history.
+  const groupBalanceRows: WealthBalanceRow[] = useMemo(() => {
+    if (openRail === "onchain") {
+      return [
+        {
+          key: "onchain",
+          label: t("screen.HomeScreen.rowOnchain"),
+          image: BTC_LOGO,
+          figure: listSatsStr(onchainSats),
+          onPress: () => setHistoryRail("onchain"),
+        },
+        {
+          key: "arkade",
+          label: t("screen.HomeScreen.rowLightning"),
+          image: LIGHTNING_LOGO,
+          figure: listSatsStr(arkadeSats),
+          onPress: () => setHistoryRail("arkade"),
+        },
+      ];
+    }
+    if (openRail === "wallet") {
+      return [
+        {
+          key: "wallet",
+          label: t("screen.HomeScreen.railEuro"),
+          image: EUR_FLAG,
+          figure: heldList(walletEur, "EUR"),
+          onPress: () => setHistoryRail("wallet"),
+        },
+        {
+          key: "dollar",
+          label: t("screen.HomeScreen.railDollar"),
+          image: USD_FLAG,
+          figure: heldList(usdcBalance ?? 0, "USD"),
+          onPress: () => setHistoryRail("dollar"),
+        },
+      ];
+    }
+    // Visa & Banking states its balance on the card itself.
+    return [];
+  }, [openRail, onchainSats, arkadeSats, walletEur, usdcBalance, listSatsStr, heldList]);
 
-  // The Move sheet names the card by CURRENCY, not by face. A top-up sends
-  // euros or dollars — different tokens to the same address — and only the
-  // destination says which, so the card appears here as its two pockets. The
-  // home keeps ONE card row (its screen itemises the currencies); this list is
-  // the Move sheet's alone.
+  // Money on the card in the currency it does not settle in. It cannot be
+  // spent through the card's one currency, so it is offered back as found
+  // money: withdrawn to the wallet holding that currency, and done.
+  const cardOtherFiat: FiatCode = home === "USD" ? "EUR" : "USD";
+  const cardOtherReading = cardActive ? wirex.balancesByFiat?.[cardOtherFiat] : undefined;
+  const cardOtherHeld = cardOtherReading ?? 0;
+  const [cardFoundVisible, setCardFoundVisible] = useState(false);
+  // Offered unprompted for each amount found in a currency; the row on the
+  // Visa & Banking card reopens it for as long as the money is there.
+  const cardFoundOfferedRef = useRef<string | null>(null);
+  // The amount a withdrawal already ran for (or may have run for, when its
+  // outcome is unconfirmed): not offered again until the balance reads differently,
+  // so the same money is never withdrawn twice.
+  const cardFoundKey = `${cardOtherFiat}:${cardOtherHeld}`;
+  const [cardFoundClaimed, setCardFoundClaimed] = useState<string | null>(null);
+  // A withdrawal still running holds the claim whatever the balance reads, so a
+  // balance change mid-approval cannot start a second one.
+  const [cardFoundRunning, setCardFoundRunning] = useState(false);
+  const cardFoundClaimable =
+    cardOtherHeld > 0 && !cardFoundRunning && cardFoundClaimed !== cardFoundKey;
+  // Once the card reads zero in that currency the money has left: the same
+  // amount arriving later is new money, offered and claimable again.
+  useEffect(() => {
+    if (cardOtherReading !== 0) return;
+    setCardFoundClaimed(null);
+    cardFoundOfferedRef.current = null;
+  }, [cardOtherReading]);
+  useEffect(() => {
+    const found = cardFoundKey;
+    if (!cardFoundClaimable || cardFoundOfferedRef.current === found || sweepResult != null) return;
+    cardFoundOfferedRef.current = found;
+    setCardFoundVisible(true);
+  }, [cardFoundClaimable, cardFoundKey, sweepResult]);
+
+  // The Move sheet lists the card ONCE, as "Visa", in its settlement currency:
+  // the user's main currency. Anything sent to it is a swap into that currency
+  // (or a plain transfer from the wallet already holding it), and what it pays
+  // out is that currency. Money on the card in the other currency is offered
+  // back as found money.
   const moveRails: Rail[] = useMemo(() => {
     // Null until a /wallet read establishes it. The total on its own says
-    // NOTHING about the split — a cold start restores one figure and no
-    // breakdown — so neither pocket may be stated from it. Calling it all euros
-    // would offer a euro withdrawal against dollars the euro pocket does not
-    // hold, and put the dollar pocket at zero where it cannot be reached at all.
+    // NOTHING about the split, so the settlement balance may not be stated from it.
     const byFiat = cardActive ? wirex.balancesByFiat : null;
-    const eur = byFiat?.EUR ?? null;
-    const usd = byFiat?.USD ?? null;
-    const eurSats = eur === null ? null : fiatToSats(eur, "EUR");
-    const usdSats = usd === null ? null : fiatToSats(usd, "USD");
+    const held = byFiat ? (byFiat[home] ?? 0) : null;
+    const heldSats = held === null ? null : fiatToSats(held, home);
     return rails.flatMap((rail): Rail[] => {
       if (rail.key === "onchain" && swapFrom === "onchain" && swapTo === "arkade") {
         const available = onchainToArkadeAvailableSats;
@@ -1020,46 +1124,27 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         ];
       }
       if (!isCardRail(rail.key)) return [rail];
-      // The IBAN spends the same Wirex euros the card's euro pocket states;
-      // listing both on the Move sheet showed one balance as two.
+      // The IBAN spends the same Wirex money the card states; listing both on
+      // the Move sheet showed one balance as two.
       if (rail.key === "iban") return [];
-      const euroFace: Rail = {
-        ...rail,
-        label: rail.key === "visa" ? t("screen.HomeScreen.railVisaEuro") : rail.label,
-        ...(rail.key === "visa" ? { image: VISA_EUR_LOGO } : {}),
-        available: eur,
-        amount: eur === null ? UNKNOWN_FIGURE : heldStr(eur, "EUR"),
-        converted: satsOrUnknown(eurSats),
-        listFigure: eur === null ? UNKNOWN_FIGURE : heldList(eur, "EUR"),
-        homeValue: eur === null ? null : toHome(eur, "EUR"),
-        glyph:
-          eur === null
-            ? { amount: UNKNOWN_FIGURE, converted: UNKNOWN_FIGURE }
-            : { amount: heldGlyph(eur, "EUR"), converted: satsOrUnknown(eurSats, true) },
-      };
-      // The IBAN is a euro account; only the card has a dollar side.
-      if (rail.key !== "visa") return [euroFace];
       return [
-        euroFace,
         {
           ...rail,
-          key: CARD_USD_RAIL,
-          label: t("screen.HomeScreen.railVisaDollar"),
-          image: VISA_USD_LOGO,
-          available: usd,
-          amount: usd === null ? UNKNOWN_FIGURE : heldStr(usd, "USD"),
-          converted: satsOrUnknown(usdSats),
-          listFigure: usd === null ? UNKNOWN_FIGURE : heldList(usd, "USD"),
-          homeValue: usd === null ? null : toHome(usd, "USD"),
+          available: held,
+          amount: held === null ? UNKNOWN_FIGURE : heldStr(held, home),
+          converted: satsOrUnknown(heldSats),
+          listFigure: held === null ? UNKNOWN_FIGURE : heldList(held, home),
+          homeValue: held,
           glyph:
-            usd === null
+            held === null
               ? { amount: UNKNOWN_FIGURE, converted: UNKNOWN_FIGURE }
-              : { amount: heldGlyph(usd, "USD"), converted: satsOrUnknown(usdSats, true) },
+              : { amount: heldGlyph(held, home), converted: satsOrUnknown(heldSats, true) },
         },
       ];
     });
   }, [
     rails,
+    home,
     swapFrom,
     swapTo,
     onchainToArkadeAvailableSats,
@@ -1070,13 +1155,21 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     heldGlyph,
     heldList,
     homeStr,
-    toHome,
     satsToHome,
     fiatToSats,
     satsOrUnknown,
   ]);
 
-  const carouselRails = useMemo(() => orderHomeRails(homeRails), [homeRails]);
+  // The home's three cards: Bitcoin, Cash, Visa & Banking. Each card's figure
+  // is its overview group's, in the display currency.
+  const carouselRails = overviewGroups.map((group) => ({
+    key: group.rail as RailKey,
+    label: overviewLabels[group.key],
+    image: overviewImages[group.key],
+    accent: group.key === "bitcoin" ? "orange" : group.key === "cash" ? "lilac" : "neutral",
+    amount: overviewFigure(group.amountHome, home),
+  })) satisfies { key: RailKey; accent: Accent }[];
+
   // Total Balance is the starting/reset state; balances never select a rail.
   const selectOverviewRail = useCallback((key: RailKey | null) => {
     setOpenRail(key);
@@ -1088,7 +1181,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     openRail,
   );
   const openedRail = railOf(openRail);
-  const carouselOpenedRail = railOf(carouselRailKey);
+  const carouselOpenedRail = carouselRails.find((rail) => rail.key === carouselRailKey) ?? null;
   // Activation CTA gate: the rails are "inactive" until the card is actually
   // USABLE — `isApproved` alone flips true the moment Sumsub approves, while
   // card/balance/smart-account provision moments later. In that window the
@@ -1123,8 +1216,23 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // yet. The sweep is client-only and runs from the unlock modal alone, so a
   // modal that was dismissed (or never opened) leaves nothing on screen saying
   // sats are waiting. This row is that surface, and tapping it reopens the modal.
+  const cardFoundExtra =
+    openRail === "visa" && cardFoundClaimable ? (
+      <List>
+        <ListAction
+          accessibilityLabel={t("screen.SweepClaimSheet.title")}
+          onPress={() => setCardFoundVisible(true)}
+        >
+          <ListActionLeadingAvatar source={cardOtherFiat === "USD" ? USD_FLAG : EUR_FLAG} />
+          <ListActionText>{t("screen.SweepClaimSheet.title")}</ListActionText>
+          <ListActionTextMuted>{heldList(cardOtherHeld, cardOtherFiat)}</ListActionTextMuted>
+          <ListActionTrailIcon name="chevron-right" />
+        </ListAction>
+      </List>
+    ) : null;
+
   const pendingSweepExtra =
-    openRail === "arkade" && unlockState.boardingSweepReadyCount > 0 ? (
+    openRail === "onchain" && unlockState.boardingSweepReadyCount > 0 ? (
       <List>
         <ListAction
           accessibilityLabel={t("screen.AssetScreen.pendingSweepA11yLabel", {
@@ -1151,6 +1259,14 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
             label: t("screen.HomeScreen.receiveLabelInstant"),
             value: addressSnapshot.currentAddress,
           },
+          ...(addressSnapshot.musig2Address
+            ? {
+                secondary: {
+                  label: t("screen.HomeScreen.receiveLabelOnchain"),
+                  value: addressSnapshot.musig2Address,
+                },
+              }
+            : {}),
         };
       case "onchain":
         return {
@@ -1211,7 +1327,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         else onboarding.start();
         return;
       }
-      setOpenRail(key);
+      setOpenRail(homeGroupOf(key));
     },
     [
       wirexRailsNeedActivation,
@@ -1250,15 +1366,20 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           setHistoryRail(null);
           setScanVisible(false);
           setSwapVisible(false);
-          setAddMoneyVisible(false);
+          setCardSheet(null);
+          setCardPickFor(null);
+          setCashChoice(false);
+          setBtcChoice(false);
+          setTopUp(null);
           setBtcSendSource(null);
           setBtcSendPrefill(undefined);
           setSweepResult(null);
+          setCardFoundVisible(false);
+          setDetailsChoiceVisible(false);
           setScanChoice(null);
           // A link parked for a home that never opened it must not fire after the
           // takeover that just asked everything to close.
           clearPendingHomeRail();
-          wirexSend.setChoiceVisible(false);
           wirexSend.closeRecipient();
           wirexSend.setAmountVisible(false);
           // The wallet's own sheets hold a recipient and an amount, and the
@@ -1266,52 +1387,44 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           // still on screen after the takeover that asked everything to close.
           walletSend.closeAll();
           onboarding.cancel();
+          cardPayout.closeAll();
         } catch {}
       }),
     [
       lifecycle.closeAll,
       cancelMoveHandoff,
-      wirexSend.setChoiceVisible,
       wirexSend.closeRecipient,
       wirexSend.setAmountVisible,
       walletSend.closeAll,
       onboarding.cancel,
+      cardPayout.closeAll,
     ],
   );
 
-  // Euro keeps the full choice (card · bitcoin · someone else). Dollar has no
-  // card or swap leg, so it goes straight to the recipient scanner. Bitcoin and
-  // the Wirex faces stay on their own rail.
-  const sendFromRail = useCallback(
-    (key: RailKey | null) => {
-      if (key === "wallet" || key === "dollar") return walletSend.handleSendPress();
-      // Both Wirex faces spend the same balance, so they share one send flow.
-      if (key === "iban" || key === "visa") return wirexSend.start();
-      // Straight to the recipient screen with the rail pinned as the source —
-      // the row IS the source, so there is no source picker in between.
-      if (key === "arkade" || key === "onchain") setBtcSendSource(key);
-    },
-    [walletSend.handleSendPress, wirexSend.start],
-  );
-
-  // Receive on a Wirex row opens the production sheet pinned to that face —
-  // the IBAN row shows bank details, the VISA row the card. No tab switcher:
-  // it would contradict the row that was tapped.
   const retryArkadeAddress = useCallback(() => {
     void walletService.generateNewAddress();
   }, []);
 
+  // Card details fetch the card's secrets as the sheet opens (a frozen card
+  // shows the unfreeze hint instead); bank details open without fetching.
+  const openCardDetails = useCallback(() => {
+    const cardId = wirex.card?.id ?? null;
+    if (!cardId || wirex.isFrozen === true) return reveal.open("card");
+    return void reveal.reveal({ id: cardId });
+  }, [reveal.open, reveal.reveal, wirex.card?.id, wirex.isFrozen]);
+  const openBankDetails = useCallback(() => reveal.open("bank"), [reveal.open]);
+  // Details on Visa & Banking asks which one first.
+  const [detailsChoiceVisible, setDetailsChoiceVisible] = useState(false);
+
+  // Details on a home card: Visa & Banking opens its details sheet, Bitcoin and
+  // Cash their receive addresses.
   const receiveFromRail = useCallback(
     (key: RailKey | null) => {
-      if (key === "iban") return reveal.open("bank");
-      if (key === "visa") {
-        const cardId = wirex.card?.id ?? null;
-        if (!cardId || wirex.isFrozen === true) return reveal.open("card");
-        return void reveal.reveal({ id: cardId });
-      }
-      setReceiveRail(key);
+      if (key === "visa") return openCardDetails();
+      if (key === "iban") return openBankDetails();
+      setReceiveRail(key === "onchain" ? "arkade" : key);
     },
-    [reveal.open, reveal.reveal, wirex.card?.id, wirex.isFrozen],
+    [openCardDetails, openBankDetails],
   );
 
   // A support deep link (`show-iban` / `show-card-number`) parks its target and
@@ -1348,7 +1461,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     (route: Exclude<SendRoute, { kind: "unsupported" }>): string | undefined => {
       // Same gate as a scanned IBAN: without a ready Wirex bank account the
       // transfer would reach its confirmation with no account to debit.
-      if (route.kind === "sepa" && !wirexBankReady) {
+      if ((route.kind === "sepa" || route.kind === "card") && !wirexBankReady) {
         return t("screen.HomeScreen.scanBankUnavailable");
       }
       // Checked before anything closes: a refused handoff keeps the contact open.
@@ -1396,6 +1509,9 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
             });
             return;
           }
+          case "card":
+            cardPayout.startWith({ name: route.holder, number: route.number });
+            return;
         }
       }, MODAL_HANDOFF_DELAY_MS);
       return undefined;
@@ -1408,6 +1524,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       wirexBankReady,
       wirexSend.startSepaTo,
       openEvmSend,
+      cardPayout.startWith,
     ],
   );
 
@@ -1426,54 +1543,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   );
   const clearAddressBookSaveRequest = useCallback(() => setAddressBookSaveRequest(null), []);
 
-  // "Add money" is one CTA over the four ways money reaches this app: the two
-  // addresses the user already owns, a bank transfer, and a purchase. Each
-  // lands on a different rail, so each hands off to that rail's own surface.
-  const handleAddMoneySelect = useCallback(
-    (choice: AddMoneyChoiceKey) => {
-      setAddMoneyVisible(false);
-      switch (choice) {
-        // The two addresses the user already owns: euro arrives on the EVM
-        // wallet, bitcoin on the onchain one.
-        case "euro":
-          setReceiveRail("wallet");
-          return;
-        case "bitcoin":
-          setReceiveRail("onchain");
-          return;
-        // A transfer needs a bank account to land in. With one, this is the
-        // account's own details; without, it is the signup that creates it —
-        // and a verification already under way is resumed rather than restarted
-        // (a restart asks for an email Wirex has and drops the Sumsub session).
-        case "iban":
-          // iOS cannot present a sheet in the same tick another is dismissed
-          // (#522): this one is opening as the choice sheet closes.
-          setTimeout(() => {
-            if (wirexRailsNeedActivation) {
-              if (wirexPendingVerification) void onboarding.continueVerification();
-              else onboarding.start();
-              return;
-            }
-            reveal.open("bank");
-          }, MODAL_HANDOFF_DELAY_MS);
-          return;
-        // The purchase. It settles to the onchain bitcoin address, and the
-        // order outlives its sheet.
-        case "pay":
-          buyFlow.open();
-          return;
-      }
-    },
-    [
-      buyFlow.open,
-      wirexRailsNeedActivation,
-      wirexPendingVerification,
-      onboarding.start,
-      onboarding.continueVerification,
-      reveal.open,
-    ],
-  );
-
   // The amount typed on one side, expressed on the other: sats through the BTC
   // rate, euros and dollars through FX, straight between the two rails' own
   // currencies — the display currency is not a leg of it. Null when a rate is
@@ -1483,14 +1552,14 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       const source = focus === "from" ? swapFrom : swapTo;
       const target = focus === "from" ? swapTo : swapFrom;
       if (!source || !target || !Number.isFinite(typed)) return null;
-      const fiatOf = (rail: RailKey): FiatCode => (isUsdRail(rail) ? "USD" : "EUR");
+      const fiatOf = (rail: RailKey): FiatCode => railFiat(rail, home);
       if (isBtcRail(source)) {
         return isBtcRail(target) ? typed : satsToFiatIn(typed, fiatOf(target), btcQuote, fxRates);
       }
       if (isBtcRail(target)) return fiatToSats(typed, fiatOf(source));
       return convertFiat(typed, fiatOf(source), fiatOf(target), fxRates);
     },
-    [swapFrom, swapTo, btcQuote, fxRates, fiatToSats],
+    [swapFrom, swapTo, btcQuote, fxRates, fiatToSats, home],
   );
 
   // The same number, formatted for the unfocused half.
@@ -1500,9 +1569,9 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   const swapRailAmount = useCallback(
     (value: number, railKey: string): string => {
       if (isBtcRail(railKey)) return satsGlyph(value);
-      return heldGlyph(value, isUsdRail(railKey) ? "USD" : "EUR");
+      return heldGlyph(value, railFiat(railKey, home));
     },
-    [satsGlyph, heldGlyph],
+    [satsGlyph, heldGlyph, home],
   );
 
   const swapCounterAmount = useCallback(
@@ -1519,8 +1588,8 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // Wirex's own load, and a Move opened before that answer would otherwise cache
   // "no card destination" and keep it after the address was there all along.
   const cardSwapTargetOf = useCallback(
-    (toRailKey: string) => cardSwapTargetFor(swapFrom, toRailKey, wirex.smartAccountAddress),
-    [swapFrom, wirex.smartAccountAddress],
+    (toRailKey: string) => cardSwapTargetFor(swapFrom, toRailKey, wirex.smartAccountAddress, home),
+    [swapFrom, wirex.smartAccountAddress, home],
   );
 
   // A chooser hands over to the Move card the way every other sheet hand-off
@@ -1530,42 +1599,178 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // Seeds both ends when the sheet OPENS: a source with fixed exits starts on
   // one of them. A user's pick of a source moves the destination the same way
   // (moveSourcePick); an unreachable destination is refused by the sheet (#1467).
-  const setMovePair = useCallback((from: RailKey | null, to: RailKey | null) => {
-    // The IBAN is the same Wirex euro money as the card's euro pocket, and only
-    // that pocket is on the Move sheet.
-    const source = from === "iban" ? "visa" : from;
-    const target = to === "iban" ? "visa" : to;
-    setSwapFrom(source);
-    const allowed = moveDestinationsFor(source);
-    setSwapTo(allowed && (!target || !allowed.includes(target)) ? allowed[0] : target);
-  }, []);
+  const setMovePair = useCallback(
+    (from: RailKey | null, to: RailKey | null) => {
+      // The IBAN is the same Wirex money as the card, and only the card is on
+      // the Move sheet.
+      const source = from === "iban" ? "visa" : from;
+      const target = to === "iban" ? "visa" : to;
+      setSwapFrom(source);
+      const allowed = moveDestinationsForKey(source, home) as RailKey[] | null;
+      setSwapTo(allowed && (!target || !allowed.includes(target)) ? allowed[0] : target);
+    },
+    [home],
+  );
 
-  const openMove = useCallback(
-    (from: RailKey, to: RailKey) => {
+  useEffect(() => cancelMoveHandoff, [cancelMoveHandoff]);
+
+  const openSwap = useCallback(
+    (from: RailKey | null) => {
+      const isBtc = (k: RailKey) => k === "arkade" || k === "onchain";
+      // A home card names its group; the move starts on the rail that spends.
+      const source = from === "onchain" ? btcRail : from === "wallet" || !from ? cashRail : from;
+      // Named, not "the first row that isn't bitcoin": the euro wallet is the
+      // counterparty a bitcoin move defaults to, and row order is the product's
+      // to change without moving that default onto the dollar.
+      const target = isBtc(source) ? "wallet" : (rails.find((r) => isBtc(r.key))?.key ?? "arkade");
+      setMoveLock(null);
+      setMovePair(source, target);
+      setSwapVisible(true);
+    },
+    [rails, setMovePair, btcRail, cashRail],
+  );
+
+  // The Move sheet with one end fixed: the card the user is adding money to
+  // (destination) or sending from (source).
+  const openLockedMove = useCallback(
+    (from: RailKey, to: RailKey, lock: "from" | "to") => {
       cancelMoveHandoff();
       moveHandoffTimerRef.current = setTimeout(() => {
         moveHandoffTimerRef.current = null;
+        setMoveLock(lock);
         setMovePair(from, to);
         setSwapVisible(true);
       }, MODAL_HANDOFF_DELAY_MS);
     },
     [cancelMoveHandoff, setMovePair],
   );
-  useEffect(() => cancelMoveHandoff, [cancelMoveHandoff]);
 
-  const openSwap = useCallback(
-    (from: RailKey | null) => {
-      const isBtc = (k: RailKey) => k === "arkade" || k === "onchain";
-      const source = from ?? "wallet";
-      // Named, not "the first row that isn't bitcoin": the euro wallet is the
-      // counterparty a bitcoin move defaults to, and row order is the product's
-      // to change without moving that default onto the dollar.
-      const target = isBtc(source) ? "wallet" : (rails.find((r) => isBtc(r.key))?.key ?? "arkade");
-      setMovePair(source, target);
-      setSwapVisible(true);
+  const settleWallet = cardSettleWalletRail(home);
+  // The two buttons on a card. Send on Cash with money in both currencies asks
+  // which one first.
+  const openCardSheet = useCallback(
+    (kind: "add" | "send", card: HomeCard) => {
+      if (kind === "send" && card === "wallet" && cashBoth) return setCashChoice(true);
+      if (kind === "send" && card === "wallet") setCashPick(null);
+      if (kind === "send" && card === "onchain" && btcBoth) return setBtcChoice(true);
+      if (kind === "send" && card === "onchain") setBtcPick(null);
+      setCardSheet({ kind, card });
     },
-    [rails, setMovePair],
+    [cashBoth, btcBoth],
   );
+  const onCardButton = useCallback(
+    (kind: "add" | "send") => {
+      const card = carouselRailKey as HomeCard | null;
+      if (!card) return setCardPickFor(kind);
+      openCardSheet(kind, card);
+    },
+    [carouselRailKey, openCardSheet],
+  );
+
+  const addMoneyItems = (card: HomeCard) => [
+    {
+      key: "balances",
+      icon: "transfer-vertical" as const,
+      accent: "lilac" as const,
+      label: t("screen.HomeScreen.addFromBalances"),
+    },
+    card === "visa"
+      ? {
+          key: "bank",
+          icon: "bank" as const,
+          accent: "lilac" as const,
+          label: t("screen.HomeScreen.addByBankTransfer"),
+          // Bank details need the IBAN, which can come after the card.
+          disabled: !wirexBankReady,
+        }
+      : {
+          key: "receive",
+          icon: "qr" as const,
+          accent: "lilac" as const,
+          label: t("screen.HomeScreen.addReceive"),
+        },
+    {
+      key: "wallet",
+      icon: "wallet" as const,
+      accent: "lilac" as const,
+      label: t("screen.HomeScreen.addFromWallet"),
+    },
+    ...(card === "onchain"
+      ? [
+          {
+            key: "buy",
+            icon: "apple" as const,
+            accent: "neutral" as const,
+            label: t("screen.HomeScreen.addMoneyPay"),
+          },
+        ]
+      : []),
+  ];
+
+  const onAddMoney = (card: HomeCard, key: string) => {
+    setCardSheet(null);
+    switch (key) {
+      case "balances": {
+        const to: RailKey =
+          card === "onchain" ? "arkade" : card === "wallet" ? settleWallet : "visa";
+        const from: RailKey =
+          card === "onchain" ? cashRail : card === "wallet" ? btcRail : settleWallet;
+        return openLockedMove(from, to, "to");
+      }
+      case "receive":
+        return handOff(() => setReceiveRail(card === "onchain" ? "arkade" : settleWallet));
+      case "wallet": {
+        // Any token the other wallet holds is swapped into what the balance
+        // takes and settles at its own address: the boarding address for
+        // Bitcoin, the EVM wallet for Cash, the deposit address for the card.
+        const stable = home === "USD" ? "USDC_BASE" : "EURC_BASE";
+        const payoutAddress = (
+          card === "onchain"
+            ? addressSnapshot.currentAddress
+            : card === "visa"
+              ? wirex.smartAccountAddress
+              : evmAddress
+        )?.trim();
+        if (!payoutAddress) return;
+        const settle: PayWalletSettle = card === "onchain" ? "BTC" : stable;
+        // Named and written the way the home names and writes that balance.
+        const label = t(
+          card === "onchain"
+            ? "screen.HomeScreen.railBitcoin"
+            : card === "visa"
+              ? "screen.HomeScreen.railVisa"
+              : home === "USD"
+                ? "screen.HomeScreen.railDollar"
+                : "screen.HomeScreen.railEuro",
+        );
+        const formatReceive = (amount: string) =>
+          card === "onchain"
+            ? satsGlyph(toSatsFromBtcAmount(amount))
+            : heldGlyph(Number(amount), home);
+        return handOff(() =>
+          setTopUp({ id: Date.now(), settle, payoutAddress, label, formatReceive }),
+        );
+      }
+      case "bank":
+        return handOff(openBankDetails);
+      case "buy":
+        return buyFlow.open();
+    }
+  };
+
+  const onSend = (card: HomeCard, key: string) => {
+    setCardSheet(null);
+    if (key === "balances") {
+      const from: RailKey = card === "onchain" ? btcRail : card === "wallet" ? cashRail : "visa";
+      const to: RailKey =
+        card === "onchain" ? "wallet" : card === "wallet" ? "arkade" : settleWallet;
+      return openLockedMove(from, to, "from");
+    }
+    if (card === "onchain") return handOff(() => setBtcSendSource(btcRail));
+    if (card === "wallet") return walletSend.startRecipientScan();
+    if (key === "card") return void cardPayout.start();
+    return wirexSend.startSepa();
+  };
 
   // The moves with no exchange in them. The Move sheet prices and runs every
   // pair the swap contract names on both ends; what reaches here is the rest —
@@ -1649,21 +1854,18 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       // Returned, not fired and forgotten: the sheet holds the screen until the
       // transfer resolves and shows its own failure state, and it closes itself
       // on success.
-      if (swapFrom === "wallet" && isCardRail(swapTo) && swapTo !== CARD_USD_RAIL) {
-        return runEuroToCard(sourceAmount).then(() => "transferred" as const);
+      const settleWallet = cardSettleWalletRail(home);
+      if (swapFrom === settleWallet && isCardRail(swapTo)) {
+        return (home === "USD" ? runDollarToCard : runEuroToCard)(sourceAmount).then(
+          () => "transferred" as const,
+        );
       }
-      // The same move one currency over: dollars into the card's dollar pocket.
-      if (swapFrom === "dollar" && swapTo === CARD_USD_RAIL) {
-        return runDollarToCard(sourceAmount).then(() => "transferred" as const);
-      }
-      // Out of the card, into the wallet holding the same currency. Each pocket
-      // unwraps its own synthetic — WEUR → EURC, WUSD → USDC — so the pair is
-      // named on both ends and never crosses.
-      if (isCardRail(swapFrom) && swapFrom !== CARD_USD_RAIL && swapTo === "wallet") {
-        return runCardToWallet(sourceAmount, "EURC").then(() => "transferred" as const);
-      }
-      if (swapFrom === CARD_USD_RAIL && swapTo === "dollar") {
-        return runCardToWallet(sourceAmount, "USDC").then(() => "transferred" as const);
+      // Out of the card, into the wallet holding its currency: the card unwraps
+      // its settlement synthetic (WEUR to EURC, WUSD to USDC).
+      if (isCardRail(swapFrom) && swapTo === settleWallet) {
+        return runCardToWallet(sourceAmount, home === "USD" ? "USDC" : "EURC").then(
+          () => "transferred" as const,
+        );
       }
       // Bitcoin ↔ Bitcoin is not a swap — the two rails share one asset. Moving
       // arkade → on-chain is the SAME operation as sending arkade to an external
@@ -1721,6 +1923,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       addressSnapshot.musig2Address,
       addressSnapshot.currentAddress,
       onchainSpendableSats,
+      home,
     ],
   );
 
@@ -1753,19 +1956,13 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                   </Text>
                 </Pressable>
               </TopbarTitle>
-              {/* Scan on Total; close any selected rail back to Total. */}
+              {/* The scanner, on every card. */}
               <TopbarTrailing>
                 <IconButton
-                  icon={carouselRailKey === null ? "qr-scan" : "cross"}
+                  icon="qr-scan"
                   variant="soft"
-                  accessibilityLabel={t(
-                    carouselRailKey === null
-                      ? "screen.HomeScreen.scanA11yLabel"
-                      : "screen.HomeScreen.backToTotalA11yLabel",
-                  )}
-                  onPress={() =>
-                    carouselRailKey === null ? setScanVisible(true) : selectOverviewRail(null)
-                  }
+                  accessibilityLabel={t("screen.HomeScreen.scanA11yLabel")}
+                  onPress={() => setScanVisible(true)}
                 />
               </TopbarTrailing>
             </Topbar>
@@ -1783,16 +1980,13 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                     key: rail.key,
                     label: rail.label,
                     image: rail.image,
-                    amount: rail.glyph.amount,
-                    converted: rail.glyph.converted,
+                    amount: rail.amount,
                     inactiveVisaArtwork: wirexRailsNeedActivation && rail.key === "visa",
-                    ...(wirexRailsNeedActivation && (rail.key === "visa" || rail.key === "iban")
+                    ...(rail.key !== "visa" || wirexRailsNeedActivation
                       ? {}
                       : {
-                          detailsLabel: t("screen.HomeScreen.detailsA11yLabel", {
-                            asset: rail.label,
-                          }),
-                          onDetails: () => receiveFromRail(rail.key),
+                          detailsLabel: t("screen.HomeScreen.details"),
+                          onDetails: () => setDetailsChoiceVisible(true),
                         }),
                   }))}
                   selectedKey={carouselRailKey}
@@ -1815,28 +2009,20 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                   </View>
                 ) : (
                   <View direction="row" align="center" gap="sm" distribute="even" paddingX="lg">
-                    <Button size="lg" variant="soft" onPress={() => openSwap(carouselRailKey)}>
-                      <ButtonText>{t("actions.move")}</ButtonText>
+                    {/* Two direct children, never a fragment: the row's even
+                        split counts its children, and a fragment counts as one,
+                        which stacked the buttons. Add money always sits right. */}
+                    <Button size="lg" variant="soft" onPress={() => onCardButton("send")}>
+                      <ButtonText>{t("actions.send")}</ButtonText>
                     </Button>
-                    {carouselOpenedRail ? (
-                      <Button
-                        size="lg"
-                        variant="solid"
-                        accent={carouselOpenedRail.accent}
-                        onPress={() => sendFromRail(carouselRailKey)}
-                      >
-                        <ButtonText>{t("actions.send")}</ButtonText>
-                      </Button>
-                    ) : (
-                      <Button size="lg" variant="solid" onPress={() => setAddMoneyVisible(true)}>
-                        <ButtonText>{t("screen.HomeScreen.addMoney")}</ButtonText>
-                      </Button>
-                    )}
+                    <Button size="lg" variant="solid" onPress={() => onCardButton("add")}>
+                      <ButtonText>{t("screen.HomeScreen.addMoney")}</ButtonText>
+                    </Button>
                   </View>
                 )
               ) : (
                 <View direction="column" align="stretch" paddingX="lg">
-                  <Button size="lg" variant="solid" onPress={() => setAddMoneyVisible(true)}>
+                  <Button size="lg" variant="solid" onPress={() => onCardButton("add")}>
                     <ButtonText>{t("screen.HomeScreen.addMoney")}</ButtonText>
                   </Button>
                 </View>
@@ -1846,25 +2032,17 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                 <AssetActivityList
                   assetLabel={carouselOpenedRail.label}
                   pending={pendingFor(carouselRailKey)}
-                  balances={cardBalanceRows}
-                  onHistory={() => setHistoryRail(carouselRailKey)}
-                  extra={pendingSweepExtra}
-                  detail={{
-                    icon:
+                  balances={groupBalanceRows}
+                  onHistory={() =>
+                    setHistoryRail(
                       carouselRailKey === "visa"
-                        ? "card"
-                        : carouselRailKey === "iban"
-                          ? "bank"
-                          : "qr",
-                    label:
-                      carouselRailKey === "visa"
-                        ? t("screen.AssetScreen.cardDetails")
-                        : carouselRailKey === "iban"
-                          ? t("screen.AssetScreen.bankDetails")
-                          : t("screen.AssetScreen.address"),
-                    subtitle: carouselOpenedRail.label,
-                    onPress: () => receiveFromRail(carouselRailKey),
-                  }}
+                        ? "visa"
+                        : carouselRailKey === "onchain"
+                          ? btcRail
+                          : cashRail,
+                    )
+                  }
+                  extra={pendingSweepExtra ?? cardFoundExtra}
                 />
               ) : (
                 <List>
@@ -1911,9 +2089,9 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         onClose={() => setOpenRail(null)}
         onSwap={() => openSwap(openRail)}
         pending={pendingFor(openRail)}
-        balances={cardBalanceRows}
+        balances={groupBalanceRows}
         onReceive={() => receiveFromRail(openRail)}
-        onSend={() => sendFromRail(openRail)}
+        onSend={() => onCardButton("send")}
         onHistory={() => setHistoryRail(openRail)}
         extra={pendingSweepExtra}
       />
@@ -2022,11 +2200,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
             accent: rail.accent,
             amount: rail.amount,
             ...(rail.available != null ? { available: rail.available } : {}),
-            unit: btc
-              ? BTC_GLYPH
-              : isUsdRail(rail.key)
-                ? CURRENCIES.USD.fiatSymbol
-                : CURRENCIES.EUR.fiatSymbol,
+            unit: btc ? BTC_GLYPH : CURRENCIES[railFiat(rail.key, home)].fiatSymbol,
             whole: btc,
             ...(RAIL_SWAP_ASSET[rail.key] ? { asset: RAIL_SWAP_ASSET[rail.key] } : {}),
             ...(cardTarget ?? {}),
@@ -2046,15 +2220,21 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
               : {}),
           };
         })}
-        destinationsFor={(key: string) => moveDestinationsFor(key as RailKey)}
+        destinationsFor={(key: string) => moveDestinationsForKey(key, home)}
+        locked={moveLock}
         fromKey={swapFrom}
         toKey={swapTo}
         // Any source may be picked: the destination stays when the new pair is
         // open, else moves to the source's own default — never an impossible
         // pair. A destination pick is only handed over when it is reachable.
         onPickFrom={(key: string) => {
+          // Add money: the card stays the destination; only the source changes.
+          if (moveLock === "to") {
+            if (key !== swapTo) setSwapFrom(key as RailKey);
+            return;
+          }
           const pair = moveSourcePick(
-            moveDestinationsForKey,
+            (from) => moveDestinationsForKey(from, home),
             { fromKey: swapFrom, toKey: swapTo },
             key,
           );
@@ -2079,7 +2259,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           // order is with the durable tracker, so the card states what was
           // bought now and the order's own settlement confirms or takes it back
           // — this session or after a restart.
-          const credit = cardCreditForMove(swapTo, quote, execution);
+          const credit = cardCreditForMove(swapTo, quote, execution, home);
           if (!credit) return;
           // A direct swap runs to its end before it returns, so its outcome is often already
           // known here. Crediting then would stack the figure on a balance that may already hold
@@ -2099,21 +2279,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
               void wirexAccountService.silentRefresh(true);
             });
           void wirex.silentRefetch();
-        }}
-      />
-
-      <WirexSendChoiceModal
-        visible={wirexSend.choiceVisible}
-        onClose={() => wirexSend.setChoiceVisible(false)}
-        onSelect={(choice) => {
-          // Withdrawing to the wallet is a move between the user's own two
-          // balances, so it is stated on the Move card like every other one.
-          if (choice === "withdraw") {
-            wirexSend.setChoiceVisible(false);
-            openMove("visa", "wallet");
-            return;
-          }
-          wirexSend.handleSelect(choice);
         }}
       />
 
@@ -2140,6 +2305,44 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         onSuccess={() => {
           // The status pill reports the transfer (raised by the sheet).
           wirexSend.setAmountVisible(false);
+          void wirex.silentRefetch();
+        }}
+      />
+
+      {/* Send to a card: a saved payout card, or a new one, then the amount. */}
+      <ChoiceSheet
+        visible={cardPayout.cards !== null}
+        onClose={cardPayout.closePick}
+        title={t("screen.CardPayout.pickTitle")}
+        subtitle={cardPayout.loadFailed ? t("screen.CardPayout.loadFailed") : undefined}
+        items={(cardPayout.cards ?? []).map((c) => ({
+          key: c.recipientId,
+          icon: "card" as const,
+          accent: "neutral" as const,
+          label: c.name || t("screen.CardPayout.cardRow", { last4: c.last4 }),
+          sublabel: t("screen.CardPayout.cardRow", { last4: c.last4 }),
+        }))}
+        onSelect={cardPayout.pick}
+        footerAction={{
+          key: ADD_PAYOUT_CARD_KEY,
+          label: t("screen.CardPayout.addCard"),
+          icon: "plus",
+        }}
+      />
+      <CardPayoutAddModal
+        visible={cardPayout.addVisible}
+        onClose={cardPayout.closeAdd}
+        onAdded={cardPayout.added}
+        prefill={cardPayout.prefill}
+      />
+      <CardPayoutAmountModal
+        visible={cardPayout.card !== null}
+        onClose={cardPayout.closeAmount}
+        wallet={wirex.wallet ?? ""}
+        card={cardPayout.card}
+        currency={home === "USD" ? "USD" : "EUR"}
+        onSuccess={() => {
+          cardPayout.closeAmount();
           void wirex.silentRefetch();
         }}
       />
@@ -2351,6 +2554,137 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         busy={logoutBusy}
       />
 
+      {/* The total has no card: both buttons ask which one first. */}
+      <ChoiceSheet
+        visible={cardPickFor !== null}
+        onClose={() => setCardPickFor(null)}
+        title={t(cardPickFor === "send" ? "actions.send" : "screen.HomeScreen.addMoney")}
+        items={overviewGroups.map((group) => ({
+          key: group.rail,
+          image: overviewImages[group.key],
+          label: overviewLabels[group.key],
+          sublabel: overviewFigure(group.amountHome, home),
+        }))}
+        onSelect={(key: string) => {
+          const kind = cardPickFor;
+          setCardPickFor(null);
+          if (!kind) return;
+          // A Visa & Banking with no ready account starts or resumes activation,
+          // as the card itself does.
+          if (key === "visa" && wirexRailsNeedActivation) return handOff(() => openRailRow("visa"));
+          handOff(() => openCardSheet(kind, key as HomeCard));
+        }}
+      />
+
+      {/* Add money / Send on a card. */}
+      <ChoiceSheet
+        visible={cardSheet !== null}
+        onClose={() => setCardSheet(null)}
+        title={t(cardSheet?.kind === "send" ? "actions.send" : "screen.HomeScreen.addMoney")}
+        items={
+          cardSheet?.kind === "add"
+            ? addMoneyItems(cardSheet.card)
+            : [
+                {
+                  key: "balances",
+                  icon: "transfer-vertical" as const,
+                  accent: "lilac" as const,
+                  label: t("screen.HomeScreen.sendToBalances"),
+                },
+                {
+                  key: "someone",
+                  icon: "arrow-up" as const,
+                  accent: "lilac" as const,
+                  label: t("screen.HomeScreen.sendToSomeone"),
+                  // A bank transfer needs the IBAN, which can come after the card.
+                  disabled: cardSheet?.card === "visa" && !wirexBankReady,
+                },
+                ...(cardSheet?.card === "visa"
+                  ? [
+                      {
+                        key: "card",
+                        icon: "card" as const,
+                        accent: "lilac" as const,
+                        label: t("screen.CardPayout.sendToCard"),
+                      },
+                    ]
+                  : []),
+              ]
+        }
+        onSelect={(key: string) => {
+          if (!cardSheet) return;
+          if (cardSheet.kind === "add") onAddMoney(cardSheet.card, key);
+          else onSend(cardSheet.card, key);
+        }}
+      />
+
+      {topUp ? (
+        <WalletTopUp
+          key={topUp.id}
+          onClose={closeTopUp}
+          settle={topUp.settle}
+          payoutAddress={topUp.payoutAddress}
+          label={topUp.label}
+          formatReceive={topUp.formatReceive}
+        />
+      ) : null}
+
+      {/* Bitcoin on both rails: which one this Send spends. */}
+      <ChoiceSheet
+        visible={btcChoice}
+        onClose={() => setBtcChoice(false)}
+        title={t("actions.send")}
+        items={[
+          {
+            key: "arkade",
+            icon: "lightning" as const,
+            accent: "lilac" as const,
+            label: t("screen.HomeScreen.railBitcoinLightning"),
+            sublabel: satsStr(arkadeSats),
+          },
+          {
+            key: "onchain",
+            icon: "bitcoin" as const,
+            accent: "orange" as const,
+            label: t("screen.HomeScreen.railBitcoin"),
+            sublabel: satsStr(onchainSats),
+          },
+        ]}
+        onSelect={(key: string) => {
+          setBtcChoice(false);
+          setBtcPick(key === "onchain" ? "onchain" : "arkade");
+          handOff(() => setCardSheet({ kind: "send", card: "onchain" }));
+        }}
+      />
+
+      {/* Cash holds both currencies: which one this Send spends. */}
+      <ChoiceSheet
+        visible={cashChoice}
+        onClose={() => setCashChoice(false)}
+        title={t("actions.send")}
+        items={[
+          {
+            key: "wallet",
+            accent: "lilac" as const,
+            icon: "euro-wallet" as const,
+            label: t("screen.HomeScreen.railEuro"),
+            sublabel: heldStr(walletEur, "EUR"),
+          },
+          {
+            key: "dollar",
+            accent: "neutral" as const,
+            icon: "wallet" as const,
+            label: t("screen.HomeScreen.railDollar"),
+            sublabel: heldStr(usdcBalance ?? 0, "USD"),
+          },
+        ]}
+        onSelect={(key: string) => {
+          setCashChoice(false);
+          setCashPick(key === "dollar" ? "dollar" : "wallet");
+          handOff(() => setCardSheet({ kind: "send", card: "wallet" }));
+        }}
+      />
+
       {/* Only ever shown when the scan genuinely left a choice open. */}
       <ChoiceSheet
         visible={scanChoice !== null}
@@ -2466,30 +2800,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         onSendAgain={handleSendAgain}
       />
 
-      <WalletSendChoiceModal
-        visible={walletSend.isWalletSendChoiceVisible}
-        onClose={() => walletSend.setIsWalletSendChoiceVisible(false)}
-        onSelect={(choice) => {
-          // The three options are unchanged. Two of them move money between the
-          // user's OWN rails, and a move is stated on the Move card — the same
-          // card the home's Move button opens, arriving with both ends already
-          // chosen. Only a recipient outside the app needs a screen of its own,
-          // because only that one has something more to collect than an amount.
-          if (choice === "card" || choice === "bitcoin") {
-            walletSend.setIsWalletSendChoiceVisible(false);
-            // The card pocket that matches the money being sent: dollars fill
-            // the dollar side, which is a transfer, not an exchange. Either end
-            // is still changeable on the Move card.
-            openMove(
-              sendTokenRail,
-              choice === "bitcoin" ? "arkade" : sendTokenRail === "dollar" ? CARD_USD_RAIL : "visa",
-            );
-            return;
-          }
-          walletSend.handleWalletSendChoiceSelect(choice);
-        }}
-      />
-
       <WalletSendStablecoinModal
         visible={walletSend.isSendToWalletVisible}
         onClose={() => {
@@ -2571,6 +2881,30 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         }}
       />
 
+      <ChoiceSheet
+        visible={detailsChoiceVisible}
+        onClose={() => setDetailsChoiceVisible(false)}
+        title={t("screen.HomeScreen.details")}
+        items={[
+          {
+            key: "bank",
+            icon: "bank" as const,
+            accent: "lilac" as const,
+            label: t("screen.HomeScreen.detailsBank"),
+          },
+          {
+            key: "card",
+            icon: "card" as const,
+            accent: "lilac" as const,
+            label: t("screen.HomeScreen.detailsCard"),
+          },
+        ]}
+        onSelect={(key: string) => {
+          setDetailsChoiceVisible(false);
+          handOff(() => (key === "card" ? openCardDetails() : openBankDetails()));
+        }}
+      />
+
       <WirexAppleWalletModal
         visible={lifecycle.appleWallet.visible}
         onClose={lifecycle.appleWallet.close}
@@ -2582,16 +2916,36 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         onOpenWallet={lifecycle.appleWallet.openWalletApp}
       />
 
-      <AddMoneyChoiceModal
-        visible={addMoneyVisible}
-        onClose={() => setAddMoneyVisible(false)}
-        onSelect={handleAddMoneySelect}
-      />
-
       <MercuryoBuyBitcoinModal
         visible={buyFlow.visible}
         onClose={buyFlow.close}
         bitcoinAddress={buyFlow.bitcoinAddress}
+      />
+
+      {/* The card's other-currency money: withdrawn to the wallet holding it. */}
+      <SweepClaimSheet
+        visible={cardFoundVisible && sweepResult == null}
+        result={null}
+        amountText={heldList(cardOtherHeld, cardOtherFiat)}
+        onClaim={async () => {
+          const amount = cardOtherHeld;
+          // Taken before the withdrawal starts, so the row cannot start a second
+          // one while this runs. A definite failure gives it back; an
+          // unconfirmed one may have moved the money and keeps it taken.
+          setCardFoundClaimed(`${cardOtherFiat}:${amount}`);
+          setCardFoundRunning(true);
+          try {
+            await runCardToWallet(amount, cardOtherFiat === "USD" ? "USDC" : "EURC");
+          } catch (error) {
+            if (!(error as { unresolved?: boolean } | null)?.unresolved) {
+              setCardFoundClaimed(null);
+            }
+            throw error;
+          } finally {
+            setCardFoundRunning(false);
+          }
+        }}
+        onClose={() => setCardFoundVisible(false)}
       />
 
       <SweepClaimSheet

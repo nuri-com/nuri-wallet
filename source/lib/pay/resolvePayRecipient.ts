@@ -16,9 +16,21 @@
  * `<username>.<parent>` is the only shape built here.
  */
 
-import { ethers } from "ethers";
+import {
+  type BaseError,
+  concat,
+  decodeErrorResult,
+  decodeFunctionResult,
+  encodeAbiParameters,
+  encodeFunctionData,
+  type Hex,
+  parseAbi,
+  toHex,
+  zeroAddress,
+} from "viem";
+import { namehash, packetToBytes } from "viem/ens";
 import { ENS_PARENT_DOMAIN } from "../../config/constants";
-import { withFallback } from "../rpc/chainRpc";
+import { ENS_UNIVERSAL_RESOLVER, type RpcClient, withFallback } from "../rpc/chainRpc";
 
 /** ENS lives on Ethereum mainnet; the resolved rails are usable anywhere. */
 const ENS_CHAIN_ID = 1;
@@ -51,24 +63,21 @@ export type PayRecipient = {
  * hand and the answer decoded from the wrapper — a direct `text()` call to the
  * resolver reverts.
  */
-const INNER = new ethers.Interface(["function text(bytes32,string) view returns (string)"]);
-const OUTER = new ethers.Interface(["function resolve(bytes,bytes) view returns (bytes)"]);
+const INNER = parseAbi(["function text(bytes32,string) view returns (string)"]);
+const OUTER = parseAbi(["function resolve(bytes,bytes) view returns (bytes)"]);
 
 /**
- * EIP-3668, walked by hand instead of through `enableCcipRead`.
+ * EIP-3668, walked by hand instead of through a library's CCIP-Read client.
  *
- * ethers' own CCIP client fetches the gateway with its `FetchRequest`, which
- * comes back with an empty body in the app's web bundle — ethers then reports
- * the read as `OFFCHAIN_FAULT / 500_SERVER_ERROR` and every registered user
- * looks unpayable. The same URL fetched with the platform `fetch` returns the
- * answer, so the gateway call is made here and only the two `eth_call`s are left
- * to ethers.
+ * ethers' CCIP client came back with an empty body in the app's web bundle and
+ * made every registered user look unpayable, so the gateway is fetched here
+ * with the platform `fetch` and only the two raw `eth_call`s go to the RPC.
  *
  * This is not a shortcut past verification: the gateway's answer is handed back
  * to the resolver's own callback on-chain, which checks the signature over it.
  * An answer the resolver rejects reverts the second call and resolves nothing.
  */
-const OFFCHAIN_LOOKUP = new ethers.Interface([
+const OFFCHAIN_LOOKUP = parseAbi([
   "error OffchainLookup(address sender, string[] urls, bytes callData, bytes4 callbackFunction, bytes extraData)",
 ]);
 
@@ -84,7 +93,7 @@ async function fetchOffchainAnswer(
   urls: readonly string[],
   sender: string,
   callData: string,
-): Promise<string> {
+): Promise<Hex> {
   let lastError: unknown = null;
   for (const template of urls) {
     const href = template
@@ -111,7 +120,7 @@ async function fetchOffchainAnswer(
         lastError = new Error(`gateway answered non-JSON at ${href}: ${text.slice(0, 80)}`);
         continue;
       }
-      if (typeof body?.data === "string" && body.data.startsWith("0x")) return body.data;
+      if (typeof body?.data === "string" && body.data.startsWith("0x")) return body.data as Hex;
       lastError = new Error("gateway answered without data");
     } catch (e) {
       lastError = e;
@@ -124,33 +133,34 @@ async function fetchOffchainAnswer(
  * One `eth_call` that follows an OffchainLookup revert to its gateway and back.
  * A call that does not revert that way is returned as-is.
  */
-async function callThroughGateway(
-  provider: ethers.JsonRpcProvider,
-  to: string,
-  data: string,
-): Promise<string> {
+async function callThroughGateway(client: RpcClient, to: Hex, data: Hex): Promise<Hex> {
   try {
-    return await provider.call({ to, data, enableCcipRead: false });
+    return await ethCall(client, to, data);
   } catch (error) {
-    const revert = (error as { data?: unknown })?.data;
-    if (typeof revert !== "string") throw error;
-    const parsed = OFFCHAIN_LOOKUP.parseError(revert);
-    if (parsed?.name !== "OffchainLookup") throw error;
+    const revert = (error as BaseError).walk?.(
+      (e) => typeof (e as { data?: unknown }).data === "string",
+    ) as { data?: Hex } | null;
+    if (!revert?.data) throw error;
+    let parsed: ReturnType<typeof decodeErrorResult<typeof OFFCHAIN_LOOKUP>>;
+    try {
+      parsed = decodeErrorResult({ abi: OFFCHAIN_LOOKUP, data: revert.data });
+    } catch {
+      throw error;
+    }
 
-    const [sender, urls, callData, callbackFunction, extraData] = parsed.args as unknown as [
-      string,
-      string[],
-      string,
-      string,
-      string,
-    ];
+    const [sender, urls, callData, callbackFunction, extraData] = parsed.args;
     const answer = await fetchOffchainAnswer(urls, sender, callData);
-    const callback = ethers.concat([
+    const callback = concat([
       callbackFunction,
-      ethers.AbiCoder.defaultAbiCoder().encode(["bytes", "bytes"], [answer, extraData]),
+      encodeAbiParameters([{ type: "bytes" }, { type: "bytes" }], [answer as Hex, extraData]),
     ]);
-    return await provider.call({ to: sender, data: callback, enableCcipRead: false });
+    return await ethCall(client, sender, callback);
   }
+}
+
+/** A raw `eth_call`: no CCIP-Read, so an OffchainLookup revert reaches the caller. */
+function ethCall(client: RpcClient, to: Hex, data: Hex): Promise<Hex> {
+  return client.request({ method: "eth_call", params: [{ to, data }, "latest"] });
 }
 
 /**
@@ -171,12 +181,15 @@ export async function resolvePayRecipient(username: string): Promise<PayRecipien
   if (cached !== undefined) return cached;
 
   const name = `${normalized}.${ENS_PARENT_DOMAIN}`;
-  const node = ethers.namehash(name);
-  const dnsName = ethers.dnsEncode(name, 255);
+  const node = namehash(name);
+  const dnsName = toHex(packetToBytes(name));
 
-  const recipient = await withFallback(ENS_CHAIN_ID, async (provider) => {
-    const resolver = await provider.getResolver(name);
-    if (!resolver) return null;
+  const recipient = await withFallback(ENS_CHAIN_ID, async (client) => {
+    const resolver = await client.getEnsResolver({
+      name,
+      universalResolverAddress: ENS_UNIVERSAL_RESOLVER,
+    });
+    if (!resolver || resolver === zeroAddress) return null;
 
     // One key at a time, NOT Promise.all: four concurrent lookups make the
     // gateway answer some of them with a 500, which turns a registered user into
@@ -184,15 +197,19 @@ export async function resolvePayRecipient(username: string): Promise<PayRecipien
     const entries: Array<readonly [string, string | null]> = [];
     for (const [field, key] of Object.entries(TEXT_KEYS)) {
       const wrapped = await callThroughGateway(
-        provider,
-        resolver.address,
-        OUTER.encodeFunctionData("resolve", [
-          dnsName,
-          INNER.encodeFunctionData("text", [node, key]),
-        ]),
+        client,
+        resolver,
+        encodeFunctionData({
+          abi: OUTER,
+          functionName: "resolve",
+          args: [
+            dnsName,
+            encodeFunctionData({ abi: INNER, functionName: "text", args: [node, key] }),
+          ],
+        }),
       );
-      const [inner] = OUTER.decodeFunctionResult("resolve", wrapped);
-      const [value] = INNER.decodeFunctionResult("text", inner);
+      const inner = decodeFunctionResult({ abi: OUTER, functionName: "resolve", data: wrapped });
+      const value = decodeFunctionResult({ abi: INNER, functionName: "text", data: inner });
       entries.push([field, cleaned(String(value ?? ""))] as const);
     }
 

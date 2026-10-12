@@ -1,4 +1,3 @@
-import { ethers } from "ethers";
 import { http } from "viem";
 import { base, baseSepolia } from "viem/chains";
 import { BASE_RPC_URL, IS_MAINNET } from "../../config/network";
@@ -15,8 +14,4 @@ export function getBaseRpcUrl(): string {
 
 export function getBaseViemTransport(config?: Parameters<typeof http>[1]) {
   return http(BASE_RPC_URL, config);
-}
-
-export function getBaseEthersProvider() {
-  return new ethers.JsonRpcProvider(BASE_RPC_URL);
 }

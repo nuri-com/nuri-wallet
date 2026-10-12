@@ -37,6 +37,11 @@ import {
   getSwapKitV2StatusMessage,
 } from "../../../services/swapkit/SwapKitV2PendingTracker";
 import SwapStatusDetailSheet from "../../swapkit/SwapStatusDetailSheet";
+import {
+  swapCounterpartName,
+  swapLegFor,
+  useSwapLegs,
+} from "../../../services/swapkit/swapActivity";
 
 // Display-only: the amount as the sheet prints it.
 const formatFiatAmount = (
@@ -166,6 +171,7 @@ const WalletTransactionsModal: React.FC<Props> = ({
     return fetchAll();
   };
 
+  const swapLegs = useSwapLegs();
   const items = useMemo(() => {
     const list = buildWalletTransactionRows(orders, pendingTransfers, pendingWalletFiat);
     console.log("[WalletTxModal] building items", {
@@ -214,6 +220,17 @@ const WalletTransactionsModal: React.FC<Props> = ({
       if (isWalletTransferOut) {
         displayName = "Wallet";
       }
+      // A plain transfer to or from the card's own deposit address is the
+      // user's own move: it reads as the card, never as a stranger's wallet.
+      const cardAddress = (wirexAccountService.depositAddress() ?? "").toLowerCase();
+      const isOwnCard = Boolean(cardAddress) && chainAddr.toLowerCase() === cardAddress;
+      if (isOwnCard) {
+        displayName = t("screen.HomeScreen.groupCardBanking");
+      }
+      // A leg of a swap reads as the other side of it: "From Bitcoin", "To Euro".
+      const swapLeg =
+        isPendingBalance || isPendingLocal ? null : swapLegFor(swapLegs, pickOrderTxHash(o));
+      if (swapLeg) displayName = swapCounterpartName(swapLeg);
       const title =
         isPendingBalance || isPendingLocal
           ? displayName
@@ -222,7 +239,7 @@ const WalletTransactionsModal: React.FC<Props> = ({
       const extra =
         isPendingBalance || isPendingLocal
           ? ""
-          : isCard
+          : isCard || isOwnCard || swapLeg
             ? ""
             : chainAddr
               ? maskAddress(chainAddr)
@@ -309,6 +326,10 @@ const WalletTransactionsModal: React.FC<Props> = ({
             ? undefined
             : t("component.ActivityRowActions.viewInExplorer"),
         incoming: isIncoming,
+        // Money in names its sender the way money out names its recipient.
+        ...(isIncoming && chainAddr && isValidEvmAddress(chainAddr)
+          ? { counterpartyAddress: chainAddr }
+          : {}),
         // A send to someone else's address can be saved. Every outgoing
         // on-chain transfer is a "wallet_transfer_out"; only the one to the
         // card's own deposit address is the user's own move, never a card
@@ -335,7 +356,15 @@ const WalletTransactionsModal: React.FC<Props> = ({
         createdAt: dateIso || undefined,
       };
     });
-  }, [orders, pendingWalletFiat, pendingTransfers, address, explorerAddress, primaryAddress]);
+  }, [
+    orders,
+    pendingWalletFiat,
+    pendingTransfers,
+    address,
+    explorerAddress,
+    primaryAddress,
+    swapLegs,
+  ]);
 
   const exportCsv = useCallback(async () => {
     if (exportingCsv) return;

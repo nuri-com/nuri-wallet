@@ -1,5 +1,5 @@
 import { HDKey } from "@scure/bip32";
-import { bech32m } from "bech32";
+import { bech32m } from "@scure/base";
 import { taggedHash, bytesToHex, bytesToNumberBE } from "../crypto";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { mod } from "@noble/curves/abstract/modular";

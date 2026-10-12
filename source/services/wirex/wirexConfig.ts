@@ -63,6 +63,11 @@ export const WIREX_ROUTES = {
   ibanLookup: "/iban/lookup",
   sepaEstimate: "/sepa/estimate",
   sepaTransfer: "/sepa/transfer",
+  // Push to card: saved payout cards (read-session gated list + add), a quote
+  // (read-session gated), then the owner-signed transfer of that quote.
+  payoutCards: "/card/payout-cards",
+  cardTransferEstimate: "/card/transfer/estimate",
+  cardTransfer: "/card/transfer",
 } as const;
 
 // ── Bridge callback ───────────────────────────────────────────────────

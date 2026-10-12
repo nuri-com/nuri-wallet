@@ -22,7 +22,6 @@ import { wirexService, type WirexWithdrawAsset } from "../../../services/wirex/W
 import { USDC_BASE_TOKEN } from "../../../services/swapkit/SwapKitStableAssets";
 import { finishInFlight, startCardWithdrawInFlight } from "../../../services/money/announce";
 import type { SepaRecipientData } from "../modals/SepaRecipientModal";
-import type { WirexSendChoiceKey } from "../modals/WirexSendChoiceModal";
 
 const SOURCE = "screens/wirex/hooks/useWirexSendFlow.ts";
 
@@ -39,24 +38,16 @@ type Params = {
 };
 
 export function useWirexSendFlow({ bankReady }: Params) {
-  const [choiceVisible, setChoiceVisible] = useState(false);
   const [recipientVisible, setRecipientVisible] = useState(false);
   const [amountVisible, setAmountVisible] = useState(false);
   const [recipient, setRecipient] = useState<SepaRecipientData | null>(null);
   const [prefill, setPrefill] = useState<WirexSepaPrefill | null>(null);
 
-  const start = useCallback(() => setChoiceVisible(true), []);
-
-  const handleSelect = useCallback(
-    (key: WirexSendChoiceKey) => {
-      if (key === "sepa" && !bankReady) return;
-      if (key === "sepa") {
-        setChoiceVisible(false);
-        setRecipientVisible(true);
-      }
-    },
-    [bankReady],
-  );
+  // Send "To someone" from Visa & Banking: the SEPA recipient step.
+  const startSepa = useCallback(() => {
+    if (!bankReady) return;
+    setRecipientVisible(true);
+  }, [bankReady]);
 
   const handleRecipientContinue = useCallback((data: SepaRecipientData) => {
     setRecipient(data);
@@ -126,15 +117,7 @@ export function useWirexSendFlow({ bankReady }: Params) {
               });
             } catch {}
           },
-          onSubmitted: () => {
-            setChoiceVisible(false);
-          },
         });
-        // Reconciling a previously pending withdrawal returns the prior result
-        // without ever reaching onSubmitted — that withdrawal has succeeded, so
-        // the sheet has to close here too. Leaving it open re-enabled the CTA
-        // and invited the user to send the same amount a second time.
-        setChoiceVisible(false);
         // The optimism above was assigned from what was ASKED for; this is what
         // the server says actually moved. They should never differ — the request
         // refuses to proceed unless the start echoes the asset back — but if they
@@ -214,17 +197,14 @@ export function useWirexSendFlow({ bankReady }: Params) {
   );
 
   return {
-    choiceVisible,
-    setChoiceVisible,
     recipientVisible,
     closeRecipient,
     amountVisible,
     setAmountVisible,
     recipient,
     prefill,
-    start,
+    startSepa,
     startSepaTo,
-    handleSelect,
     handleRecipientContinue,
     handleWithdraw,
   };

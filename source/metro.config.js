@@ -36,18 +36,54 @@ const NODE_ONLY_STUBS = new Set(["node:worker_threads"]);
 
 // wagmi's connector barrel re-exports the Porto connector, which imports
 // `porto` at module scope. Porto's `ox` copy ships TypeScript sources Metro
-// resolves instead of its build and cannot bundle. The pay page never offers
-// Porto (lib/pay/payWallet.web.tsx lists its wallets explicitly), so the
-// connector is never constructed and nothing reads these modules at runtime.
-const WEB_UNUSED_STUBS = new Set(["porto", "porto/internal"]);
+// resolves instead of its build and cannot bundle. Neither wallet picker offers
+// Porto (lib/pay/payWallet.web.tsx lists its wallets explicitly; native uses
+// AppKit's own connector), so it is never constructed and nothing reads these
+// modules at runtime, on any platform.
+const UNUSED_STUBS = new Set(["porto", "porto/internal"]);
+
+// Reown AppKit's React Native packages each install their own valtio 2 copy
+// (the web AppKit inside wagmi's WalletConnect connector needs valtio 1 at the
+// top). A proxy made by one copy is "not a proxy" to the other, so AppKit dies
+// at createAppKit ("Please use proxy object"). Every valtio import from those
+// packages resolves through appkit-core's copy, so they share one.
+const APPKIT_RN = /[\\/]node_modules[\\/]@reown[\\/]appkit-[a-z-]*react-native[\\/]/;
+const APPKIT_VALTIO_ORIGIN = path.join(
+  __dirname,
+  "node_modules/@reown/appkit-core-react-native/package.json",
+);
+
+// These packages' `exports` and `browser` maps send Metro to a subpath they
+// do not export, so every start warned and fell back to the file anyway.
+// Resolving them by file directly is that same fallback, without the noise.
+const FILE_RESOLVED = /^(@noble\/hashes|multiformats|uint8arrays)(\/|$)/;
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (FILE_RESOLVED.test(moduleName)) {
+    return context.resolveRequest(
+      { ...context, unstable_enablePackageExports: false },
+      moduleName,
+      platform,
+    );
+  }
+
+  if (
+    (moduleName === "valtio" || moduleName.startsWith("valtio/")) &&
+    APPKIT_RN.test(context.originModulePath)
+  ) {
+    return context.resolveRequest(
+      { ...context, originModulePath: APPKIT_VALTIO_ORIGIN },
+      moduleName,
+      platform,
+    );
+  }
+
   if (NODE_ONLY_STUBS.has(moduleName)) {
     return { type: "empty" };
   }
 
-  if (platform === "web" && WEB_UNUSED_STUBS.has(moduleName)) {
+  if (UNUSED_STUBS.has(moduleName)) {
     return { type: "empty" };
   }
 

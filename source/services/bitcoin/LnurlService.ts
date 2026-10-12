@@ -1,4 +1,4 @@
-import { bech32 } from "bech32";
+import { bech32 } from "@scure/base";
 import { bytesToUtf8 } from "../../lib/crypto";
 import { lnurlFetchUrl } from "../../lib/web/apiProxy";
 import { log } from "../logging/LoggerService";
@@ -57,9 +57,8 @@ export function isLnurlPaymentInput(raw: string): boolean {
 }
 
 function decodeLnurlToUrl(lnurl: string): string {
-  const decoded = bech32.decode(lnurl, 1500);
-  const bytes = bech32.fromWords(decoded.words);
-  return bytesToUtf8(Uint8Array.from(bytes));
+  const decoded = bech32.decode(lnurl as `${string}1${string}`, 1500);
+  return bytesToUtf8(bech32.fromWords(decoded.words));
 }
 
 function parseLnurlMetadata(metadata: string): { description: string | null } {

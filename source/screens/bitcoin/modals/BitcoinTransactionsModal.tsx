@@ -38,6 +38,7 @@ import { inFlightActivityItem } from "../../../services/money/inFlightActivity";
 import { t } from "../../../lib/i18n";
 import { getArkadeWalletSummarySnapshot } from "../../../services/arkade/ArkadeWalletService";
 import SwapStatusDetailSheet from "../../swapkit/SwapStatusDetailSheet";
+import { swapRowTitle, useSwapLegs } from "../../../services/swapkit/swapActivity";
 import { groupCount } from "../../../lib/formatting";
 
 type Props = BitcoinTransactionsProps;
@@ -304,6 +305,8 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
     };
   }, [visible, homeSym]);
 
+  // A leg of a swap reads as the other side of it: "From Euro", "To Dollar".
+  const swapLegs = useSwapLegs();
   const items = useMemo(() => {
     const list: ActivityItem[] = [];
     // Sats that are in the wallet but cannot be spent yet: a VTXO still being
@@ -374,7 +377,9 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
           key: atx.id,
           icon: atx.isMigrationTx ? "transfer-horizontal" : isIncoming ? "plus" : "arrow-up",
           sublabel: subtitle,
-          label: atx.isMigrationTx ? "Migration" : title,
+          label: atx.isMigrationTx
+            ? "Migration"
+            : (swapRowTitle(swapLegs, atx.id, isIncoming) ?? title),
           amount: `${sign}BTC ${atx.amountSats}`,
           amountSecondary: fiatLine ?? `${homeSym} —`,
           pending: isPending,
@@ -445,7 +450,7 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
         key: `${txAddress}:${t.txid}`,
         icon: isIncoming ? "plus" : "arrow-up",
         sublabel: subtitle,
-        label: title,
+        label: swapRowTitle(swapLegs, t.txid, isIncoming) ?? title,
         onPress: onOpenExplorer,
         onPressLabel: viewInExplorerLabel,
         saveOffer: recipient
@@ -459,7 +464,7 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
       } satisfies ActivityItem;
     });
     return sortPendingFirst(list.concat(mapped));
-  }, [railTxs, pricesVersion, inFlight, arkadeTxs, rail, homeSym, railAddresses]);
+  }, [railTxs, pricesVersion, inFlight, arkadeTxs, rail, homeSym, railAddresses, swapLegs]);
 
   const exportCsv = useCallback(async () => {
     if (exportingCsv) return;

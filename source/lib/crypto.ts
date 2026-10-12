@@ -1,7 +1,7 @@
 import { toByteArray } from "base64-js";
 import {
   sha256 as sha256Hash,
-  XChaCha20Poly1305,
+  xchacha20poly1305,
   randomBytes as nobleRandomBytes,
   // Import shared utils for internal use
   utf8ToBytes,
@@ -87,8 +87,7 @@ export function sha256(data: Bytes): Bytes {
 
 // XChaCha20-Poly1305 AEAD
 export function aeadEncryptX(key: Bytes, nonce: Bytes, plaintext: Bytes, aad?: Bytes): Bytes {
-  const aead = new XChaCha20Poly1305(key);
-  return aead.seal(nonce, plaintext, aad);
+  return xchacha20poly1305(key, nonce, aad).encrypt(plaintext);
 }
 
 export function aeadDecryptX(
@@ -97,9 +96,8 @@ export function aeadDecryptX(
   ciphertext: Bytes,
   aad?: Bytes,
 ): Bytes | null {
-  const aead = new XChaCha20Poly1305(key);
   try {
-    return aead.open(nonce, ciphertext, aad);
+    return xchacha20poly1305(key, nonce, aad).decrypt(ciphertext);
   } catch {
     return null;
   }

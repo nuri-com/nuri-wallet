@@ -8,7 +8,7 @@
 // The backend owns ALL account-abstraction (bundler/paymaster/RPC). This
 // service never talks to a bundler; it only does REST + inject-signer.
 
-import { Wallet } from "ethers";
+import { privateKeyToAccount } from "viem/accounts";
 
 import type { ActivityItem } from "../../components/ActivitySheet";
 import { ACCOUNT_EMAIL_KEY as WIREX_EMAIL_KEY } from "../../lib/accountEmail";
@@ -51,6 +51,7 @@ import {
   buildWirex3dsResponseMessage,
   buildWirexCardActionMessage,
   buildWirexIssueVirtualCardMessage,
+  buildWirexCardTransferMessage,
   buildWirexSepaTransferMessage,
 } from "../../lib/wirex/cardActionMessage";
 import { verifyRegisterCallData } from "../../lib/wirex/registerVerification";
@@ -362,6 +363,24 @@ export interface WirexSepaTransferResult {
   ok: boolean;
   transferId: string | null;
   raw: unknown;
+}
+// A saved push-to-card destination. The card token stays on the server; the
+// app picks a card by recipientId.
+export interface WirexPayoutCard {
+  recipientId: string;
+  name: string;
+  last4: string;
+  currencies: string[];
+}
+// The server's quote for a push to card. Its values are what the user signs.
+export interface WirexCardTransferQuote {
+  estimationId: string;
+  amount: number;
+  currency: string;
+  card: WirexPayoutCard;
+  /** What leaves the debit token, fee included. */
+  debitAmount: number | null;
+  feeAmount: number | null;
 }
 // IBAN lookup result (POST /iban/lookup): validation + derived BIC/bank so the
 // app can autofill the BIC and confirm the bank before signing the transfer.
@@ -682,6 +701,31 @@ class WirexService {
     return this.finalizeEnvelope(first, label);
   }
 
+  // A read-session gated write: same token and the same re-mint-once retry as
+  // the gated GET. A session rejection happens before the server does anything,
+  // so the retry cannot repeat the write.
+  private async postAuthorized<T>(path: string, body: unknown): Promise<T> {
+    const label = `POST ${path}`;
+    const send = async (): Promise<RestEnvelope<T>> => {
+      const token = await this.getReadSessionToken();
+      if (!token) throw new Error(WIREX_NO_READ_SESSION_ERROR);
+      return this.parseEnvelope<T>(
+        await fetch(`${this.restBaseUrl}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+        }),
+        label,
+      );
+    };
+    const first = await send();
+    if (this.isSessionError(first.error)) {
+      this.readSession = null;
+      return this.finalizeEnvelope(await send(), label);
+    }
+    return this.finalizeEnvelope(first, label);
+  }
+
   private async parseEnvelope<T>(response: Response, label: string): Promise<RestEnvelope<T>> {
     try {
       return (await response.json()) as RestEnvelope<T>;
@@ -711,10 +755,13 @@ class WirexService {
     return async ({ message }) => {
       const pk = await getPrivateKey("ethereum");
       try {
-        const wallet = new Wallet(`0x${bytesToHex(pk)}`);
-        const signature = await wallet.signMessage(message);
-        void this.checkSignerMatchesBootstrapAddress(wallet.address);
-        return { address: wallet.address, signature };
+        const account = privateKeyToAccount(`0x${bytesToHex(pk)}`);
+        // EIP-191 either way: a string is signed as its UTF-8 text, bytes as-is.
+        const signature = await account.signMessage({
+          message: typeof message === "string" ? message : { raw: message },
+        });
+        void this.checkSignerMatchesBootstrapAddress(account.address);
+        return { address: account.address, signature };
       } finally {
         zeroize(pk);
       }
@@ -1991,6 +2038,88 @@ class WirexService {
     };
   }
 
+  // ── Push to card ────────────────────────────────────────────────────
+  // Saved payout cards and quotes are read-session gated; the transfer itself is
+  // money-out and carries the owner's signature over the server's quote.
+  async listPayoutCards(): Promise<WirexPayoutCard[]> {
+    const data = await this.get<{ cards?: unknown }>(
+      wirexConfig.routes.payoutCards,
+      {},
+      { authorized: true },
+    );
+    return Array.isArray(data.cards) ? data.cards.flatMap(toPayoutCard) : [];
+  }
+
+  // The card number goes to the server once, which hands it to Wirex's PCI
+  // tokenizer and keeps only the token. SECURITY: never log it.
+  async addPayoutCard(params: {
+    cardNumber: string;
+    cardholderName: string;
+  }): Promise<WirexPayoutCard> {
+    const data = await this.postAuthorized<{ card?: unknown }>(wirexConfig.routes.payoutCards, {
+      card_number: params.cardNumber.replace(/\s+/g, ""),
+      cardholder_name: params.cardholderName.trim(),
+    });
+    const card = toPayoutCard(data.card)[0];
+    if (!card) throw new Error(`${LOG_TAG} addPayoutCard: no card returned`);
+    return card;
+  }
+
+  async cardTransferEstimate(params: {
+    recipientId: string;
+    amount: string;
+    currency: "EUR" | "USD";
+    tokenAddress: string;
+  }): Promise<WirexCardTransferQuote> {
+    const data = await this.postAuthorized<{
+      estimation_id?: unknown;
+      amount?: unknown;
+      currency?: unknown;
+      card?: unknown;
+      debit?: { amount?: unknown } | null;
+      fee_amount?: unknown;
+    }>(wirexConfig.routes.cardTransferEstimate, {
+      recipient_id: params.recipientId,
+      amount: Number(params.amount),
+      currency: params.currency,
+      token_address: params.tokenAddress,
+    });
+    const card = toPayoutCard(data.card)[0];
+    const amount = Number(data.amount);
+    if (typeof data.estimation_id !== "string" || !card || !(amount > 0)) {
+      throw new Error(`${LOG_TAG} cardTransferEstimate: incomplete quote`);
+    }
+    const debit = Number(data.debit?.amount);
+    const fee = Number(data.fee_amount);
+    return {
+      estimationId: data.estimation_id,
+      amount,
+      currency: String(data.currency),
+      card,
+      debitAmount: Number.isFinite(debit) && debit > 0 ? debit : null,
+      feeAmount: data.fee_amount != null && Number.isFinite(fee) ? fee : null,
+    };
+  }
+
+  // Signs the quote exactly as the server stored it; the server rebuilds the
+  // same string from that quote and executes it once.
+  async cardTransfer(quote: WirexCardTransferQuote): Promise<WirexSepaTransferResult> {
+    const ts = Math.floor(Date.now() / 1000);
+    const message = buildWirexCardTransferMessage({
+      amount: quote.amount,
+      currency: quote.currency,
+      last4: quote.card.last4,
+      estimationId: quote.estimationId,
+      ts,
+    });
+    const { address, signature } = await this.buildSigner()({ message });
+    const data = await this.post<{ ok?: boolean; transfer_id?: string | null }>(
+      wirexConfig.routes.cardTransfer,
+      { wallet: address, estimation_id: quote.estimationId, ts, signature },
+    );
+    return { ok: data?.ok !== false, transferId: data?.transfer_id ?? null, raw: data };
+  }
+
   private async signedCardAction(
     action: "freeze" | "unfreeze" | "set-limit" | "close",
     cardId: string,
@@ -2219,3 +2348,23 @@ function parseSumsubClientId(kycUrl: string): string | null {
 }
 
 export const wirexService = new WirexService();
+
+function toPayoutCard(raw: unknown): WirexPayoutCard[] {
+  const c = raw as {
+    recipient_id?: unknown;
+    name?: unknown;
+    last4?: unknown;
+    currencies?: unknown;
+  } | null;
+  if (!c || typeof c.recipient_id !== "string" || typeof c.last4 !== "string") return [];
+  return [
+    {
+      recipientId: c.recipient_id,
+      name: typeof c.name === "string" ? c.name : "",
+      last4: c.last4,
+      currencies: Array.isArray(c.currencies)
+        ? c.currencies.filter((x): x is string => typeof x === "string")
+        : [],
+    },
+  ];
+}

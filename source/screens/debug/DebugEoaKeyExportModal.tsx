@@ -1,4 +1,4 @@
-import { Wallet } from "ethers";
+import { privateKeyToAccount } from "viem/accounts";
 import * as Clipboard from "expo-clipboard";
 import * as musig2 from "@scure/btc-signer/musig2.js";
 import { useCallback, useEffect, useState } from "react";
@@ -115,13 +115,13 @@ export default function DebugEoaKeyExportModal({ visible, onClose }: Props) {
       setCopyStatus(null);
       try {
         keyBytes = await getPrivateKey("ethereum");
-        const privateKeyHex = `0x${bytesToHex(keyBytes)}`;
-        const wallet = new Wallet(privateKeyHex);
+        const privateKeyHex = `0x${bytesToHex(keyBytes)}` as const;
+        const account = privateKeyToAccount(privateKeyHex);
         setRevealState({
           kind: "revealed",
           privateKeyHex,
-          derivedAddress: wallet.address,
-          derivedPublicKey: wallet.signingKey.publicKey,
+          derivedAddress: account.address,
+          derivedPublicKey: account.publicKey,
         });
       } catch (error: unknown) {
         setRevealState({ kind: "error", message: describeError(error) });

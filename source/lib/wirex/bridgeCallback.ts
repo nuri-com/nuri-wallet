@@ -19,7 +19,7 @@
 // The `sign` function is injected by the caller (reuses the on-device EOA
 // keychain signer). This module never touches the private signing key.
 
-import { getBytes } from "ethers";
+import { hexToBytes } from "viem";
 
 import { p256 } from "@noble/curves/nist";
 
@@ -109,7 +109,7 @@ function parseHashMessage(hash: string): ParsedApprovalMessage {
   if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) {
     throw new Error("approval_url_hash_must_be_0x_32_bytes");
   }
-  return { message: hash, messageToSign: getBytes(hash) };
+  return { message: hash, messageToSign: hexToBytes(hash as `0x${string}`) };
 }
 
 function parseTextMessage(text: string): ParsedApprovalMessage {

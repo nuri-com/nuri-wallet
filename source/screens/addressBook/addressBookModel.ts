@@ -17,6 +17,7 @@ export type SendRoute =
   /** asset null: a general EVM address, paid from euro or dollar like a scanned 0x. */
   | { kind: "evm"; address: string; asset: "EURC" | "USDC" | null }
   | { kind: "sepa"; iban: string; bic: string; holder: string }
+  | { kind: "card"; number: string; holder: string }
   | { kind: "unsupported"; reason: "network" | "rail" | "address" };
 
 /**
@@ -63,6 +64,13 @@ export function routeDestination(destination: Destination, contactLabel = ""): S
         // continue with blank names.
         holder: (destination.holder ?? "").trim() || contactLabel.trim(),
       };
+    case "card":
+      // Wirex needs the name on the card; the contact's name when none was saved.
+      return {
+        kind: "card",
+        number: destination.number,
+        holder: (destination.holder ?? "").trim() || contactLabel.trim(),
+      };
     default:
       return { kind: "unsupported", reason: "rail" };
   }
@@ -82,6 +90,7 @@ export const DESTINATION_TYPES: DestinationType[] = [
   "crypto",
   "lightning",
   "bank",
+  "card",
   "phone",
   "email",
 ];
@@ -97,6 +106,8 @@ export function destinationHint(destination: Destination): string {
   switch (destination.type) {
     case "bank":
       return `${destinationLabel(destination)} · ${ends(destination.iban.replace(/\s+/g, ""), 4, 4)}`;
+    case "card":
+      return `${destinationLabel(destination)} · •••• ${destination.number.slice(-4)}`;
     case "crypto":
     case "lightning":
       return `${destinationLabel(destination)} · ${ends(destination.raw, 6, 4)}`;
@@ -117,6 +128,8 @@ export function destinationSummary(destination: Destination): string {
       return `Lightning · ${short(destination.raw)}`;
     case "bank":
       return `IBAN · ${destination.iban.replace(/(.{4})/g, "$1 ").trim()}`;
+    case "card":
+      return `Card · •••• ${destination.number.slice(-4)}`;
     case "phone":
       return destination.e164;
     case "email":
@@ -158,6 +171,11 @@ export function acceptsWalletSend(asset: "EURC" | "USDC"): (destination: Destina
     const route = routeDestination(destination);
     return route.kind === "evm" && (route.asset === null || route.asset === asset);
   };
+}
+
+/** Saved destinations the push-to-card step can pay. */
+export function acceptsCardSend(destination: Destination): boolean {
+  return destination.type === "card";
 }
 
 /** Saved destinations the SEPA recipient step can pay. */
@@ -225,10 +243,16 @@ export function draftFieldsFor(destination: Destination): DraftDestination {
   return {
     ...other,
     type: destination.type,
-    raw: destination.type === "bank" ? destination.iban : destination.raw,
+    raw:
+      destination.type === "bank"
+        ? destination.iban
+        : destination.type === "card"
+          ? destination.number.replace(/(\d{4})(?=\d)/g, "$1 ")
+          : destination.raw,
     networkIndex,
     bic: destination.type === "bank" ? (destination.bic ?? "") : "",
-    holder: destination.type === "bank" ? (destination.holder ?? "") : "",
+    holder:
+      destination.type === "bank" || destination.type === "card" ? (destination.holder ?? "") : "",
     ...(destination.label ? { label: spelledLabel(destination.label) } : {}),
   };
 }
@@ -248,6 +272,8 @@ function destinationFromDraftFields(entry: DraftDestination): Destination {
     }
     case "bank":
       return { type: "bank", raw: entry.raw, iban: "", bic: entry.bic, holder: entry.holder };
+    case "card":
+      return { type: "card", raw: entry.raw, number: "", holder: entry.holder };
     case "phone":
       return { type: "phone", raw: entry.raw, e164: "" };
     case "email":
@@ -316,6 +342,8 @@ function destinationKindLabel(destination: Destination): string {
       return "Lightning";
     case "bank":
       return "IBAN";
+    case "card":
+      return "Card";
     case "phone":
       return "Phone";
     case "email":
@@ -328,6 +356,8 @@ export function destinationValue(destination: Destination): string {
   switch (destination.type) {
     case "bank":
       return destination.iban.replace(/(.{4})/g, "$1 ").trim();
+    case "card":
+      return destination.number.replace(/(\d{4})(?=\d)/g, "$1 ");
     case "phone":
       return destination.e164;
     case "email":
@@ -474,6 +504,7 @@ export type DestinationKind =
   | "base-eurc"
   | "lightning"
   | "bank"
+  | "card"
   | "phone"
   | "email"
   /** A saved crypto network/asset the form has no kind for; kept, never offered. */
@@ -485,6 +516,7 @@ export const DESTINATION_KINDS: DestinationKind[] = [
   "base-usdc",
   "base-eurc",
   "bank",
+  "card",
   "ark",
   "bitcoin",
   "phone",

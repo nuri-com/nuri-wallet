@@ -98,6 +98,7 @@ const KIND_ICON: Record<DestinationKind, IconName> = {
   "base-usdc": "wallet",
   "base-eurc": "euro-wallet",
   bank: "bank",
+  card: "card",
   ark: "bitcoin-wallet",
   bitcoin: "bitcoin",
   phone: "headphones",
@@ -116,6 +117,7 @@ const KIND_ACCENT: Record<DestinationKind, "orange" | "lilac" | "neutral"> = {
   "base-usdc": "lilac",
   "base-eurc": "lilac",
   bank: "lilac",
+  card: "lilac",
   ark: "orange",
   bitcoin: "orange",
   phone: "neutral",
@@ -717,9 +719,12 @@ const AddressBookScreen: React.FC<Props> = ({
                   <Text size="md" mono flow="wrap">
                     {destinationValue(destination)}
                   </Text>
-                  {destination.type === "bank" && (destination.holder || destination.bic) ? (
+                  {(destination.type === "bank" && (destination.holder || destination.bic)) ||
+                  (destination.type === "card" && destination.holder) ? (
                     <Text size="sm" muted>
-                      {[destination.holder, destination.bic].filter(Boolean).join(" · ")}
+                      {[destination.holder, destination.type === "bank" ? destination.bic : ""]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </Text>
                   ) : null}
                 </View>
@@ -908,11 +913,26 @@ const AddressBookScreen: React.FC<Props> = ({
                     placeholder={t(`${K}.placeholder_${kind.replace("-", "_")}`)}
                     autoCapitalize={entry.type === "bank" ? "characters" : "none"}
                     inputMode={
-                      entry.type === "phone" ? "tel" : entry.type === "email" ? "email" : "text"
+                      entry.type === "phone"
+                        ? "tel"
+                        : entry.type === "email"
+                          ? "email"
+                          : entry.type === "card"
+                            ? "numeric"
+                            : "text"
                     }
                     accessibilityLabel={t(`${K}.kind_${kind.replace("-", "_")}`)}
                   />
 
+                  {entry.type === "card" ? (
+                    <TextField
+                      value={entry.holder}
+                      onChangeText={(holder) => updateEntry(index, { holder })}
+                      placeholder={t("screen.CardPayout.namePlaceholder")}
+                      autoCapitalize="words"
+                      accessibilityLabel={t("screen.CardPayout.nameLabel")}
+                    />
+                  ) : null}
                   {entry.type === "bank" ? (
                     <>
                       <TextField

@@ -7,6 +7,7 @@ import { getBaseViemTransport } from "../../lib/rpc/baseRpc";
 import { getChainRpcUrl } from "../../lib/rpc/chainRpc";
 import type { ChainId } from "../../lib/tokens";
 import type { ParsedSwapActionTx } from "./SwapKitService";
+import { ethereumFees } from "./ethereumFees";
 import { swapGasLimit } from "./swapGasLimit";
 import {
   assertEvmCallBoundToRoute,
@@ -274,11 +275,13 @@ export async function signAndBroadcastSwapKitEvmTx(
       : http(rpcUrl, { retryCount: 2, timeout: 10_000 });
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ chain, transport, account });
-  const send = (tx: { to: `0x${string}`; data: `0x${string}`; gas: bigint }) =>
+  type Fees = Awaited<ReturnType<typeof ethereumFees>>;
+  const send = (tx: { to: `0x${string}`; data: `0x${string}`; gas: bigint }, fees: Fees) =>
     walletClient.sendTransaction({
       account,
       chain,
       ...tx,
+      ...fees,
     } as unknown as Parameters<typeof walletClient.sendTransaction>[0]);
 
   // Exact server-requested allowance for the contract called next. The parser
@@ -296,7 +299,10 @@ export async function signAndBroadcastSwapKitEvmTx(
         to: approval.token,
         data,
       });
-      const approveHash = await send({ to: approval.token, data, gas });
+      const approveHash = await send(
+        { to: approval.token, data, gas },
+        await ethereumFees(publicClient, parsed.chainId),
+      );
       const receipt = await publicClient.waitForTransactionReceipt({ hash: approveHash });
       if (receipt.status !== "success") {
         throw new Error(`Sweep approval reverted onchain: ${approveHash}`);
@@ -343,8 +349,11 @@ export async function signAndBroadcastSwapKitEvmTx(
     });
     return swapGasLimit(parsed.gasLimit, estimated);
   });
+  // Fees are read before the STARTED marker: an interrupted read must leave an
+  // unsent action retryable, not marked as broadcast.
+  const fees = await ethereumFees(publicClient, parsed.chainId);
   await bounds?.onBeforeBroadcast?.();
-  const hash = await send({ to: parsed.to, data: parsed.data, gas });
+  const hash = await send({ to: parsed.to, data: parsed.data, gas }, fees);
   await bounds?.onBroadcast?.(hash);
   try {
     const receipt = await publicClient.waitForTransactionReceipt({ hash });

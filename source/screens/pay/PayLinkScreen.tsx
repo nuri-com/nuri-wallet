@@ -27,7 +27,6 @@ import {
   Scroll,
   Text,
   Topbar,
-  TopbarTitle,
   TopbarTrailing,
   View,
 } from "@ds";
@@ -268,6 +267,13 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
   // The amount form: the keypad scrolls with the content so a short screen can
   // compact it, and the CTA stays in the footer.
   const showForm = Boolean(recipient && rail && rail.kind !== "wallet-swap" && !target && !overlay);
+  // A connected wallet's own card (token -> @username) and its wait and result
+  // screens replace the summary; the card's arrow keeps the other ways to pay.
+  const walletPair =
+    rail?.kind === "wallet-swap" &&
+    ["connected", "busy", "quoted", "no-route", "insufficient", "paying", "done"].includes(
+      wallet.state.step,
+    );
 
   return (
     <Screen>
@@ -278,7 +284,6 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
       <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
         <Header safeAreaTop chrome="canvas">
           <Topbar surface="transparent" layout="fluid">
-            <TopbarTitle>{t(`${K}.title`, { username })}</TopbarTitle>
             {target || stalled ? (
               <TopbarTrailing>
                 <IconButton
@@ -327,9 +332,15 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
               ) : null}
 
               {/* Summary stays visible when the keypad becomes a payment target. */}
-              {recipient && rail && look && !overlay && order?.state !== "settled" ? (
+              {recipient &&
+              rail &&
+              look &&
+              !overlay &&
+              !walletPair &&
+              order?.state !== "settled" ? (
                 <PayLinkSummary
-                  username={username}
+                  grow={showForm}
+                  to={`@${username}`}
                   sourceLabel={t(`${K}.asset.${rail.source}`)}
                   {...(look.image !== undefined
                     ? { image: look.image }
@@ -353,6 +364,8 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
                   fixedAmount={fixedAmount}
                   holdings={wallet.holdings}
                   settleLabel={t(`${K}.asset.${settle}`)}
+                  toLabel={`@${username}`}
+                  onPickSource={() => setPicking(true)}
                   onConnect={() => void wallet.connect()}
                   onRefreshHoldings={wallet.refreshHoldings}
                   onQuote={(holding, typed) => void wallet.quote(holding, typed)}

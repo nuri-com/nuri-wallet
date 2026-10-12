@@ -11,10 +11,7 @@ import type { FiatCode } from "../../lib/tokens";
 import type { SwapExecution, SwapQuote } from "../../services/swapkit/SwapContract";
 import { EURC_BASE_TOKEN, USDC_BASE_TOKEN } from "../../services/swapkit/SwapKitStableAssets";
 
-const CARD_RAILS = new Set(["iban", "visa", "visaUsd"]);
-
-/** The card rail that holds dollars; the other two are its euro faces. */
-export const CARD_USD_RAIL = "visaUsd";
+const CARD_RAILS = new Set(["iban", "visa"]);
 
 /**
  * Whether this move spends the ARKADE balance — the one the outgoing hold
@@ -75,16 +72,16 @@ export function cardCreditForMove(
   toRailKey: string | null | undefined,
   quote: Pick<SwapQuote, "receiveAmount">,
   execution: Pick<SwapExecution, "quotedReceive" | "orderId"> | null,
+  settleCurrency: FiatCode,
 ): MoveCardCredit | null {
   if (!toRailKey || !CARD_RAILS.has(toRailKey)) return null;
   const orderId = execution?.orderId?.trim();
   if (!orderId) return null;
   const amount = execution?.quotedReceive ?? quote.receiveAmount;
   if (!Number.isFinite(amount) || amount <= 0) return null;
-  // A swap settles the token the rail asked for, so the figure is in THAT
-  // currency — the card's dollar pocket is credited in dollars, and converting
-  // it is the caller's job because only it holds a rate.
-  return { amount, currency: toRailKey === CARD_USD_RAIL ? "USD" : "EUR", orderId };
+  // A swap into the card settles its settlement currency, so the figure is in
+  // that currency; converting it is the caller's job because only it holds a rate.
+  return { amount, currency: settleCurrency, orderId };
 }
 
 export type CardSwapTarget = {
@@ -93,50 +90,42 @@ export type CardSwapTarget = {
   settleKind: "card";
 };
 
+/** The stable the card settles in: the user's main currency. */
+export function cardSettleToken(settleCurrency: FiatCode) {
+  return settleCurrency === "USD" ? USDC_BASE_TOKEN : EURC_BASE_TOKEN;
+}
+
+/** The wallet rail holding the card's settlement currency. */
+export function cardSettleWalletRail(settleCurrency: FiatCode): "wallet" | "dollar" {
+  return settleCurrency === "USD" ? "dollar" : "wallet";
+}
+
 /**
  * What the card rail `toRailKey` offers a swap FROM `fromRailKey`, or null when
  * it offers nothing.
  *
- * The card can be priced like any other EVM destination — the stable it settles
- * in, sent to its deposit address — but only when the source holds the OTHER
- * stable, because that is the only pair with an exchange in it:
- *
- *   dollar → VISA Euro    USDC → EURC, settled on the card
- *   euro   → VISA Dollar  EURC → USDC, settled on the card
- *
- * The matching pairs (euro → VISA Euro, dollar → VISA Dollar) are the same token
- * on both ends, which is a transfer, and bitcoin → card keeps the dedicated
- * top-up service (durable order plus recovery). Both are handled by the caller.
+ * The card settles in ONE currency, the user's main currency. Anything sent to
+ * it that is not already that stable is a swap into it, settled on the card's
+ * deposit address. The wallet holding that same stable is a plain transfer,
+ * handled by the caller.
  *
  * `depositAddress` arrives with the Wirex snapshot and is null until it loads,
- * so this must be recomputed from that address rather than read once — a Move
- * opened before Wirex answered would otherwise keep offering nothing for the
- * rest of its life.
+ * so this must be recomputed from that address rather than read once.
  */
 export function cardSwapTargetFor(
   fromRailKey: string | null | undefined,
   toRailKey: string | null | undefined,
   depositAddress: string | null | undefined,
+  settleCurrency: FiatCode,
 ): CardSwapTarget | null {
   if (!toRailKey || !CARD_RAILS.has(toRailKey)) return null;
-  const wantsUsd = toRailKey === CARD_USD_RAIL;
-  // A BITCOIN source prices the card like any other destination: it swaps into the pocket's own stable and
-  // settles that on the card account. The wallet/dollar pair rule below is about the app's own stable
-  // balances, where the pocket's currency is what decides which rail funds it; bitcoin has no such
-  // constraint, it just buys the stable the pocket needs.
-  const fromBtc = fromRailKey === "arkade" || fromRailKey === "onchain";
-  if (!fromBtc && fromRailKey !== (wantsUsd ? "wallet" : "dollar")) return null;
+  if (!fromRailKey || CARD_RAILS.has(fromRailKey)) return null;
+  if (fromRailKey === cardSettleWalletRail(settleCurrency)) return null;
   const address = depositAddress?.trim();
   if (!address) return null;
   return {
-    asset: wantsUsd ? USDC_BASE_TOKEN.asset : EURC_BASE_TOKEN.asset,
+    asset: cardSettleToken(settleCurrency).asset,
     settleAddress: address,
     settleKind: "card",
   };
-}
-
-/** The stable a transfer into `toRailKey` sends — null when it is not a card rail. */
-export function cardTransferToken(toRailKey: string | null | undefined) {
-  if (!toRailKey || !CARD_RAILS.has(toRailKey)) return null;
-  return toRailKey === CARD_USD_RAIL ? USDC_BASE_TOKEN : EURC_BASE_TOKEN;
 }

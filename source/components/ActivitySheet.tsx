@@ -29,7 +29,7 @@ import { arkAddressScript } from "../services/arkade/arkadeCounterparty";
 import { contactAvatar } from "../lib/addressBook/petAvatar";
 import { EventBus } from "../services/events/AppEventBusService";
 import { destinationHint, type SaveOffer } from "../screens/addressBook/addressBookModel";
-import { i18n, t } from "../lib/i18n";
+import { getAppLocale, t } from "../lib/i18n";
 import PullToRefresh from "./PullToRefresh";
 
 /**
@@ -70,6 +70,8 @@ export type ActivityItem = {
   incoming?: boolean;
   /** Arkade: the other party's output scripts (hex), matched against saved contacts. */
   counterpartyScripts?: string[];
+  /** The other party's address (a sender, for money in), matched against saved contacts. */
+  counterpartyAddress?: string;
   /** Pending rows sort into a leading "Pending" section. */
   pending?: boolean;
   /** ISO timestamp used for the month grouping. */
@@ -99,7 +101,7 @@ function sectionLabel(date: Date, now: Date): string {
   if (date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth()) {
     return t("common.thisMonth");
   }
-  return date.toLocaleDateString(i18n.locale, {
+  return date.toLocaleDateString(getAppLocale(), {
     month: "long",
     ...(date.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}),
   });
@@ -174,8 +176,8 @@ const ActivitySheet: React.FC<Props> = ({
         const contact = contactByScript.get(script.toLowerCase());
         if (contact) return contact;
       }
-      const destination = item.saveOffer?.destination;
-      return destination ? savedContactFor(contacts, destination.raw, () => true) : null;
+      const address = item.saveOffer?.destination.raw ?? item.counterpartyAddress;
+      return address ? savedContactFor(contacts, address, () => true) : null;
     },
     [contacts, contactByScript],
   );

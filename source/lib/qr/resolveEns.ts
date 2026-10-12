@@ -5,10 +5,11 @@
  * a bare name has no chain and is sent on Base like a bare `0x…`.
  */
 
-import { withFallback } from "../rpc/chainRpc";
+import { normalize } from "viem/ens";
+import { ENS_UNIVERSAL_RESOLVER, withFallback } from "../rpc/chainRpc";
 
-// ponytail: ethers resolves ENS natively (registry + resolver + wildcard).
-// Nothing to hand-roll, no new dependency, no ABI.
+// viem resolves ENS through the mainnet Universal Resolver (resolver lookup,
+// wildcard and offchain CCIP-Read included).
 const ENS_NAME = /^[a-z0-9-]([a-z0-9-.]*[a-z0-9-])?\.eth$/i;
 
 export const isEnsName = (value: string): boolean => ENS_NAME.test(value.trim());
@@ -22,5 +23,10 @@ export const isEnsName = (value: string): boolean => ENS_NAME.test(value.trim())
 export async function resolveEnsName(name: string): Promise<string | null> {
   const value = name.trim();
   if (!isEnsName(value)) return null;
-  return await withFallback(1, (provider) => provider.resolveName(value));
+  return await withFallback(1, (client) =>
+    client.getEnsAddress({
+      name: normalize(value),
+      universalResolverAddress: ENS_UNIVERSAL_RESOLVER,
+    }),
+  );
 }

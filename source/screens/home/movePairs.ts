@@ -1,24 +1,27 @@
 // Which ends of a move may be paired, answered once for both pickers.
 //
-// Almost every pair is answered by pricing it, so this names only the sources
-// whose exits are FIXED: the card's pockets pay out to the wallet holding the
-// SAME currency and nowhere else — there is no card → bitcoin route, and a
-// withdrawal cannot cross currencies.
+// Almost every pair is answered by pricing it, so this names only the source
+// whose exits are FIXED: the card pays out to the wallet holding its settlement
+// currency (the user's main currency) and nowhere else. There is no card to
+// bitcoin route, and a withdrawal cannot cross currencies.
 //
 // Every SOURCE may always be picked: the destination follows it, staying where
 // it is when the new pair is open and moving to the source's own default when
-// it is not — so the sheet never holds a pair that cannot run, and the change
+// it is not, so the sheet never holds a pair that cannot run, and the change
 // is on screen before Next. A DESTINATION the source cannot reach is shown
 // unavailable and never picked (#1467).
-import { CARD_USD_RAIL } from "./moveBookkeeping";
+import type { FiatCode } from "../../lib/tokens";
+import { cardSettleWalletRail } from "./moveBookkeeping";
 
-/** The card's euro pocket on the Move sheet (the card rail itself). */
-export const CARD_EUR_RAIL = "visa";
+/** The card on the Move sheet. */
+export const CARD_RAIL = "visa";
 
 /** Where a source may send; null = not fixed, pricing answers it. */
-export const moveDestinationsFor = (fromKey: string | null): string[] | null => {
-  if (fromKey === CARD_USD_RAIL) return ["dollar"];
-  if (fromKey === CARD_EUR_RAIL) return ["wallet"];
+export const moveDestinationsFor = (
+  fromKey: string | null,
+  settleCurrency: FiatCode,
+): string[] | null => {
+  if (fromKey === CARD_RAIL) return [cardSettleWalletRail(settleCurrency)];
   return null;
 };
 
