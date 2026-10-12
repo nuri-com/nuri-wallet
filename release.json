@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "source_sha": "befb1dfaae4608c2929fb903e5ad12c252facca6",
-  "release_id": "pwa-befb1dfaae46",
-  "app_version": "0.102.0",
+  "source_sha": "afe3b1ceb8b748483298444c1ffd885607c26800",
+  "release_id": "pwa-afe3b1ceb8b7",
+  "app_version": "0.104.0",
   "origin": "https://app.nuri.com",
   "files": [
     {
@@ -636,14 +636,14 @@
       "sha256": "cb7e66478b889dcd1a4ad9e709e9d5b1f8b455f72687f4e361dee5dae71d2f6c"
     },
     {
-      "path": "_expo/static/js/web/index-4ea790e41f5c1863f46351fe2f67f865.js",
-      "bytes": 11592835,
-      "sha256": "97c1157020d2127d59391f8bde5157756a14720f444e136cfe8c85fd8b02c634"
-    },
-    {
       "path": "_expo/static/js/web/index-523b8f660e61ac3ff49cb6c10927569d.js",
       "bytes": 7590,
       "sha256": "b5b22b37654ff0f8097bf9308a556cebd58878404c58d60b0122f6b75cb3bc2d"
+    },
+    {
+      "path": "_expo/static/js/web/index-55b692522961416c44d400b84dcaf41e.js",
+      "bytes": 11592835,
+      "sha256": "5e83bed64534b5463d87efa7d4257fff9a694da4136263fa5d9fd37d36f45b6a"
     },
     {
       "path": "_expo/static/js/web/index-6d316eaf12ca1b66582bf5c5aed0dcb9.js",
@@ -1258,7 +1258,7 @@
     {
       "path": "deployment.json",
       "bytes": 665,
-      "sha256": "7c9f206d41f94d32f2299c36c2181f64c82e9eac304e9d151dff12261c1d61bb"
+      "sha256": "8912d5753ebc1582eb93df4732b67023183aa03716788aac29d6c0990f0d98b9"
     },
     {
       "path": "favicon-32.png",
@@ -1293,7 +1293,7 @@
     {
       "path": "index.html",
       "bytes": 12217,
-      "sha256": "49d7d179519d907dbce89505d59537b15e7192053fb90fb2b20c5168920c594c"
+      "sha256": "693bbe3efeea571c7f21b4c6fbd4420f8889905c3c186367806f6817cd650bd4"
     },
     {
       "path": "manifest.json",
@@ -1316,9 +1316,9 @@
       "sha256": "d3f499490d1f70abbff5a07f3baa941470645365508ff00c837438bc190ca9b9"
     },
     {
-      "path": "waict/WdsByER8labRFc_fKdpewP",
+      "path": "waict/Q44hnQ6GVjFvtUNJ8s1t_t",
       "bytes": 37140,
-      "sha256": "59db01c8447c95a6d115cfdf29da5ec0fda117a2847a3d7d8b71f0fd45d42339"
+      "sha256": "438e219d0e8656316fb54349f2cd6dfed9f11aa318a5d344e5712512e2b8440d"
     }
   ]
 }

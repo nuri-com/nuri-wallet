@@ -46,9 +46,9 @@ JavaScript, connect a wallet, sign transactions or deploy anything.
 For this snapshot, success prints:
 
 ```text
-PASS: 263 live files match release befb1dfaae4608c2929fb903e5ad12c252facca6
-WAICT manifest: /waict/WdsByER8labRFc_fKdpewP
-Release manifest SHA-256: 94572f2102d32b8964fef52c85d78ac2233ef8ad519507b8140a0ebbb7ca02ad
+PASS: 263 live files match release afe3b1ceb8b748483298444c1ffd885607c26800
+WAICT manifest: /waict/Q44hnQ6GVjFvtUNJ8s1t_t
+Release manifest SHA-256: 65d9b9239f5f24080c0edda5e5147a77d8dc51b3cba75a0af318512c942a3377
 ```
 
 A failed request or mismatch produces a nonzero exit status. It is not proof of an
@@ -94,7 +94,7 @@ There are three distinct identifiers:
 **Release manifest SHA-256:**
 
 ```text
-94572f2102d32b8964fef52c85d78ac2233ef8ad519507b8140a0ebbb7ca02ad
+65d9b9239f5f24080c0edda5e5147a77d8dc51b3cba75a0af318512c942a3377
 ```
 
 Compute it independently with Node.js:
@@ -104,17 +104,17 @@ node -e 'const fs=require("node:fs"),crypto=require("node:crypto"); console.log(
 ```
 
 The main application bundle is
-[`index-4ea790e41f5c1863f46351fe2f67f865.js`](web/_expo/static/js/web/index-4ea790e41f5c1863f46351fe2f67f865.js).
+[`index-55b692522961416c44d400b84dcaf41e.js`](web/_expo/static/js/web/index-55b692522961416c44d400b84dcaf41e.js).
 Its SHA-256 is:
 
 ```text
-97c1157020d2127d59391f8bde5157756a14720f444e136cfe8c85fd8b02c634
+5e83bed64534b5463d87efa7d4257fff9a694da4136263fa5d9fd37d36f45b6a
 ```
 
 To compare it with the live site without cloning anything:
 
 ```sh
-curl -s https://app.nuri.com/_expo/static/js/web/index-4ea790e41f5c1863f46351fe2f67f865.js | shasum -a 256
+curl -s https://app.nuri.com/_expo/static/js/web/index-55b692522961416c44d400b84dcaf41e.js | shasum -a 256
 ```
 
 This checks one file. `node verify.mjs` checks all of them.
@@ -179,7 +179,7 @@ flowchart LR
 ### Why 261 rebuilt files but 263 release files?
 
 `web/deployment.json` records deployment-time information, including the source SHA,
-release ID and timestamp. `web/waict/WdsByER8labRFc_fKdpewP` is the WAICT integrity manifest written
+release ID and timestamp. `web/waict/Q44hnQ6GVjFvtUNJ8s1t_t` is the WAICT integrity manifest written
 at deploy time. Expo produces neither file. Rebuild mode excludes **only those two
 files** from the expected build output; it does not silently ignore arbitrary
 differences. The WAICT manifest is then recomputed from the rebuilt files and must match
@@ -192,10 +192,10 @@ the resulting application bytes were then checked, not assumed to be unchanged.
 
 | Recorded evidence | Value |
 | --- | --- |
-| Application version | `0.102.0` |
-| Deployment ID | `pwa-befb1dfaae46` |
-| Original deployment source | `befb1dfaae4608c2929fb903e5ad12c252facca6` |
-| Deployment timestamp | `2026-10-12T20:23:23Z` |
+| Application version | `0.104.0` |
+| Deployment ID | `pwa-afe3b1ceb8b7` |
+| Original deployment source | `afe3b1ceb8b748483298444c1ffd885607c26800` |
+| Deployment timestamp | `2026-10-12T21:34:47Z` |
 | Last complete live comparison for this snapshot | `2026-10-12` |
 | Rebuild environment | GitHub Actions, Node `22.23.3`, npm `10.9.9`, clean directory |
 | Original production CI | nuri-expo Deploy PWA, Node 22 |
