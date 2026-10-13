@@ -281,6 +281,9 @@ export const en = {
       openSettings: "Open Settings",
       clipboardEmpty: "Clipboard is empty",
       pasteInvalid: "No valid address in the clipboard",
+      subtitle: "Scan or upload a QR code, or paste an address.",
+      uploadLabel: "Upload",
+      noQrInImage: "No QR code found in this image",
     },
 
     CardScreen: {
@@ -722,8 +725,8 @@ export const en = {
       receiveLabelOnchain: "Onchain",
       receiveLabelEvm: "EVM address",
       receiveEmpty: "No address yet.",
-      scanTitle: "Scan",
-      scanPasteLabel: "Paste a code or address",
+      scanTitle: "Who is your recipient?",
+      scanPasteLabel: "Paste",
       scanUnsupported: "Nothing here can pay this.",
       scanBankUnavailable: "Your bank details aren't ready yet.",
       scanChoiceTitle: "Pay from",

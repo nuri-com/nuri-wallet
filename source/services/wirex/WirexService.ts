@@ -223,6 +223,8 @@ interface WithdrawalResultData {
   asset?: string;
   source_token?: string;
   destination_token?: string;
+  /** A currency swap's own outcome, once its payment is mined. */
+  fx?: { status?: string; to?: string; trade_id?: string; error?: string };
 }
 
 // ── Card details reveal shapes (from nuri-wirex-mcp) ──────────────────
@@ -314,6 +316,31 @@ export interface WirexWithdrawalResult {
   asset: WirexWithdrawAsset;
   firstTxHash: string;
   finalTxHash: string;
+  /** Set for a currency swap: whether Wirex ran it after the money left. */
+  fx?: WirexCardSwapOutcome;
+}
+
+/**
+ * How a card currency swap ended once its payment left the card. "failed": the
+ * money reached Wirex's swap address but the swap did not run. "unknown": Wirex
+ * may have run it (its reply was lost). Neither is retried; both need support,
+ * the money is not lost.
+ */
+export interface WirexCardSwapOutcome {
+  status: "done" | "failed" | "unknown";
+  to: "EUR" | "USD";
+  tradeId: string | null;
+  error: string | null;
+}
+
+function toSwapOutcome(fx: WithdrawalResultData["fx"]): WirexCardSwapOutcome | undefined {
+  if (!fx) return undefined;
+  return {
+    status: fx.status === "done" || fx.status === "failed" ? fx.status : "unknown",
+    to: String(fx.to || "").toUpperCase() === "USD" ? "USD" : "EUR",
+    tradeId: typeof fx.trade_id === "string" ? fx.trade_id : null,
+    error: typeof fx.error === "string" ? fx.error : null,
+  };
 }
 
 /**
@@ -1370,7 +1397,12 @@ class WirexService {
     }
     trace("reconcile pending withdrawal (resume execution session)");
     try {
-      const result = await this.pollWithdrawalResult(marker.sessionId, "completed", trace);
+      const result = await this.pollWithdrawalResult(
+        marker.sessionId,
+        "completed",
+        trace,
+        marker.kind === "fx" ? wirexConfig.routes.fxResult : wirexConfig.routes.withdrawResult,
+      );
       if (!result.amount || !result.first_tx_hash || !result.final_tx_hash) {
         throw new Error("wirex_withdraw_result_invalid");
       }
@@ -1381,6 +1413,7 @@ class WirexService {
         asset: String(result.asset || "").toUpperCase() === "USDC" ? "USDC" : "EURC",
         firstTxHash: result.first_tx_hash,
         finalTxHash: result.final_tx_hash,
+        ...(marker.kind === "fx" ? { fx: toSwapOutcome(result.fx) } : {}),
       };
     } catch (error) {
       // A server-confirmed non-success (completed with ok:false) means the prior
@@ -1507,9 +1540,30 @@ class WirexService {
     }
   }
 
+  /**
+   * Swap card money into the other currency (Wirex FX). `amount` of the other
+   * currency leaves the card through the same two silent approvals as a
+   * withdrawal, to Wirex's swap address (the server takes it from Wirex, never
+   * from here), and `to` lands back on the card. One lock with withdrawals:
+   * one at a time, and an unconfirmed outcome holds it.
+   */
+  async swapCardCurrency(
+    to: "EUR" | "USD",
+    amount: string,
+    opts?: { onTrace?: (line: string) => void },
+  ): Promise<WirexWithdrawalResult> {
+    this.activeWithdrawals += 1;
+    try {
+      return await this.runWithdrawToWallet(amount, opts, to);
+    } finally {
+      this.activeWithdrawals -= 1;
+    }
+  }
+
   private async runWithdrawToWallet(
     amount: string,
     opts?: Parameters<WirexService["withdrawToWallet"]>[1],
+    swapTo?: "EUR" | "USD",
   ): Promise<WirexWithdrawalResult> {
     const trace = (label: string, data?: unknown) => {
       if (!opts?.onTrace) return;
@@ -1534,8 +1588,18 @@ class WirexService {
         throw error;
       }
     };
-    const asset: WirexWithdrawAsset = opts?.asset ?? "EURC";
+    // A swap pays with the other currency's coin.
+    const asset: WirexWithdrawAsset = swapTo
+      ? swapTo === "USD"
+        ? "EURC"
+        : "USDC"
+      : (opts?.asset ?? "EURC");
+    const resultRoute = swapTo ? wirexConfig.routes.fxResult : wirexConfig.routes.withdrawResult;
     const normalizedAmount = amount.trim();
+    // Wirex prices a swap to the cent.
+    if (swapTo && !/^\d+(?:\.\d{1,2})?$/.test(normalizedAmount)) {
+      throw new Error("wirex_withdraw_invalid_amount");
+    }
     // Up to 6 decimals: the base tokens (EURC/USDC) carry 6, and the server
     // (wirex_withdraw_start → prepareWithdrawalRequest) parses the figure with
     // each token's own decimals, so a full card balance such as 0.995018 goes
@@ -1561,15 +1625,24 @@ class WirexService {
     // session; if it completed, return that (no second withdrawal); if still
     // unknown, this throws unconfirmed and never reaches withdrawStart.
     const reconciled = await this.reconcilePendingWithdrawal(wallet, trace);
-    if (reconciled) return reconciled;
+    // The earlier operation was the same kind: its outcome is this one's answer.
+    // A settled operation of the other kind only freed the lock.
+    if (reconciled && Boolean(reconciled.fx) === Boolean(swapTo)) return reconciled;
 
-    const start = await traced(`POST ${wirexConfig.routes.withdrawStart}`, () =>
-      this.post<WithdrawalStartData>(wirexConfig.routes.withdrawStart, {
-        wallet,
-        amount: normalizedAmount,
-        asset,
-      }),
-    );
+    const start = swapTo
+      ? await traced(`POST ${wirexConfig.routes.fxStart}`, () =>
+          this.postAuthorized<WithdrawalStartData>(wirexConfig.routes.fxStart, {
+            to: swapTo,
+            amount: normalizedAmount,
+          }),
+        )
+      : await traced(`POST ${wirexConfig.routes.withdrawStart}`, () =>
+          this.post<WithdrawalStartData>(wirexConfig.routes.withdrawStart, {
+            wallet,
+            amount: normalizedAmount,
+            asset,
+          }),
+        );
     if (!start.approval_url || !start.session_id) {
       throw new Error("wirex_withdraw_start_invalid");
     }
@@ -1577,7 +1650,7 @@ class WirexService {
     // A server too old to know the parameter answers a dollar withdrawal by
     // preparing a euro one and saying nothing; taking its silence for agreement
     // would move the wrong money.
-    if (asset !== "EURC" && String(start.asset || "").toUpperCase() !== asset) {
+    if ((swapTo || asset !== "EURC") && String(start.asset || "").toUpperCase() !== asset) {
       throw new Error("wirex_withdraw_asset_not_supported");
     }
 
@@ -1598,7 +1671,7 @@ class WirexService {
     } catch {}
 
     const execution = await traced("poll result → approval_required", () =>
-      this.pollWithdrawalResult(start.session_id, "approval_required", trace),
+      this.pollWithdrawalResult(start.session_id, "approval_required", trace, resultRoute),
     );
     if (!execution.approval_url || !execution.session_id) {
       throw new Error("wirex_withdraw_execute_approval_invalid");
@@ -1620,7 +1693,11 @@ class WirexService {
           onBeforeCallbackPost: async () => {
             await storeAuthData(
               pendingWithdrawKeyFor(wallet),
-              JSON.stringify({ sessionId: execution.session_id, at: Date.now() }),
+              JSON.stringify({
+                sessionId: execution.session_id,
+                at: Date.now(),
+                ...(swapTo ? { kind: "fx" } : {}),
+              }),
             );
             crossedPointOfNoReturn = true;
           },
@@ -1657,7 +1734,7 @@ class WirexService {
     let result: WithdrawalResultData;
     try {
       result = await traced("poll result → completed", () =>
-        this.pollWithdrawalResult(execution.session_id, "completed", trace),
+        this.pollWithdrawalResult(execution.session_id, "completed", trace, resultRoute),
       );
       if (!result.amount || !result.first_tx_hash || !result.final_tx_hash) {
         throw new Error("wirex_withdraw_result_invalid");
@@ -1679,6 +1756,7 @@ class WirexService {
       asset: String(result.asset || "").toUpperCase() === "USDC" ? "USDC" : "EURC",
       firstTxHash: result.first_tx_hash,
       finalTxHash: result.final_tx_hash,
+      ...(swapTo ? { fx: toSwapOutcome(result.fx) } : {}),
     };
   }
 
@@ -1686,13 +1764,14 @@ class WirexService {
     sessionId: string,
     target: "approval_required" | "completed",
     trace?: (label: string, data?: unknown) => void,
+    route: string = wirexConfig.routes.withdrawResult,
   ): Promise<WithdrawalResultData> {
     const deadline = Date.now() + WITHDRAW_POLL_TIMEOUT_MS;
     let interval = WITHDRAW_POLL_START_INTERVAL_MS;
     for (let attempt = 0; Date.now() < deadline; attempt++) {
       let data: WithdrawalResultData;
       try {
-        data = await this.get<WithdrawalResultData>(wirexConfig.routes.withdrawResult, {
+        data = await this.get<WithdrawalResultData>(route, {
           session_id: sessionId,
         });
       } catch (error) {
@@ -1713,7 +1792,7 @@ class WirexService {
         );
         throw error;
       }
-      trace?.(`poll#${attempt} ${wirexConfig.routes.withdrawResult} target=${target}`, data);
+      trace?.(`poll#${attempt} ${route} target=${target}`, data);
       if (target === "approval_required" && data.status === "approval_required") return data;
       if (target === "completed" && data.status === "completed") {
         if (data.ok !== true) {

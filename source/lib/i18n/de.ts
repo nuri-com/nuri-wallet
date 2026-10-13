@@ -282,6 +282,9 @@ export const de = {
       openSettings: "Einstellungen öffnen",
       clipboardEmpty: "Zwischenablage ist leer",
       pasteInvalid: "Keine gültige Adresse in der Zwischenablage",
+      subtitle: "Scanne oder lade einen QR-Code hoch, oder füge eine Adresse ein.",
+      uploadLabel: "Hochladen",
+      noQrInImage: "Kein QR-Code in diesem Bild gefunden",
     },
 
     CardScreen: {
@@ -732,8 +735,8 @@ export const de = {
       receiveLabelOnchain: "Onchain",
       receiveLabelEvm: "EVM-Adresse",
       receiveEmpty: "Noch keine Adresse.",
-      scanTitle: "Scannen",
-      scanPasteLabel: "Code oder Adresse einf\u00fcgen",
+      scanTitle: "Wer ist der Empfänger?",
+      scanPasteLabel: "Einfügen",
       scanUnsupported: "Daf\u00fcr gibt es hier kein Konto.",
       scanBankUnavailable: "Deine Bankdaten sind noch nicht bereit.",
       scanChoiceTitle: "Bezahlen von",

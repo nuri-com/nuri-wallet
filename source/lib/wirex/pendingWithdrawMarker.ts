@@ -19,18 +19,22 @@ export type PendingWithdrawMarker = {
   sessionId: string;
   /** Epoch ms. 0 means the marker predates this field. */
   at: number;
+  /** "fx": a currency swap, polled on its own result route. Absent: a withdrawal. */
+  kind?: "fx";
 };
 
 export function parsePendingWithdrawMarker(raw: string): PendingWithdrawMarker | null {
   let sessionId = "";
   let at = 0;
+  let fx = false;
   try {
-    const parsed = JSON.parse(raw) as { sessionId?: unknown; at?: unknown };
+    const parsed = JSON.parse(raw) as { sessionId?: unknown; at?: unknown; kind?: unknown };
     sessionId = String(parsed?.sessionId || "");
     at = Number(parsed?.at) || 0;
+    fx = parsed?.kind === "fx";
   } catch {}
   if (!sessionId) return null;
-  return { sessionId, at: at > 0 ? at : 0 };
+  return { sessionId, at: at > 0 ? at : 0, ...(fx ? { kind: "fx" as const } : {}) };
 }
 
 /**
@@ -42,7 +46,7 @@ export function stampUndatedMarker(
   now: number,
 ): PendingWithdrawMarker | null {
   if (marker.at > 0) return null;
-  return { sessionId: marker.sessionId, at: now };
+  return { ...marker, at: now };
 }
 
 export function isPendingWithdrawMarkerExpired(

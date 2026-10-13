@@ -195,7 +195,10 @@ import { wirexAccountService } from "../../services/wirex/WirexAccountService";
 import {
   WirexWithdrawUnconfirmedError,
   type WirexWithdrawAsset,
+  wirexService,
 } from "../../services/wirex/WirexService";
+import { autoSwapAmount, cardSwapStep } from "../../lib/wirex/cardAutoSwap";
+import { errorWithId } from "../../lib/OperationLogUtils";
 import { reportErrorToSupport } from "../../lib/support/reportErrorToSupport";
 import { isUserCancelledAuth } from "../../lib/support/isUserCancelledAuth";
 import { sendDollarToCard, sendEuroToCard } from "../../services/wallet/CardTransferService";
@@ -1064,38 +1067,70 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   }, [openRail, onchainSats, arkadeSats, walletEur, usdcBalance, listSatsStr, heldList]);
 
   // Money on the card in the currency it does not settle in. It cannot be
-  // spent through the card's one currency, so it is offered back as found
-  // money: withdrawn to the wallet holding that currency, and done.
+  // spent through the card's one currency, so it is swapped into the home
+  // currency on its own (Wirex FX: the same two silent approvals as a
+  // withdrawal, then the home currency lands on the card).
   const cardOtherFiat: FiatCode = home === "USD" ? "EUR" : "USD";
   const cardOtherReading = cardActive ? wirex.balancesByFiat?.[cardOtherFiat] : undefined;
-  const cardOtherHeld = cardOtherReading ?? 0;
-  const [cardFoundVisible, setCardFoundVisible] = useState(false);
-  // Offered unprompted for each amount found in a currency; the row on the
-  // Visa & Banking card reopens it for as long as the money is there.
-  const cardFoundOfferedRef = useRef<string | null>(null);
-  // The amount a withdrawal already ran for (or may have run for, when its
-  // outcome is unconfirmed): not offered again until the balance reads differently,
-  // so the same money is never withdrawn twice.
-  const cardFoundKey = `${cardOtherFiat}:${cardOtherHeld}`;
-  const [cardFoundClaimed, setCardFoundClaimed] = useState<string | null>(null);
-  // A withdrawal still running holds the claim whatever the balance reads, so a
-  // balance change mid-approval cannot start a second one.
-  const [cardFoundRunning, setCardFoundRunning] = useState(false);
-  const cardFoundClaimable =
-    cardOtherHeld > 0 && !cardFoundRunning && cardFoundClaimed !== cardFoundKey;
-  // Once the card reads zero in that currency the money has left: the same
-  // amount arriving later is new money, offered and claimable again.
+  const cardSwapAmount = autoSwapAmount(cardOtherReading);
+  // The reading a swap already ran for (or may have run for, when its outcome
+  // is unconfirmed): never swapped again until the balance reads differently,
+  // and nothing starts while one is running, so the same money moves once.
+  const cardSwapKey = `${cardOtherFiat}:${cardOtherReading ?? 0}`;
+  const cardSwapTakenRef = useRef<string | null>(null);
+  const cardSwapRunningRef = useRef(false);
+  // Bumped when a swap ends, so the latest reading (which may have changed
+  // while it ran) is looked at again.
+  const [cardSwapEnded, setCardSwapEnded] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `cardSwapEnded` is the re-check trigger when a swap ends, not a value read
   useEffect(() => {
-    if (cardOtherReading !== 0) return;
-    setCardFoundClaimed(null);
-    cardFoundOfferedRef.current = null;
-  }, [cardOtherReading]);
-  useEffect(() => {
-    const found = cardFoundKey;
-    if (!cardFoundClaimable || cardFoundOfferedRef.current === found || sweepResult != null) return;
-    cardFoundOfferedRef.current = found;
-    setCardFoundVisible(true);
-  }, [cardFoundClaimable, cardFoundKey, sweepResult]);
+    const step = cardSwapStep({
+      running: cardSwapRunningRef.current,
+      reading: cardOtherReading,
+      key: cardSwapKey,
+      taken: cardSwapTakenRef.current,
+    });
+    // Zero: the money left, so the same amount arriving later is new money.
+    if (step === "reset") cardSwapTakenRef.current = null;
+    if (step !== "start" || !cardSwapAmount) return;
+    cardSwapTakenRef.current = cardSwapKey;
+    cardSwapRunningRef.current = true;
+    const to = home === "USD" ? "USD" : "EUR";
+    void wirexService
+      .swapCardCurrency(to, cardSwapAmount)
+      .then((done) => {
+        // The money left the card but Wirex did not run the swap: it sits at
+        // Wirex's swap address and only support can settle it.
+        if (done.fx?.status !== "done") {
+          void reportErrorToSupport({
+            error: new Error(done.fx?.error ?? "wirex_fx_outcome_missing"),
+            userMessage:
+              done.fx?.status === "failed"
+                ? "Card currency swap did not run"
+                : "Card currency swap is unconfirmed",
+          }).catch(() => {});
+        }
+      })
+      .catch((error) => {
+        if (error instanceof WirexWithdrawUnconfirmedError) {
+          void reportErrorToSupport({
+            error,
+            userMessage: "Card currency swap is unconfirmed",
+          }).catch(() => {});
+          return;
+        }
+        // Nothing moved (no capability, a server without swaps, a blip): the
+        // same reading is not tried again until the app starts anew.
+        errorWithId("💳 UnifiedHomeScreen.cardSwap", "card currency swap failed", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        cardSwapRunningRef.current = false;
+        setCardSwapEnded((n) => n + 1);
+        void wirexAccountService.silentRefresh(true);
+      });
+  }, [cardSwapAmount, cardSwapKey, cardOtherReading, home, cardSwapEnded]);
 
   // The Move sheet lists the card ONCE, as "Visa", in its settlement currency:
   // the user's main currency. Anything sent to it is a swap into that currency
@@ -1213,21 +1248,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // yet. The sweep is client-only and runs from the unlock modal alone, so a
   // modal that was dismissed (or never opened) leaves nothing on screen saying
   // sats are waiting. This row is that surface, and tapping it reopens the modal.
-  const cardFoundExtra =
-    openRail === "visa" && cardFoundClaimable ? (
-      <List>
-        <ListAction
-          accessibilityLabel={t("screen.SweepClaimSheet.title")}
-          onPress={() => setCardFoundVisible(true)}
-        >
-          <ListActionLeadingAvatar source={cardOtherFiat === "USD" ? USD_FLAG : EUR_FLAG} />
-          <ListActionText>{t("screen.SweepClaimSheet.title")}</ListActionText>
-          <ListActionTextMuted>{heldList(cardOtherHeld, cardOtherFiat)}</ListActionTextMuted>
-          <ListActionTrailIcon name="chevron-right" />
-        </ListAction>
-      </List>
-    ) : null;
-
   const pendingSweepExtra =
     openRail === "onchain" && unlockState.boardingSweepReadyCount > 0 ? (
       <List>
@@ -1371,7 +1391,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           setBtcSendSource(null);
           setBtcSendPrefill(undefined);
           setSweepResult(null);
-          setCardFoundVisible(false);
           setDetailsChoiceVisible(false);
           setScanChoice(null);
           // A link parked for a home that never opened it must not fire after the
@@ -2039,7 +2058,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                           : cashRail,
                     )
                   }
-                  extra={pendingSweepExtra ?? cardFoundExtra}
+                  extra={pendingSweepExtra}
                 />
               ) : (
                 <List>
@@ -2913,32 +2932,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         visible={buyFlow.visible}
         onClose={buyFlow.close}
         bitcoinAddress={buyFlow.bitcoinAddress}
-      />
-
-      {/* The card's other-currency money: withdrawn to the wallet holding it. */}
-      <SweepClaimSheet
-        visible={cardFoundVisible && sweepResult == null}
-        result={null}
-        amountText={heldList(cardOtherHeld, cardOtherFiat)}
-        onClaim={async () => {
-          const amount = cardOtherHeld;
-          // Taken before the withdrawal starts, so the row cannot start a second
-          // one while this runs. A definite failure gives it back; an
-          // unconfirmed one may have moved the money and keeps it taken.
-          setCardFoundClaimed(`${cardOtherFiat}:${amount}`);
-          setCardFoundRunning(true);
-          try {
-            await runCardToWallet(amount, cardOtherFiat === "USD" ? "USDC" : "EURC");
-          } catch (error) {
-            if (!(error as { unresolved?: boolean } | null)?.unresolved) {
-              setCardFoundClaimed(null);
-            }
-            throw error;
-          } finally {
-            setCardFoundRunning(false);
-          }
-        }}
-        onClose={() => setCardFoundVisible(false)}
       />
 
       <SweepClaimSheet

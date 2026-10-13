@@ -50,6 +50,9 @@ export const WIREX_ROUTES = {
   bankTransactions: "/bank/transactions",
   withdrawStart: "/withdraw/start",
   withdrawResult: "/withdraw/result",
+  // Swap between the card's euro and dollar balances (MCP 0.46.0 / 0.68.0).
+  fxStart: "/fx/start",
+  fxResult: "/fx/result",
   // The account's user record: the KYC'd profile (the only source of the holder
   // name) and the per-rail capabilities. Wirex serves it from what it calls the
   // physical-eligibility route; nothing about plastic is read from it.

@@ -13,12 +13,13 @@ import {
   NuriScope,
   Text,
   Topbar,
-  TopbarTitle,
   TopbarTrailing,
   View,
 } from "@ds";
 
 import DsSheetHost from "./DsSheetHost";
+import QrUploadButton from "./QrUploadButton";
+import { createScanHold } from "./qrScanHold";
 import type { QrScannerProps } from "../types/debug";
 import { extractAddressFromQR, parseQr } from "../lib/qr";
 import { t } from "../lib/i18n";
@@ -37,23 +38,31 @@ const QrScannerModal: React.FC<Props> = ({
   onManualEntry,
 }) => {
   const [permission, requestPermission] = useCameraPermissions();
-  // Diameter the circle is allowed to take: the smaller of the slot's width and
-  // whatever height is left once the header and the paste CTA have theirs.
-  const [circleSize, setCircleSize] = useState(0);
-  const [scanned, setScanned] = useState(false);
   const [mismatchMessage, setMismatchMessage] = useState<string | null>(null);
   const permissionRequestedRef = useRef(false);
+  const holdRef = useRef<ReturnType<typeof createScanHold> | null>(null);
+  holdRef.current ??= createScanHold(setMismatchMessage);
+  const hold = holdRef.current;
 
   const resolvedTitle = title ?? t("screen.QrScannerModal.title");
   const resolvedPasteLabel = pasteLabel ?? t("screen.QrScannerModal.pasteLabel");
+
+  const [topHeight, setTopHeight] = useState(0);
+
+  // Opening the sheet starts the camera free, with no message. Closing keeps
+  // it held: the camera stays mounted through the exit animation and must not
+  // read the same code again.
+  useEffect(() => {
+    if (visible) hold.reset();
+    else hold.close();
+    return () => hold.close();
+  }, [visible, hold]);
 
   useEffect(() => {
     if (!visible) {
       permissionRequestedRef.current = false;
       return;
     }
-    setScanned(false);
-    setMismatchMessage(null);
     if (!permission) return;
     if (!permission.granted && permission.canAskAgain && !permissionRequestedRef.current) {
       permissionRequestedRef.current = true;
@@ -61,17 +70,11 @@ const QrScannerModal: React.FC<Props> = ({
     }
   }, [visible, permission, requestPermission]);
 
-  const showTransientMessage = useCallback((message: string) => {
-    setMismatchMessage(message);
-    setTimeout(() => {
-      setMismatchMessage(null);
-      setScanned(false);
-    }, 2500);
-  }, []);
+  const showTransientMessage = hold.flash;
 
   const handleInput = useCallback(
-    async (raw: string, source: "scan" | "paste") => {
-      // A rejected scan blames the QR. A rejected paste falls back to manual
+    async (raw: string, source: "scan" | "paste" | "upload") => {
+      // A rejected scan or upload blames the QR. A rejected paste falls back to manual
       // entry when the caller supports it (the recipient field has its own
       // paste button), otherwise it blames the clipboard.
       const rejectPaste = () => {
@@ -87,8 +90,10 @@ const QrScannerModal: React.FC<Props> = ({
         console.log("[QrScannerModal] Input not recognized: no data found");
         if (source === "paste") {
           rejectPaste();
+        } else if (source === "upload") {
+          showTransientMessage(rejectMessage);
         } else {
-          setScanned(false);
+          hold.release();
         }
         return;
       }
@@ -157,18 +162,18 @@ const QrScannerModal: React.FC<Props> = ({
       onClose,
       showTransientMessage,
       onManualEntry,
+      hold,
     ],
   );
 
   const handleBarcode = useCallback(
     (res: BarcodeScanningResult) => {
-      if (scanned) return;
-      setScanned(true);
+      if (!hold.take()) return;
       void handleInput(String(res.data ?? ""), "scan").catch(() => {
         showTransientMessage(t("common.invalidQrTryAgain"));
       });
     },
-    [scanned, handleInput, showTransientMessage],
+    [hold, handleInput, showTransientMessage],
   );
 
   const onPaste = useCallback(async () => {
@@ -198,36 +203,35 @@ const QrScannerModal: React.FC<Props> = ({
     }
   }, [handleInput, showTransientMessage, onManualEntry]);
 
+  const onUploadDecoded = useCallback(
+    (data: string | null, token: number) => {
+      // Only the upload still pending counts: a late photo from an earlier
+      // upload, or from before the sheet closed, is dropped.
+      if (!hold.uploadDone(token)) {
+        console.log("[QrScannerModal] Dropped a stale upload result");
+        return;
+      }
+      if (!data) {
+        console.log("[QrScannerModal] No QR code in uploaded image");
+        showTransientMessage(t("screen.QrScannerModal.noQrInImage"));
+        return;
+      }
+      void handleInput(data, "upload").catch(() => {
+        showTransientMessage(t("common.invalidQrTryAgain"));
+      });
+    },
+    [hold, handleInput, showTransientMessage],
+  );
+
   const cameraGranted = Boolean(permission?.granted);
 
-  // The sheet works without camera access: the circle stays a dark placeholder
-  // (with the permission status inside) and the paste footer keeps working.
-  const renderCircle = () => {
-    if (cameraGranted) {
-      return (
-        // Circular camera preview per the DS send-address layout. The DS View
-        // can't clip a native child to a radius, so a structural RN wrapper
-        // does the clipping — same stopgap category as the QR lib.
-        <RNView style={styles.cameraClip}>
-          <CameraView
-            style={StyleSheet.absoluteFill}
-            facing="back"
-            onBarcodeScanned={handleBarcode}
-            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-          />
-        </RNView>
-      );
-    }
+  // The sheet works without camera access: the camera area stays dark with the
+  // permission status inside, and Paste and Upload keep working.
+  const renderCameraArea = () => {
+    if (cameraGranted) return null;
     return (
       <NuriScope mode="dark">
-        <View
-          chrome="canvas"
-          radius="full"
-          fill="grow"
-          align="center"
-          justify="center"
-          paddingX="xl"
-        >
+        <View direction="column" align="center" justify="center" gap="lg" fill="grow" paddingX="xl">
           <Text size="md" muted align="center">
             {!permission
               ? t("screen.QrScannerModal.preparingCamera")
@@ -235,131 +239,151 @@ const QrScannerModal: React.FC<Props> = ({
                 ? t("screen.QrScannerModal.permissionNeeded")
                 : t("screen.QrScannerModal.permissionDenied")}
           </Text>
+          {permission ? (
+            permission.canAskAgain ? (
+              <Button
+                size="lg"
+                variant="soft"
+                onPress={() => {
+                  void requestPermission();
+                }}
+              >
+                <ButtonText>{t("screen.QrScannerModal.allowCamera")}</ButtonText>
+              </Button>
+            ) : (
+              <Button size="lg" variant="soft" onPress={() => Linking.openSettings()}>
+                <ButtonText>{t("screen.QrScannerModal.openSettings")}</ButtonText>
+              </Button>
+            )
+          ) : null}
         </View>
       </NuriScope>
     );
   };
 
-  const renderPermissionAction = () => {
-    if (cameraGranted || !permission) return null;
-    return permission.canAskAgain ? (
-      <Button
-        size="lg"
-        variant="soft"
-        onPress={() => {
-          void requestPermission();
-        }}
-      >
-        <ButtonText>{t("screen.QrScannerModal.allowCamera")}</ButtonText>
-      </Button>
-    ) : (
-      <Button size="lg" variant="soft" onPress={() => Linking.openSettings()}>
-        <ButtonText>{t("screen.QrScannerModal.openSettings")}</ButtonText>
-      </Button>
-    );
-  };
-
-  const renderBody = () => (
-    <View direction="column" align="stretch" justify="center" gap="lg" fill="grow">
-      {/* Structural: the circle is width-driven (aspectRatio 1), so on a short
-          screen it would push the paste CTA off the bottom — the sheet does not
-          scroll. Measure what is left and cap the diameter with it. A DS box
-          models no measurement. */}
-      <RNView
-        style={styles.circleSlot}
-        onLayout={(event) => {
-          const { width, height } = event.nativeEvent.layout;
-          const next = Math.floor(Math.min(width, height));
-          setCircleSize((current) => (current === next ? current : next));
-        }}
-      >
-        {circleSize > 0 ? (
-          <RNView style={{ width: circleSize, height: circleSize }}>{renderCircle()}</RNView>
-        ) : null}
-      </RNView>
-      {renderPermissionAction()}
-      {/* Always mounted, one line: the row keeps its height with or without a
-          message, so showing one never shrinks the circle (it made the camera
-          jump on every rejected scan). */}
-      <Text size="md" emphasis align="center" flow="truncate" lines={1}>
-        {mismatchMessage ?? "\u00A0"}
-      </Text>
-    </View>
-  );
-
   return (
     <DsSheetHost visible={visible} onClose={onClose} mode="full">
-      <Header safeAreaTop chrome="canvas">
-        <Topbar surface="transparent" layout="fluid">
-          {/* The title belongs in the topbar row, next to the ✕ — not one row
-              below it. TopbarTitle is the DS slot for it (lg/emphasis/one-line). */}
-          <TopbarTitle>{resolvedTitle}</TopbarTitle>
-          <TopbarTrailing>
-            <IconButton
-              icon="cross"
-              variant="soft"
-              accessibilityLabel={t("common.close")}
-              onPress={onClose}
+      <RNView style={styles.root}>
+        {/* Structural: the camera sits behind the header and the open area,
+            reaching only far enough under the card for its rounded corners to
+            show the preview. It stops there so it cannot read a code hidden
+            behind the card. A DS box models no absolute layer or measurement. */}
+        <RNView style={[styles.cameraLayer, { height: topHeight + CARD_CORNER }]}>
+          {cameraGranted ? (
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              facing="back"
+              onBarcodeScanned={handleBarcode}
+              barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
             />
-          </TopbarTrailing>
-        </Topbar>
-      </Header>
+          ) : (
+            <NuriScope mode="dark">
+              <View chrome="canvas" fill="grow" />
+            </NuriScope>
+          )}
+        </RNView>
 
-      {/* The sheet never scrolls — the circle shrinks into what the header and
-          the footer leave over. */}
-      <RNView style={styles.body}>
+        <RNView
+          style={styles.top}
+          onLayout={(event) => {
+            const next = Math.round(event.nativeEvent.layout.height);
+            setTopHeight((current) => (current === next ? current : next));
+          }}
+        >
+          <Header safeAreaTop chrome="transparent">
+            <Topbar surface="transparent" layout="fluid">
+              <TopbarTrailing>
+                <IconButton
+                  icon="cross"
+                  variant="soft"
+                  accessibilityLabel={t("common.close")}
+                  onPress={onClose}
+                />
+              </TopbarTrailing>
+            </Topbar>
+          </Header>
+
+          <RNView style={styles.cameraArea}>{renderCameraArea()}</RNView>
+        </RNView>
+
         <View
+          chrome="canvas"
+          radiusTop="lg"
           direction="column"
           align="stretch"
-          justify="start"
           gap="sm"
           paddingX="lg"
-          paddingBottom="sm"
-          fill="grow"
+          paddingTop="xl"
         >
-          {renderBody()}
+          <Text size="lg" emphasis>
+            {resolvedTitle}
+          </Text>
+          <Text size="md" muted>
+            {t("screen.QrScannerModal.subtitle")}
+          </Text>
+          {/* Always mounted, one line: the card keeps its height with or
+              without a message, so showing one never moves the buttons. */}
+          <Text size="md" emphasis flow="truncate" lines={1}>
+            {mismatchMessage ?? "\u00A0"}
+          </Text>
         </View>
-      </RNView>
 
-      <Footer safeAreaBottom direction="column" align="stretch" paddingBottom="lg" paddingX="lg">
-        {/* Paste is the only thing under the circle: the scanner accepts what it
-            can act on, and anything typed by hand belongs on the rail's own send
-            screen, which knows the currency. */}
-        <View direction="row" distribute="even">
-          <Button
-            size="lg"
-            variant="soft"
-            onPress={() => {
-              void onPaste();
-            }}
-            accessibilityLabel={resolvedPasteLabel}
-          >
-            <ButtonText>{resolvedPasteLabel}</ButtonText>
-          </Button>
-        </View>
-      </Footer>
+        <Footer
+          safeAreaBottom
+          chrome="canvas"
+          direction="column"
+          align="stretch"
+          paddingBottom="lg"
+          paddingX="lg"
+        >
+          {/* Paste and Upload are the only actions: the scanner accepts what it
+              can act on, and anything typed by hand belongs on the rail's own
+              send screen, which knows the currency. */}
+          <View direction="row" distribute="even" gap="sm">
+            <Button
+              size="lg"
+              variant="soft"
+              onPress={() => {
+                void onPaste();
+              }}
+              accessibilityLabel={resolvedPasteLabel}
+            >
+              <ButtonText>{resolvedPasteLabel}</ButtonText>
+            </Button>
+            <QrUploadButton
+              label={t("screen.QrScannerModal.uploadLabel")}
+              onOpen={hold.uploadOpen}
+              onCancel={hold.uploadCancel}
+              onDecoded={onUploadDecoded}
+            />
+          </View>
+        </Footer>
+      </RNView>
     </DsSheetHost>
   );
 };
 
+// The card's radiusTop="lg" (18 px): how far the camera reaches under it.
+const CARD_CORNER = 18;
+
 const styles = StyleSheet.create({
-  body: {
+  root: {
     flex: 1,
     minHeight: 0,
   },
-  circleSlot: {
-    // flex (not flexShrink): the slot has no children until it has been
-    // measured, so it must claim the leftover space on its own — otherwise it
-    // measures 0, the circle never renders, and the sheet stays empty.
+  cameraLayer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+  },
+  top: {
     flex: 1,
     minHeight: 0,
-    alignItems: "center",
-    justifyContent: "center",
   },
-  cameraClip: {
+  cameraArea: {
     flex: 1,
-    borderRadius: 9999,
-    overflow: "hidden",
+    minHeight: 0,
   },
 });
 
