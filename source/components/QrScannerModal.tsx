@@ -291,7 +291,7 @@ const QrScannerModal: React.FC<Props> = ({
           }}
         >
           <Header safeAreaTop chrome="transparent">
-            <Topbar surface="transparent" layout="fluid">
+            <Topbar surface="transparent">
               <TopbarTrailing>
                 <IconButton
                   icon="cross"
@@ -306,58 +306,64 @@ const QrScannerModal: React.FC<Props> = ({
           <RNView style={styles.cameraArea}>{renderCameraArea()}</RNView>
         </RNView>
 
-        <View
-          chrome="canvas"
-          radiusTop="lg"
-          direction="column"
-          align="stretch"
-          gap="sm"
-          paddingX="lg"
-          paddingTop="xl"
-        >
-          <Text size="lg" emphasis>
-            {resolvedTitle}
-          </Text>
-          <Text size="md" muted>
-            {t("screen.QrScannerModal.subtitle")}
-          </Text>
-          {/* Always mounted, one line: the card keeps its height with or
+        {/* Structural: the card takes the bottom 40% of the page (the camera
+            the top 60%), with the buttons pinned to its bottom. A DS box
+            models no flex ratio. */}
+        <RNView style={styles.bottom}>
+          <View
+            chrome="canvas"
+            radiusTop="lg"
+            direction="column"
+            align="stretch"
+            gap="sm"
+            paddingX="lg"
+            paddingTop="xl"
+            fill="grow"
+          >
+            <Text size="lg" emphasis>
+              {resolvedTitle}
+            </Text>
+            <Text size="md" muted>
+              {t("screen.QrScannerModal.subtitle")}
+            </Text>
+            {/* Always mounted, one line: the card keeps its height with or
               without a message, so showing one never moves the buttons. */}
-          <Text size="md" emphasis flow="truncate" lines={1}>
-            {mismatchMessage ?? "\u00A0"}
-          </Text>
-        </View>
+            <Text size="md" emphasis flow="truncate" lines={1}>
+              {mismatchMessage ?? "\u00A0"}
+            </Text>
+          </View>
 
-        <Footer
-          safeAreaBottom
-          chrome="canvas"
-          direction="column"
-          align="stretch"
-          paddingBottom="lg"
-          paddingX="lg"
-        >
-          {/* Paste and Upload are the only actions: the scanner accepts what it
+          <Footer
+            safeAreaBottom
+            chrome="canvas"
+            direction="column"
+            align="stretch"
+            paddingBottom="lg"
+            paddingX="lg"
+          >
+            {/* Paste and Upload are the only actions: the scanner accepts what it
               can act on, and anything typed by hand belongs on the rail's own
               send screen, which knows the currency. */}
-          <View direction="row" distribute="even" gap="sm">
-            <Button
-              size="lg"
-              variant="soft"
-              onPress={() => {
-                void onPaste();
-              }}
-              accessibilityLabel={resolvedPasteLabel}
-            >
-              <ButtonText>{resolvedPasteLabel}</ButtonText>
-            </Button>
-            <QrUploadButton
-              label={t("screen.QrScannerModal.uploadLabel")}
-              onOpen={hold.uploadOpen}
-              onCancel={hold.uploadCancel}
-              onDecoded={onUploadDecoded}
-            />
-          </View>
-        </Footer>
+            <View direction="row" distribute="even" gap="sm">
+              <Button
+                size="lg"
+                variant="soft"
+                onPress={() => {
+                  void onPaste();
+                }}
+                accessibilityLabel={resolvedPasteLabel}
+              >
+                <ButtonText>{resolvedPasteLabel}</ButtonText>
+              </Button>
+              <QrUploadButton
+                label={t("screen.QrScannerModal.uploadLabel")}
+                onOpen={hold.uploadOpen}
+                onCancel={hold.uploadCancel}
+                onDecoded={onUploadDecoded}
+              />
+            </View>
+          </Footer>
+        </RNView>
       </RNView>
     </DsSheetHost>
   );
@@ -378,7 +384,11 @@ const styles = StyleSheet.create({
     right: 0,
   },
   top: {
-    flex: 1,
+    flex: 3,
+    minHeight: 0,
+  },
+  bottom: {
+    flex: 2,
     minHeight: 0,
   },
   cameraArea: {

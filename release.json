@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_sha": "48bbe9780f8031cde884656022aafb44d4da6eb4",
-  "release_id": "pwa-48bbe9780f80",
+  "source_sha": "90d9d760a4991e714b7a45df5dc8076088496044",
+  "release_id": "pwa-90d9d760a499",
   "app_version": "0.104.0",
   "origin": "https://app.nuri.com",
   "files": [
@@ -636,6 +636,11 @@
       "sha256": "6b5e9ea13d1f0c50b190c09ba80e21f2fc18dde7cc006fb9e9afccde50e6ac7a"
     },
     {
+      "path": "_expo/static/js/web/index-8357d640b0e8288cb5c48edfeced557d.js",
+      "bytes": 11727802,
+      "sha256": "8a8a7ae0c44797baafcbc876d0237d1e802dd46773ea0ef8bca295a951b20c0b"
+    },
+    {
       "path": "_expo/static/js/web/index-9995fba8e093214b01daf8c4b1189aba.js",
       "bytes": 653161,
       "sha256": "8b86e6c53abf219898c15854463f8dec0a972e9bdaf40ab75d111f1dedbbdf2e"
@@ -644,11 +649,6 @@
       "path": "_expo/static/js/web/index-ac6155fe60a2dd5e069b9c59cc218ec7.js",
       "bytes": 12398,
       "sha256": "02195282563b80e5c9d56de54c4b41d62a8b597d467f6042079a79c987b7157f"
-    },
-    {
-      "path": "_expo/static/js/web/index-b4d87187b425449ad7660a65f2f4e6f0.js",
-      "bytes": 11727727,
-      "sha256": "2892b123edda31ab6d9767e567de1e82949f665fa86e08463334fc01398eb3c6"
     },
     {
       "path": "_expo/static/js/web/index-b5d3f3225035260f7e7a2161fd816e9b.js",
@@ -1258,7 +1258,7 @@
     {
       "path": "deployment.json",
       "bytes": 665,
-      "sha256": "43167b4f23d9ba9ca0e8c779880702fb44202494a900aaa03119194f6e916b15"
+      "sha256": "51f5ec410495ec9fc0515e63750b99bb6dc89daa65558c5d2a1a1dd1d1ddb23c"
     },
     {
       "path": "favicon-32.png",
@@ -1293,7 +1293,7 @@
     {
       "path": "index.html",
       "bytes": 12217,
-      "sha256": "453513b370609d372d2d24d6df406f5b4ec4f482fcde40a28067bec8b73687ad"
+      "sha256": "f92a6f5183317073b767694367d2c0634f4128b9774867e534cf4f186826a5c7"
     },
     {
       "path": "manifest.json",
@@ -1316,9 +1316,9 @@
       "sha256": "d3f499490d1f70abbff5a07f3baa941470645365508ff00c837438bc190ca9b9"
     },
     {
-      "path": "waict/MtRcR7jlNtCCv7HZAIEwll",
+      "path": "waict/Z_UhUcymL9_WmINLOC6uWO",
       "bytes": 37140,
-      "sha256": "32d45c47b8e536d082bfb1d9008130965dda82d5499602d4c940169ef064b527"
+      "sha256": "67f52151cca62fdfd698834b382eae58ebc1bc76d62fa03a94e3db207a274f80"
     }
   ]
 }
