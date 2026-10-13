@@ -77,7 +77,9 @@ export type MoneyInFlightKind =
   /** A card pocket -> wallet withdrawal. id = the withdrawal's move id. */
   | "card_withdraw"
   /** A SEPA transfer out of the card. id = Wirex's transfer id. */
-  | "sepa";
+  | "sepa"
+  /** Money added from another wallet. id = `<pay record key>#<start time>`. */
+  | "wallet_topup";
 
 /**
  * How a record knows it is no longer in flight. Derived from the kind, never
@@ -89,7 +91,8 @@ export type InFlightDoneRule =
   | { type: "bitcoinSend"; txid: string }
   | { type: "purchase"; id: string }
   | { type: "cardWithdraw" }
-  | { type: "sepa"; transferId: string };
+  | { type: "sepa"; transferId: string }
+  | { type: "payWallet"; key: string };
 
 export function inFlightDoneRule(record: MoneyInFlight): InFlightDoneRule {
   switch (record.kind) {
@@ -108,6 +111,8 @@ export function inFlightDoneRule(record: MoneyInFlight): InFlightDoneRule {
       return { type: "cardWithdraw" };
     case "sepa":
       return { type: "sepa", transferId: record.id };
+    case "wallet_topup":
+      return { type: "payWallet", key: record.id.split("#")[0] };
   }
 }
 
@@ -173,6 +178,7 @@ const KINDS: ReadonlySet<string> = new Set([
   "card_topup",
   "card_withdraw",
   "sepa",
+  "wallet_topup",
 ]);
 
 const isRecord = (value: unknown): value is MoneyInFlight => {

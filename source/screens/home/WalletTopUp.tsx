@@ -10,14 +10,21 @@
 // alike. Any token the wallet holds is swapped into the balance's own asset and
 // settles at its address.
 import type React from "react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { StyleSheet, View as RNView } from "react-native";
 import { Footer, Header, IconButton, Topbar, TopbarTitle, TopbarTrailing, View } from "@ds";
 import DsSheetHost from "../../components/DsSheetHost";
 import PayWalletSwapPanel from "../../components/PayWalletSwapPanel";
 import { t } from "../../lib/i18n";
+import { toSatsFromBtcAmount } from "../../lib/amounts";
 import { PayWalletProvider, usePayWalletConnection } from "../../lib/pay/payWallet";
-import type { PayWalletSettle } from "../../services/pay/PayWalletSwapService";
+import type { MoneyRail } from "../../services/money/MoneyInFlightStore";
+import {
+  type PayWalletProgress,
+  type PayWalletSettle,
+  payWalletRecordKey,
+} from "../../services/pay/PayWalletSwapService";
+import { runWalletTopUp } from "../../services/pay/PayWalletTopUp";
 import { usePayWalletSwap } from "../pay/hooks/usePayWalletSwap";
 
 /** How long a closed picker may wait for the wallet's connection to arrive. */
@@ -29,39 +36,45 @@ type Props = {
   settle: PayWalletSettle;
   /** Where it lands: the balance's own address (the card's deposit address for Visa). */
   payoutAddress: string;
+  /** The balance it lands on, which shows it as incoming meanwhile. */
+  rail: MoneyRail;
   /** The balance, as the home names it ("Euro"). */
   label: string;
   /** What arrives, as the home writes that balance ("€ 22.24"). */
   formatReceive: (amount: string) => string;
 };
 
-const TopUp: React.FC<Omit<Props, "onClose">> = ({
-  settle,
-  payoutAddress,
-  label,
-  formatReceive,
-}) => {
-  const wallet = usePayWalletSwap(payoutAddress, settle);
-  return (
-    <PayWalletSwapPanel
-      state={wallet.state}
-      holdings={wallet.holdings}
-      settleLabel={label}
-      formatSettle={formatReceive}
-      onConnect={() => void wallet.connect()}
-      onRefreshHoldings={wallet.refreshHoldings}
-      onQuote={(holding, typed) => void wallet.quote(holding, typed)}
-      onSelectOption={wallet.selectOption}
-      onPay={() => void wallet.pay()}
-      onResume={() => void wallet.resume()}
-      onReset={wallet.reset}
-    />
-  );
-};
-
-const Flow: React.FC<Props> = ({ onClose, ...topUp }) => {
+const Flow: React.FC<Props> = ({ onClose, settle, payoutAddress, rail, label, formatReceive }) => {
   const connection = usePayWalletConnection();
   const connected = connection.account !== null;
+  const wallet = usePayWalletSwap(payoutAddress, settle, null, false);
+  // Accepting is the last thing done here: the sheet goes and the status pill
+  // carries the payment. It comes back only when nothing left the wallet.
+  const [handedOff, setHandedOff] = useState(false);
+  const carry = (
+    receive: string,
+    resume: boolean,
+    run: (observe: (progress: PayWalletProgress) => void) => Promise<PayWalletProgress | null>,
+  ) => {
+    setHandedOff(true);
+    void runWalletTopUp({
+      recordKey: payWalletRecordKey(payoutAddress, settle),
+      rail,
+      amount: settle === "BTC" ? toSatsFromBtcAmount(receive) : Number(receive),
+      resume,
+      pay: run,
+    }).then((next) => (next === "reopen" ? setHandedOff(false) : onClose()));
+  };
+  const pay = () => {
+    if (wallet.state.step === "quoted") {
+      carry(wallet.state.quote.option.settleAmount, false, wallet.pay);
+    }
+  };
+  const resume = () => {
+    if (wallet.state.step === "pending" && !wallet.state.otherAccount) {
+      carry(wallet.state.pending.option.settleAmount, true, wallet.resume);
+    } else void wallet.resume();
+  };
   // Not connected yet: the picker is the first thing on screen.
   const opened = useRef(false);
   const pickerSeen = useRef(false);
@@ -79,16 +92,19 @@ const Flow: React.FC<Props> = ({ onClose, ...topUp }) => {
       pickerSeen.current = true;
       return;
     }
-    if (!pickerSeen.current || connected) return;
+    if (!pickerSeen.current || connected || handedOff) return;
     const timer = setTimeout(onClose, CONNECT_SETTLE_MS);
     return () => clearTimeout(timer);
-  }, [connection.pickerOpen, connected, onClose]);
+  }, [connection.pickerOpen, connected, handedOff, onClose]);
+  // A status screen (pricing, didn't work) carries its own title: the topbar
+  // keeps only the close button.
+  const status = wallet.state.step === "busy" || wallet.state.step === "done";
 
   return (
-    <DsSheetHost visible={connected} onClose={onClose} mode="full">
+    <DsSheetHost visible={connected && !handedOff} onClose={onClose} mode="full">
       <Header safeAreaTop chrome="canvas">
         <Topbar surface="transparent">
-          <TopbarTitle>{t("screen.HomeScreen.addFromWallet")}</TopbarTitle>
+          {status ? null : <TopbarTitle>{t("screen.HomeScreen.addFromWallet")}</TopbarTitle>}
           <TopbarTrailing>
             <IconButton
               icon="cross"
@@ -109,7 +125,19 @@ const Flow: React.FC<Props> = ({ onClose, ...topUp }) => {
                 div in the flex chain); without a growing, shrinkable child the
                 panel sizes to its text and runs off the screen. */}
           <RNView style={styles.fill}>
-            <TopUp {...topUp} />
+            <PayWalletSwapPanel
+              state={wallet.state}
+              holdings={wallet.holdings}
+              settleLabel={label}
+              formatSettle={formatReceive}
+              onConnect={() => void wallet.connect()}
+              onRefreshHoldings={wallet.refreshHoldings}
+              onQuote={(holding, typed) => void wallet.quote(holding, typed)}
+              onSelectOption={wallet.selectOption}
+              onPay={pay}
+              onResume={resume}
+              onReset={wallet.reset}
+            />
           </RNView>
         </PayWalletProvider>
       </View>

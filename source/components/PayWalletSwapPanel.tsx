@@ -24,7 +24,7 @@ import {
   type PayWalletHolding,
   payWalletLogoSource,
 } from "../services/pay/PayWalletBalanceService";
-import { exactDecimal } from "../services/pay/PayWalletSwapService";
+import { exactDecimal, isPayWalletDirect } from "../services/pay/PayWalletSwapService";
 import type { PayWalletHoldingsState, PayWalletState } from "../screens/pay/hooks/usePayWalletSwap";
 
 const K = "screen.PayLink.wallet";
@@ -58,7 +58,7 @@ function progressText(state: PayWalletState): string | null {
   if (state.step !== "paying" && state.step !== "done") return null;
   const progress = state.progress;
   if (progress.state === "signing") return t(`${K}.signing`);
-  if (progress.state === "waiting") return t(`${K}.waiting`);
+  if (progress.state === "waiting" || progress.state === "paid") return t(`${K}.waiting`);
   if (progress.state === "settled") return t(`${K}.settled`);
   if (progress.reason === "needs_reconciliation") return t(`${K}.needsReconciliation`);
   if (progress.reason === "pending_payment_differs") return t(`${K}.pendingDiffers`);
@@ -169,10 +169,12 @@ const PayWalletSwapPanel: React.FC<Props> = ({
     formatSettle ? formatSettle(value) : `${exactDecimal(value)} ${settleLabel}`;
   // The Move sheet's price: the chosen route's detail, the others behind "Show more".
   const routeDetail = (option: SwapKitV2QuoteOption) =>
-    swapRouteCardDetail({
-      providers: [option.optionId.split(":")[0]],
-      etaSeconds: option.expectedSettlement?.p50Seconds ?? null,
-    });
+    isPayWalletDirect(option)
+      ? null
+      : swapRouteCardDetail({
+          providers: [option.optionId.split(":")[0]],
+          etaSeconds: option.expectedSettlement?.p50Seconds ?? null,
+        });
   const typed = amount.replace(",", ".").trim();
   const units = selected ? exactBaseUnits(typed, selected.decimals) : null;
   const tooMuch = !fixedAmount && !!selected && units !== null && units > selected.units;

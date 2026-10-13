@@ -35,14 +35,18 @@ import {
 } from "@rainbow-me/rainbowkit/wallets";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { http, WagmiProvider, createConfig, useAccount, useDisconnect } from "wagmi";
 import { disconnect } from "wagmi/actions";
 import { arbitrum, base, gnosis, mainnet, optimism, polygon } from "wagmi/chains";
 import { WALLETCONNECT_PROJECT_ID } from "../../config/endpoints";
 import { getChainRpcUrl } from "../rpc/chainRpc";
 import type { ChainId } from "../tokens";
-import type { Eip1193Provider } from "../../services/pay/PayWalletSwapService";
+import {
+  type Eip1193Provider,
+  payWalletLog,
+  shortId,
+} from "../../services/pay/PayWalletSwapService";
 import type { PayWalletConnection } from "./payWalletTypes";
 
 /** The page's own origin: the name and icon wallets show for this dapp. */
@@ -112,9 +116,55 @@ let created: { config: ReturnType<typeof createPayWalletConfig>; queryClient: Qu
 
 /** The pay page's wagmi config + query client, built once on first use. */
 export function payWalletClients() {
+  if (!created) watchPageLifecycle();
   created ??= { config: createPayWalletConfig(), queryClient: new QueryClient() };
   return created;
 }
+
+let lifecycleWatched = false;
+
+/**
+ * Diagnostics: a phone wallet answers while this page is in the background.
+ * Whether the page was hidden, frozen or reloaded meanwhile decides whether
+ * the answer can still arrive, so each of those moments is logged.
+ */
+function watchPageLifecycle(): void {
+  if (lifecycleWatched || typeof window === "undefined" || typeof document === "undefined") return;
+  lifecycleWatched = true;
+  const navigation = (
+    typeof performance !== "undefined" && typeof performance.getEntriesByType === "function"
+      ? performance.getEntriesByType("navigation")[0]
+      : undefined
+  ) as { type?: string } | undefined;
+  payWalletLog("info", "page", `loaded nav=${navigation?.type ?? "unknown"}`);
+  document.addEventListener("visibilitychange", () =>
+    payWalletLog("info", "page", `visibility=${document.visibilityState}`),
+  );
+  window.addEventListener("pagehide", (event) =>
+    payWalletLog("info", "page", `pagehide persisted=${event.persisted}`),
+  );
+  window.addEventListener("pageshow", (event) =>
+    payWalletLog("info", "page", `pageshow persisted=${event.persisted}`),
+  );
+  document.addEventListener("freeze", () => payWalletLog("info", "page", "frozen"));
+  document.addEventListener("resume", () => payWalletLog("info", "page", "resumed"));
+}
+
+/** The relay a WalletConnect provider answers through, when it exposes one. */
+type RelayEvents = { on?: (event: string, listener: () => void) => void };
+const watchedRelays = new WeakSet<object>();
+
+/** Diagnostics: when the WalletConnect relay socket drops and comes back. */
+function watchWalletConnectRelay(provider: unknown): void {
+  const relayer = (provider as { signer?: { client?: { core?: { relayer?: RelayEvents } } } })
+    ?.signer?.client?.core?.relayer;
+  if (!relayer || typeof relayer.on !== "function" || watchedRelays.has(relayer)) return;
+  watchedRelays.add(relayer);
+  relayer.on("relayer_connect", () => payWalletLog("info", "relay", "connected"));
+  relayer.on("relayer_disconnect", () => payWalletLog("warn", "relay", "disconnected"));
+}
+
+let lastConnectionLine = "";
 
 /** Whether anything has built the WalletConnect connectors yet (runtime check). */
 export function payWalletClientsCreated(): boolean {
@@ -159,7 +209,20 @@ export function PayWalletProvider({
 }
 
 function useConnectedWallet(): PayWalletConnection {
-  const { address, chainId, connector, isConnected } = useAccount();
+  const { address, chainId, connector, isConnected, status } = useAccount();
+  // Both providers on the top-up sheet read the same connection: log a change once.
+  useEffect(() => {
+    const line = `${status} ${connector?.name ?? "none"} ${shortId(address)} chain=${chainId ?? "none"}`;
+    if (line === lastConnectionLine) return;
+    lastConnectionLine = line;
+    payWalletLog("info", "connection", line);
+    if (status === "connected" && connector) {
+      void connector
+        .getProvider()
+        .then(watchWalletConnectRelay)
+        .catch(() => {});
+    }
+  }, [status, connector, address, chainId]);
   const { openConnectModal, connectModalOpen } = useConnectModal();
   // Once connected RainbowKit withholds the connect modal; the account modal
   // is where the payer switches or disconnects the wallet.

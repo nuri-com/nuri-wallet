@@ -482,10 +482,16 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     id: number;
     settle: PayWalletSettle;
     payoutAddress: string;
+    rail: Exclude<RailKey, "iban">;
     label: string;
     formatReceive: (amount: string) => string;
   } | null>(null);
-  const closeTopUp = useCallback(() => setTopUp(null), []);
+  // Closes only the flow that asks: a top-up still paying after its sheet
+  // went must not close one started after it.
+  const closeTopUp = useCallback(
+    (id: number) => setTopUp((current) => (current?.id === id ? null : current)),
+    [],
+  );
   // Cash with money in both currencies: Send asks which one first; the pick
   // lives until the Cash card closes.
   const [cashChoice, setCashChoice] = useState(false);
@@ -1763,8 +1769,18 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           card === "onchain"
             ? satsGlyph(toSatsFromBtcAmount(amount))
             : heldGlyph(Number(amount), home);
+        // The balance that shows it as incoming: the boarding address is
+        // Lightning's, the card takes it in the pocket of its currency.
+        const rail: Exclude<RailKey, "iban"> =
+          card === "onchain"
+            ? "arkade"
+            : card === "visa"
+              ? home === "USD"
+                ? "visaUsd"
+                : "visa"
+              : settleWallet;
         return handOff(() =>
-          setTopUp({ id: Date.now(), settle, payoutAddress, label, formatReceive }),
+          setTopUp({ id: Date.now(), settle, payoutAddress, rail, label, formatReceive }),
         );
       }
       case "bank":
@@ -2641,9 +2657,10 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       {topUp ? (
         <WalletTopUp
           key={topUp.id}
-          onClose={closeTopUp}
+          onClose={() => closeTopUp(topUp.id)}
           settle={topUp.settle}
           payoutAddress={topUp.payoutAddress}
+          rail={topUp.rail}
           label={topUp.label}
           formatReceive={topUp.formatReceive}
         />

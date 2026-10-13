@@ -7,7 +7,12 @@
 // offered — the same verification bar the found-money sweep applies — and
 // every figure stays exact (base units as bigint), never a float.
 import { formatBaseUnits } from "../../lib/pay/payTarget";
-import { PAY_WALLET_CHAIN_IDS, type PayWalletToken } from "./PayWalletSwapService";
+import {
+  PAY_WALLET_CHAIN_IDS,
+  PAY_WALLET_NATIVE,
+  PAY_WALLET_NATIVE_COIN,
+  type PayWalletToken,
+} from "./PayWalletSwapService";
 
 const SOURCE = "https://li.quest/v1/wallets";
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -38,9 +43,21 @@ type RawBalance = {
   verificationStatus?: unknown;
 };
 
-const NATIVE = "0x0000000000000000000000000000000000000000";
+/**
+ * The chain's coin kept back for gas when paying with it: the spendable
+ * balance is the wallet's minus this, so paying "everything" still leaves the
+ * fee.
+ */
+export const PAY_WALLET_GAS_RESERVE_WEI: Readonly<Record<number, bigint>> = {
+  1: 3_000_000_000_000_000n, // 0.003 ETH
+  8453: 300_000_000_000_000n, // 0.0003 ETH
+  42161: 300_000_000_000_000n,
+  10: 300_000_000_000_000n,
+  137: 500_000_000_000_000_000n, // 0.5 POL
+  100: 10_000_000_000_000_000n, // 0.01 xDAI
+};
 
-/** Keep what the page can pay with; drop anything malformed, native, unverified or dust. */
+/** Keep what the page can pay with; drop anything malformed, unverified or dust. */
 export function parsePayWalletHoldings(body: unknown): PayWalletHolding[] {
   const balances = (body as { balances?: Record<string, unknown> } | null)?.balances;
   if (!balances || typeof balances !== "object") return [];
@@ -54,13 +71,23 @@ export function parsePayWalletHoldings(body: unknown): PayWalletHolding[] {
       const decimals = Number(raw?.decimals);
       const amount = String(raw?.amount ?? "");
       if (Number(raw?.chainId ?? chainId) !== chainId) continue;
-      if (raw?.verificationStatus !== "verified") continue;
-      if (!/^0x[0-9a-fA-F]{40}$/.test(address) || address.toLowerCase() === NATIVE) continue;
+      if (!/^0x[0-9a-fA-F]{40}$/.test(address)) continue;
+      // The chain's own coin is not a contract to verify; every one of them
+      // (ETH, POL, xDAI) counts in 18 decimals, never what the list says.
+      const native = address.toLowerCase() === PAY_WALLET_NATIVE;
+      if (
+        native
+          ? PAY_WALLET_NATIVE_COIN[chainId]?.symbol !== symbol.toUpperCase() || decimals !== 18
+          : raw?.verificationStatus !== "verified"
+      )
+        continue;
       // The symbol becomes the SwapKit id (SYMBOL_CHAIN): same rule as the quote.
       if (!/^[A-Za-z0-9.]{1,20}$/.test(symbol)) continue;
       if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) continue;
       if (!/^\d+$/.test(amount)) continue;
-      const units = BigInt(amount);
+      const held = BigInt(amount);
+      // What can be paid: the chain's coin keeps its gas back.
+      const units = native ? held - (PAY_WALLET_GAS_RESERVE_WEI[chainId] ?? 0n) : held;
       if (units <= 0n) continue;
       const price = Number(raw?.priceUSD);
       const whole = formatBaseUnits(units, decimals);

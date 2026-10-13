@@ -17,6 +17,7 @@ import { createForegroundPoller, type ForegroundPoller } from "../app/Foreground
 import { getNetworkStatus } from "../app/NetworkStatusService";
 import { MoneyInFlightStore, inFlightDoneRule, type MoneyInFlight } from "./MoneyInFlightStore";
 import { adoptLegacyInFlight } from "./legacyInFlight";
+import { walletTopUpState } from "../pay/PayWalletTopUp";
 import { isTerminalMovePhase, subscribeV2Moves } from "../swapkit/SwapKitV2MoveStatus";
 
 const POLL_INTERVAL_MS = 8_000;
@@ -114,6 +115,12 @@ export async function judgeInFlight(
       // left pending forever: SEPA settles within days.
       if (status === "unlisted") return unknown(ageMs(record) > SEPA_UNLISTED_MAX_MS);
       return { done: true, outcome: status === "Completed" ? "completed" : "failed" };
+    }
+    case "payWallet": {
+      const state = await walletTopUpState(rule.key);
+      if (state === null || state === "pending") return unknown(state === null ? null : false);
+      if (state === "gone") return unknown(young(record) ? null : true);
+      return { done: true, outcome: state };
     }
   }
 }

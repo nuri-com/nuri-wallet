@@ -119,13 +119,16 @@ function same(a: string, b: string): boolean {
  *                                  passes the Diamond rule above
  *   anything else                → refused (raw transfers, calls on other
  *                                  tokens, unknown contracts)
+ *
+ * Returns what the call spends of the source asset, as decoded (0 for an
+ * approval), so a native source can bind the call's value to it.
  */
 export function assertEvmCallBoundToRoute(
   call: { chainId: number; to: string; data: string },
   binding: SwapKitV2EvmRouteBinding,
   acceptedDepositUnits: bigint,
   wallet: `0x${string}`,
-): void {
+): bigint {
   if (call.chainId !== binding.chainId) {
     throw new Error(
       `EVM call targets chain ${call.chainId}; this order is bound to ${binding.chainId}.`,
@@ -150,18 +153,16 @@ export function assertEvmCallBoundToRoute(
     if (amount > acceptedDepositUnits) {
       throw new Error(`Approval exceeds the accepted deposit: ${amount} > ${acceptedDepositUnits}`);
     }
-    return;
+    return 0n;
   }
 
   if (same(call.to, LIFI_DIAMOND)) {
-    assertLifiCallBound(call.data, binding, acceptedDepositUnits, wallet);
-    return;
+    return assertLifiCallBound(call.data, binding, acceptedDepositUnits, wallet);
   }
 
   const proxy = LIFI_PERMIT2_PROXY[binding.chainId];
   if (proxy && same(call.to, proxy)) {
-    assertLifiPermitCallBound(call.data, binding, acceptedDepositUnits, wallet);
-    return;
+    return assertLifiPermitCallBound(call.data, binding, acceptedDepositUnits, wallet);
   }
 
   throw new Error(`EVM call targets ${call.to}, which is not a contract of the accepted route.`);
@@ -180,7 +181,7 @@ function assertLifiPermitCallBound(
   binding: SwapKitV2EvmRouteBinding,
   ceiling: bigint,
   wallet: `0x${string}`,
-): void {
+): bigint {
   let args: readonly [
     `0x${string}`,
     bigint,
@@ -218,6 +219,7 @@ function assertLifiPermitCallBound(
       `LI.FI permit call pulls ${amount} but its swap spends ${innerSpend}; refusing a call that strands the difference.`,
     );
   }
+  return amount;
 }
 
 // ── LI.FI Diamond calldata ──────────────────────────────────────────
@@ -284,6 +286,16 @@ const LIFI_ABI = [
     { name: "swapData", type: "tuple[]", components: SWAP_DATA_COMPONENTS },
   ]),
   fn("swapTokensSingleV3ERC20ToERC20", [
+    ...SWAP_HEAD,
+    { name: "swapData", type: "tuple", components: SWAP_DATA_COMPONENTS },
+  ]),
+  // The chain's own coin in (ETH, POL, xDAI): it rides as the call's value. The spend check still
+  // binds every step's sending asset to the order's source (native = 0x0).
+  fn("swapTokensMultipleV3NativeToERC20", [
+    ...SWAP_HEAD,
+    { name: "swapData", type: "tuple[]", components: SWAP_DATA_COMPONENTS },
+  ]),
+  fn("swapTokensSingleV3NativeToERC20", [
     ...SWAP_HEAD,
     { name: "swapData", type: "tuple", components: SWAP_DATA_COMPONENTS },
   ]),

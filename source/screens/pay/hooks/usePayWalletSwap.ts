@@ -8,13 +8,19 @@ import { getCacheValue, setCacheValue } from "../../../services/balance/Transact
 import { usePayWalletConnection } from "../../../lib/pay/payWallet";
 import {
   PAY_WALLET_CHAIN_IDS,
+  PAY_WALLET_NATIVE_COIN,
+  isPayWalletNative,
   type PayWalletDeps,
   type PayWalletProgress,
   type PayWalletQuote,
   type PayWalletSettle,
   isPayWalletPayer,
   matchesPayLinkIntent,
+  payWalletRecordKey,
+  describeError,
   isWalletRejection,
+  payWalletLog,
+  shortId,
   payWalletRouteFits,
   payWithWallet,
   pendingPayWallet,
@@ -27,6 +33,8 @@ import {
 } from "../../../services/pay/PayWalletBalanceService";
 import { resolveCanonicalToken } from "../../../services/swapkit/SwapKitTokenRegistry";
 import { exactBaseUnits } from "../../../lib/pay/payTarget";
+import { withFallback } from "../../../lib/rpc/chainRpc";
+import type { ChainId } from "../../../lib/tokens";
 import {
   asSwapKitV2OrderId,
   cancelSwapKitV2Order,
@@ -42,6 +50,17 @@ const deps: PayWalletDeps = {
   commit: (args) => commitSwapKitV2(args as unknown as Parameters<typeof commitSwapKitV2>[0]),
   submit: ({ orderId, ...rest }) =>
     submitSwapKitV2Evidence({ orderId: asSwapKitV2OrderId(orderId), ...rest }),
+  // Not mined yet (or the RPC failing) reads as null: the caller polls again.
+  receipt: async (chainId, txHash) => {
+    try {
+      const receipt = await withFallback(chainId as ChainId, (client) =>
+        client.getTransactionReceipt({ hash: txHash }),
+      );
+      return receipt.status;
+    } catch {
+      return null;
+    }
+  },
   status: (orderId, recoveryKey) =>
     getSwapKitV2Status(asSwapKitV2OrderId(orderId), { recoveryKey }),
   cancel: (orderId, recoveryKey) =>
@@ -85,11 +104,17 @@ export type PayWalletHoldingsState =
   | { status: "ready"; holdings: PayWalletHolding[] }
   | { status: "failed" };
 
+/** Links (pay record keys) whose payment is being driven right now. */
+const driving = new Set<string>();
+
 export function usePayWalletSwap(
   recipient: string | null,
   settle: PayWalletSettle,
   /** A link's fixed amount, in `settle`: quoted on the recipient's side. */
   fixedAmount: string | null = null,
+  /** Resume an unfinished payment on its own (the pay page). Off, it is shown
+   * and continued only by `resume`, so the caller carries it (the top-up). */
+  autoResume = true,
 ) {
   // The wallet the payer picked in RainbowKit (EIP-6963 extension or
   // WalletConnect), never `window.ethereum`.
@@ -100,29 +125,35 @@ export function usePayWalletSwap(
   const requestId = useRef(0);
   const [holdings, setHoldings] = useState<PayWalletHoldingsState>({ status: "idle" });
   const holdingsRequest = useRef(0);
-  // Synchronous single-flight: a second press lands before React re-renders,
-  // so rendered state alone cannot stop a second commit.
-  const paying = useRef(false);
+  // Synchronous single-flight per link, across mounts: a second press lands
+  // before React re-renders, and a top-up keeps paying after its sheet closed,
+  // so neither rendered state nor this instance can stop a second drive.
+  const link = recipient ? payWalletRecordKey(recipient, settle) : null;
 
-  const run = useCallback(async (work: () => Promise<PayWalletProgress | null>) => {
-    if (paying.current) return;
-    paying.current = true;
-    try {
-      const result = await work();
-      if (result) setState({ step: "done", progress: result });
-    } catch (error) {
-      setState({
-        step: "done",
-        progress: {
+  const run = useCallback(
+    async (work: () => Promise<PayWalletProgress | null>): Promise<PayWalletProgress | null> => {
+      if (!link || driving.has(link)) return null;
+      driving.add(link);
+      try {
+        const result = await work();
+        if (result) setState({ step: "done", progress: result });
+        return result;
+      } catch (error) {
+        // The "did not go through" screen: the only trace of what threw.
+        payWalletLog("error", "failed", describeError(error));
+        const failed: PayWalletProgress = {
           state: "failed",
           orderId: null,
           reason: isWalletRejection(error) ? "rejected" : "error",
-        },
-      });
-    } finally {
-      paying.current = false;
-    }
-  }, []);
+        };
+        setState({ step: "done", progress: failed });
+        return failed;
+      } finally {
+        driving.delete(link);
+      }
+    },
+    [link],
+  );
 
   // A payment this browser started for THIS link and did not finish (reload,
   // closed tab) is picked up again on the next visit. Records are keyed by
@@ -132,11 +163,18 @@ export function usePayWalletSwap(
   const { account, chainId, getProvider } = wallet;
   useEffect(() => {
     if (!recipient || !account) return;
+    // Already being paid (a top-up whose sheet closed): never a second drive.
+    if (driving.has(payWalletRecordKey(recipient, settle))) return;
     const link = { recipient, settle };
     let cancelled = false;
     void (async () => {
       const pending = await pendingPayWallet(link, deps);
       if (!pending || cancelled) return;
+      payWalletLog(
+        "info",
+        "pending",
+        `found ${pending.option.depositAmount} ${pending.request.token.symbol} payer=${shortId(pending.request.payer)} connected=${shortId(account)}`,
+      );
       if (!isPayWalletPayer(pending, account)) {
         setState((current) =>
           current.step === "paying" ? current : { step: "pending", pending, otherAccount: true },
@@ -145,25 +183,41 @@ export function usePayWalletSwap(
       }
       // Another side or figure than this link asks for: shown, never driven
       // on its own — the payer continues it explicitly or not at all.
-      if (!matchesPayLinkIntent(pending, fixedAmount)) {
+      if (!autoResume || !matchesPayLinkIntent(pending, fixedAmount)) {
         setState((current) =>
           current.step === "paying" ? current : { step: "pending", pending, otherAccount: false },
         );
         return;
       }
       const provider = await getProvider();
-      if (!provider || cancelled) return;
+      if (!provider || cancelled) {
+        payWalletLog(
+          "warn",
+          "pending",
+          `not resumed provider=${!!provider} cancelled=${cancelled}`,
+        );
+        return;
+      }
+      payWalletLog("info", "pending", "resuming on its own");
       setState({ step: "paying", progress: { state: "waiting", orderStatus: "RESUMING" } });
-      await run(() =>
-        resumePayWithWallet(link, account, provider, deps, (progress) =>
+      await run(async () => {
+        const result = await resumePayWithWallet(link, account, provider, deps, (progress) =>
           setState({ step: "paying", progress }),
-        ),
-      );
+        );
+        // A leftover order whose price lapsed before anything was signed is
+        // cleared without a failure screen: the payer starts a new one.
+        if (result?.state === "failed" && result.reason === "quote_expired" && chainId) {
+          payWalletLog("info", "pending", "leftover order lapsed unsigned, cleared");
+          setState({ step: "connected", account, chainId });
+          return null;
+        }
+        return result;
+      });
     })();
     return () => {
       cancelled = true;
     };
-  }, [recipient, settle, run, account, getProvider, fixedAmount]);
+  }, [recipient, settle, run, account, chainId, getProvider, fixedAmount, autoResume]);
 
   // The picked wallet and chain drive the panel: connecting (or switching
   // account/network in the wallet) moves it to "connected" for that pair,
@@ -257,13 +311,17 @@ export function usePayWalletSwap(
       const id = ++requestId.current;
       setState({ step: "busy", account, chainId });
       try {
-        const canonical = PAY_WALLET_CHAIN_IDS.includes(holding.chainId)
-          ? await resolveCanonicalToken(holding.chainId, holding.symbol)
-          : null;
+        // The chain's own coin has no contract to match.
+        const native = isPayWalletNative(holding) && !!PAY_WALLET_NATIVE_COIN[holding.chainId];
+        const canonical =
+          !native && PAY_WALLET_CHAIN_IDS.includes(holding.chainId)
+            ? await resolveCanonicalToken(holding.chainId, holding.symbol)
+            : null;
         const token =
-          canonical &&
-          canonical.address.toLowerCase() === holding.address.toLowerCase() &&
-          canonical.decimals === holding.decimals
+          native ||
+          (canonical &&
+            canonical.address.toLowerCase() === holding.address.toLowerCase() &&
+            canonical.decimals === holding.decimals)
             ? {
                 chainId: holding.chainId,
                 address: holding.address,
@@ -315,40 +373,63 @@ export function usePayWalletSwap(
     });
   }, []);
 
-  const pay = useCallback(async () => {
-    if (state.step !== "quoted") return;
-    const provider = await getProvider();
-    // The quote is bound to the account and chain it was made for.
-    if (!provider || account !== state.account || chainId !== state.chainId) return;
-    const accepted = state.quote;
-    setState({ step: "paying", progress: { state: "waiting", orderStatus: "COMMITTING" } });
-    await run(() =>
-      payWithWallet(accepted, provider, deps, (progress) => setState({ step: "paying", progress })),
-    );
-  }, [state, run, getProvider, account, chainId]);
+  /** Pay the accepted quote; `observe` hears every step. Resolves how it ended. */
+  const pay = useCallback(
+    async (observe?: (progress: PayWalletProgress) => void): Promise<PayWalletProgress | null> => {
+      if (state.step !== "quoted") return null;
+      const provider = await getProvider();
+      // The quote is bound to the account and chain it was made for.
+      if (!provider || account !== state.account || chainId !== state.chainId) return null;
+      if (!link || driving.has(link)) return null;
+      const accepted = state.quote;
+      setState({ step: "paying", progress: { state: "waiting", orderStatus: "COMMITTING" } });
+      return run(() =>
+        payWithWallet(accepted, provider, deps, (progress) => {
+          setState({ step: "paying", progress });
+          observe?.(progress);
+        }),
+      );
+    },
+    [state, run, getProvider, account, chainId, link],
+  );
 
-  /** Continue this link's unfinished payment, exactly as it was accepted. */
-  const resume = useCallback(async () => {
-    if (!recipient) return;
-    const link = { recipient, settle };
-    const pending = await pendingPayWallet(link, deps);
-    const provider = await getProvider();
-    // Only the account that accepted the payment may continue it: otherwise
-    // the wallet picker opens so the payer can switch back to it.
-    if (!pending || !provider || !account || !isPayWalletPayer(pending, account)) {
-      wallet.openConnect();
-      return;
-    }
-    setState({ step: "paying", progress: { state: "waiting", orderStatus: "RESUMING" } });
-    await run(() =>
-      resumePayWithWallet(link, account, provider, deps, (progress) =>
-        setState({ step: "paying", progress }),
-      ),
-    );
-  }, [recipient, settle, run, getProvider, wallet, account]);
+  /** Continue this link's unfinished payment; `observe` hears every step. */
+  const resume = useCallback(
+    async (observe?: (progress: PayWalletProgress) => void) => {
+      if (!recipient) return null;
+      if (driving.has(payWalletRecordKey(recipient, settle))) return null;
+      const link = { recipient, settle };
+      const pending = await pendingPayWallet(link, deps);
+      const provider = await getProvider();
+      // Only the account that accepted the payment may continue it: otherwise
+      // the wallet picker opens so the payer can switch back to it.
+      if (!pending || !provider || !account || !isPayWalletPayer(pending, account)) {
+        payWalletLog(
+          "warn",
+          "resume",
+          `tap opens picker pending=${!!pending} provider=${!!provider} account=${shortId(account)}`,
+        );
+        wallet.openConnect();
+        return null;
+      }
+      setState({ step: "paying", progress: { state: "waiting", orderStatus: "RESUMING" } });
+      return run(() =>
+        resumePayWithWallet(link, account, provider, deps, (progress) => {
+          setState({ step: "paying", progress });
+          observe?.(progress);
+        }),
+      );
+    },
+    [recipient, settle, run, getProvider, wallet, account],
+  );
 
   // Back to the wallet that is connected NOW, never an identity kept in state.
   const reset = useCallback(() => {
+    payWalletLog(
+      "info",
+      "reset",
+      `try again account=${shortId(account)} chain=${chainId ?? "none"}`,
+    );
     requestId.current += 1;
     setState(account && chainId ? { step: "connected", account, chainId } : { step: "idle" });
   }, [account, chainId]);

@@ -33,7 +33,58 @@ import type {
   SwapKitV2QuoteOption,
   SwapKitV2QuoteResponse,
 } from "../swapkit/SwapKitV2Service";
+import { encodeFunctionData, parseAbi } from "viem";
 import { exactBaseUnits } from "../../lib/pay/payTarget";
+import { LOG_EMOJI, errorWithId, logWithId, warnWithId } from "../../lib/OperationLogUtils";
+
+const SOURCE = "services/pay/PayWalletSwapService.ts";
+const LOG_ID = `${LOG_EMOJI.wallet} PayWallet`;
+
+/** One diagnostic line per step of a wallet payment. Never a signature or key. */
+export function payWalletLog(
+  level: "info" | "warn" | "error",
+  action: string,
+  message: string,
+): void {
+  const write = level === "error" ? errorWithId : level === "warn" ? warnWithId : logWithId;
+  // Only the message reaches the console and the support dump (140 chars), so
+  // every line carries its facts there, short.
+  write(LOG_ID, `PayWallet ${action} ${message}`, undefined, {
+    context: "user",
+    event: level === "info" ? "FLOW" : "STATE",
+    action,
+    source: `${SOURCE}#${action}`,
+  });
+}
+
+/** Short id for log lines: `ord_31f8…35b3`. */
+export const shortId = (value: string | null | undefined): string =>
+  !value ? "none" : value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
+
+/** An error as a log fragment: wallet code, name and message, nothing else. */
+export function describeError(error: unknown): string {
+  if (!error || typeof error !== "object") return `err=${String(error)}`;
+  const { code, name, message } = error as { code?: unknown; name?: unknown; message?: unknown };
+  return `code=${String(code ?? "none")} ${String(name ?? "Error")}: ${String(message ?? "")}`;
+}
+
+/** Seconds until an action's deadline (negative = passed), or "none". */
+function secondsLeft(deadline: string | null | undefined, now: number): string {
+  if (deadline == null) return "none";
+  const at = Date.parse(deadline);
+  return Number.isFinite(at) ? `${Math.round((at - now) / 1000)}s` : "unparsable";
+}
+
+/** The order's actions as one log fragment: kind:state:deadline-left each. */
+function describeActions(view: SwapKitV2OrderView, now: number): string {
+  if (!view.actions?.length) return "actions=[]";
+  return `actions=[${view.actions
+    .map(
+      (a) =>
+        `${a.kind}:${a.state}:${secondsLeft(a.deadline, now)}${a.blockedReason ? `:${a.blockedReason}` : ""}`,
+    )
+    .join(",")}]`;
+}
 
 /** EIP-1193, the one interface every browser wallet speaks. */
 export type Eip1193Provider = {
@@ -63,6 +114,27 @@ const CHAIN_SUFFIX: Readonly<Record<number, string>> = {
 
 export const PAY_WALLET_CHAIN_IDS = Object.keys(CHAIN_SUFFIX).map(Number);
 
+/** How LI.FI and the wallet name a chain's native coin: no contract. */
+export const PAY_WALLET_NATIVE = "0x0000000000000000000000000000000000000000" as const;
+
+/**
+ * Each chain's own coin: the symbol LI.FI lists it under and SwapKit's id
+ * for it.
+ */
+export const PAY_WALLET_NATIVE_COIN: Readonly<Record<number, { symbol: string; asset: string }>> = {
+  1: { symbol: "ETH", asset: "ETH_ETHEREUM" },
+  8453: { symbol: "ETH", asset: "ETH_BASE" },
+  42161: { symbol: "ETH", asset: "ETH_ARBITRUM" },
+  10: { symbol: "ETH", asset: "ETH_OPTIMISM" },
+  137: { symbol: "POL", asset: "POL_POLYGON" },
+  100: { symbol: "XDAI", asset: "XDAI_GNOSIS" },
+};
+
+/** Whether the token is the chain's native coin. */
+export function isPayWalletNative(token: Pick<PayWalletToken, "address">): boolean {
+  return String(token.address || "").toLowerCase() === PAY_WALLET_NATIVE;
+}
+
 /**
  * The SwapKit asset id for the exact token the wallet holds, or null for an
  * unsupported chain. The contract is part of the id (`USDT0_ARBITRUM@0xfd08…`):
@@ -72,6 +144,7 @@ export const PAY_WALLET_CHAIN_IDS = Object.keys(CHAIN_SUFFIX).map(Number);
 export function payWalletAssetId(
   token: Pick<PayWalletToken, "symbol" | "chainId" | "address">,
 ): string | null {
+  if (isPayWalletNative(token)) return PAY_WALLET_NATIVE_COIN[token.chainId]?.asset ?? null;
   const suffix = CHAIN_SUFFIX[token.chainId];
   const address = String(token.address || "").toLowerCase();
   if (!suffix || !/^0x[0-9a-f]{40}$/.test(address)) return null;
@@ -104,6 +177,8 @@ export type PayWalletDeps = {
     signature?: string;
   }) => Promise<SwapKitV2OrderView>;
   status: (orderId: string, recoveryKey: string) => Promise<SwapKitV2OrderView>;
+  /** A transaction's outcome on `chainId`, or null while it is not mined (or unreadable). */
+  receipt: (chainId: number, txHash: `0x${string}`) => Promise<"success" | "reverted" | null>;
   /** swap_cancel: gives back an UNFUNDED order; the server refuses a funded one. */
   cancel: (orderId: string, recoveryKey: string) => Promise<SwapKitV2OrderView>;
   randomId: () => string;
@@ -177,17 +252,37 @@ export async function quotePayWalletSwap(
 ): Promise<(PayWalletQuote & { options: SwapKitV2QuoteOption[] }) | null> {
   const asset = payWalletAssetId(request.token);
   if (!asset) return null;
+  // The chain's own coin is 18 decimals: any other figure would mis-size the
+  // spend the wallet is later allowed to send.
+  if (isPayWalletNative(request.token) && request.token.decimals !== 18) return null;
   const settleSide = sideOf(request) === "settle";
   const amountDecimals = settleSide
     ? PAY_WALLET_SETTLE_DECIMALS[request.settle]
     : request.token.decimals;
   if (exactBaseUnits(request.amount, amountDecimals) === null) return null;
+  // The wallet already holds what the balance holds: a plain transfer, no swap.
+  if (directReceiver(request)) {
+    const option: SwapKitV2QuoteOption = {
+      optionId: DIRECT_OPTION_ID,
+      from: asset,
+      to: request.settle,
+      depositAmount: request.amount,
+      settleAmount: request.amount,
+      requiredCapabilities: ["execute_evm_call"],
+    };
+    return { request, asset, option, options: [option] };
+  }
   const response = await deps.quote(quoteArgs(request, asset));
+  const native = isPayWalletNative(request.token);
   const usable = (response.options ?? []).filter(
     (option) =>
       option.requiredCapabilities.every((cap) =>
         (CAPABILITIES as readonly string[]).includes(cap),
       ) &&
+      // A native coin is bound only on a LI.FI call (the coin sent as the
+      // call's value). Other native routes (CoW EthFlow) would be refused at
+      // signing, so they are never offered.
+      (!native || option.optionId.startsWith("lifi:")) &&
       // A malformed or zero payout is never offered: the payer would be asked
       // to spend their token with that figure committed as the minimum.
       isPositiveDecimal(option.settleAmount) &&
@@ -210,6 +305,139 @@ export async function quotePayWalletSwap(
       : compareDecimals(b.settleAmount, a.settleAmount),
   );
   return { request, asset, option: options[0] as SwapKitV2QuoteOption, options };
+}
+
+/** The one "route" for a token that already is the balance's asset. */
+const DIRECT_OPTION_ID = "direct:transfer";
+
+/** Whether this route is a plain token transfer, not a swap. */
+export function isPayWalletDirect(option: Pick<SwapKitV2QuoteOption, "optionId">): boolean {
+  return option.optionId === DIRECT_OPTION_ID;
+}
+
+/**
+ * The recipient, when the payer's token is exactly the asset the balance
+ * holds (same chain, same contract): then it is sent as is. Null otherwise.
+ */
+function directReceiver(
+  request: Pick<PayWalletQuoteRequest, "token" | "settle" | "recipient">,
+): `0x${string}` | null {
+  const settle = settleBindingForOrder({ to: request.settle, settleTarget: request.recipient });
+  return settle?.kind === "evm" &&
+    settle.chainId === request.token.chainId &&
+    settle.token.toLowerCase() === request.token.address.toLowerCase()
+    ? settle.receiver
+    : null;
+}
+
+const ERC20_TRANSFER = parseAbi(["function transfer(address to, uint256 amount) returns (bool)"]);
+
+/**
+ * A same-asset top-up: one ERC-20 transfer from the payer's wallet to the
+ * balance's address, then its receipt. No SwapKit order exists, so the record
+ * alone carries it across a reload: the hash once the wallet returns it, the
+ * started marker before it is asked.
+ */
+async function driveDirect(
+  record: PayWalletRecord,
+  key: string,
+  provider: Eip1193Provider,
+  deps: PayWalletDeps,
+  onProgress: (progress: PayWalletProgress) => void,
+  receiver: `0x${string}`,
+  units: bigint,
+): Promise<PayWalletProgress> {
+  const { request } = record.accepted;
+  const save = () => deps.store.set(key, record);
+  const end = async (progress: PayWalletProgress) => {
+    await deps.store.set(key, null);
+    onProgress(progress);
+    return progress;
+  };
+  let evidence = record.evidence[DIRECT_OPTION_ID];
+  if (!evidence || !("txHash" in evidence)) {
+    if (record.started.includes(DIRECT_OPTION_ID)) {
+      // Asked before and no hash kept: it may be on-chain. Never asked again,
+      // and the record stays, so no retry, reset or new quote can pay twice.
+      payWalletLog("warn", "direct", "transfer asked before, no hash kept");
+      const unresolved: PayWalletProgress = {
+        state: "failed",
+        orderId: null,
+        reason: "needs_reconciliation",
+      };
+      onProgress(unresolved);
+      return unresolved;
+    }
+    onProgress({ state: "signing", kind: "execute_evm_call" });
+    try {
+      await ensureChain(provider, request.token.chainId);
+    } catch (error) {
+      // Nothing was asked to send yet: the payer starts over freely.
+      payWalletLog("warn", "direct", `chain switch failed ${describeError(error)}`);
+      return end({
+        state: "failed",
+        orderId: null,
+        reason: isWalletRejection(error) ? "rejected" : "error",
+      });
+    }
+    record.started.push(DIRECT_OPTION_ID);
+    await save();
+    const askedAt = deps.now();
+    payWalletLog(
+      "info",
+      "direct",
+      `asking wallet transfer ${request.amount} ${request.token.symbol}`,
+    );
+    let txHash: unknown;
+    try {
+      txHash = await provider.request({
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: request.payer,
+            to: request.token.address,
+            data: encodeFunctionData({ abi: ERC20_TRANSFER, args: [receiver, units] }),
+            value: "0x0",
+          },
+        ],
+      });
+    } catch (error) {
+      payWalletLog(
+        "warn",
+        "direct",
+        `wallet threw ${deps.now() - askedAt}ms ${describeError(error)}`,
+      );
+      // Refused: nothing was sent. Anything else may have been sent; the
+      // record stays so the next visit says so instead of paying twice.
+      if (isWalletRejection(error))
+        return end({ state: "failed", orderId: null, reason: "rejected" });
+      throw error;
+    }
+    if (typeof txHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+      throw new Error("The wallet returned no transaction hash.");
+    }
+    evidence = { txHash };
+    record.evidence[DIRECT_OPTION_ID] = evidence;
+    await save();
+    onProgress({ state: "paid" });
+    payWalletLog("info", "direct", `wallet answered ${deps.now() - askedAt}ms tx=${txHash}`);
+  }
+  const hash = evidence.txHash as `0x${string}`;
+  onProgress({ state: "waiting", orderStatus: "CONFIRMING" });
+  // Read until it is mined, however long that (or an RPC outage) takes: the
+  // record keeps the hash, and only the receipt ends the wait.
+  for (let attempt = 0; ; attempt++) {
+    const outcome = await deps.receipt(request.token.chainId, hash);
+    if (outcome) {
+      payWalletLog(outcome === "success" ? "info" : "warn", "direct", `tx ${outcome}`);
+      return end(
+        outcome === "success"
+          ? { state: "settled", orderId: hash }
+          : { state: "failed", orderId: null, reason: "reverted" },
+      );
+    }
+    await deps.wait(attempt < 40 ? 3_000 : 15_000);
+  }
 }
 
 /** Whether a token holding covers what a route spends, exactly in the token's units. */
@@ -276,6 +504,9 @@ export function isPositiveDecimal(value: unknown): boolean {
 
 export type PayWalletProgress =
   | { state: "signing"; kind: string }
+  /** The wallet has paid its part (anything but an approval): the rest runs
+   * without it. */
+  | { state: "paid" }
   | { state: "waiting"; orderStatus: string }
   | { state: "settled"; orderId: string }
   | { state: "failed"; orderId: string | null; reason: string };
@@ -297,6 +528,11 @@ export type PayWalletRecord = {
   /** actionIds past their broadcast boundary: the wallet was asked to send
    * or sign AFTER every local check passed, and no evidence came back. */
   started: string[];
+  /** actionIds that pay (a call that is not an approval, marked before the
+   * wallet may send it; an order signature that is not a permit, marked
+   * before it is submitted): once one exists, the payment may run without the
+   * app, whatever the wallet or the server answered. */
+  funding?: string[];
 };
 
 /**
@@ -311,9 +547,29 @@ export function payWalletRecordKey(recipient: string, settle: PayWalletSettle): 
 const recordKeyFor = (accepted: PayWalletQuote) =>
   payWalletRecordKey(accepted.request.recipient, accepted.request.settle);
 
-/** The ERC-20 approve selector: the one step safe to prompt again after an
- * interrupted attempt (re-approving the same exact amount changes nothing). */
+/** The ERC-20 approve selector: re-approving the same exact amount changes nothing. */
 const APPROVE_SELECTOR = "0x095ea7b3";
+
+/**
+ * Whether a step may be put to the wallet again after an attempt that left no
+ * answer. A signature is never broadcast by the wallet (only the server can use
+ * it, and the permit nonce or order id lets at most one count), and an approval
+ * of the same exact amount changes nothing. Any other call may already be
+ * on-chain, so asking again could pay twice.
+ */
+function safeToAskAgain(action: SwapKitV2Action): boolean {
+  return action.kind === "sign_typed_data" || isApproval(action);
+}
+
+/** A typed-data approval (EIP-2612 or Permit2): authorises, pays nothing. */
+function isPermit(action: SwapKitV2Action): boolean {
+  return /^permit/i.test(String(action.request?.primaryType ?? ""));
+}
+
+function isApproval(action: SwapKitV2Action): boolean {
+  const data = String(action.request?.data || "").toLowerCase();
+  return action.kind === "execute_evm_call" && data.startsWith(APPROVE_SELECTOR);
+}
 
 /** The engine's definitive pre-order refusal of an accepted quote. */
 export function isQuoteExpired(error: unknown): boolean {
@@ -376,8 +632,10 @@ export async function payWithWallet(
     // payer accepted exactly that payment; a different token, amount or quote
     // is refused untouched — the pending one is resumed explicitly instead.
     if (isSamePayWallet(pending.accepted, accepted)) {
+      payWalletLog("info", "pay", `same pending payment ${shortId(pending.orderId)}`);
       return drive(pending, key, provider, deps, onProgress);
     }
+    payWalletLog("warn", "pay", `refused, another payment pending ${shortId(pending.orderId)}`);
     const refused: PayWalletProgress = {
       state: "failed",
       orderId: pending.orderId,
@@ -395,6 +653,11 @@ export async function payWithWallet(
     started: [],
   };
   await deps.store.set(key, record);
+  payWalletLog(
+    "info",
+    "pay",
+    `new ${option.depositAmount} ${request.token.symbol}@${request.token.chainId} -> ${option.settleAmount} ${request.settle} via ${option.optionId.split(":").slice(0, 2).join(":")}`,
+  );
   return drive(record, key, provider, deps, onProgress);
 }
 
@@ -422,6 +685,11 @@ export async function resumePayWithWallet(
   // The order is bound to the account that accepted it. Another connected
   // account never drives it; the record stays for the original payer.
   if (!isPayWalletPayer(record.accepted, connectedAccount)) return null;
+  payWalletLog(
+    "info",
+    "resume",
+    `${shortId(record.orderId)} evidence=${Object.keys(record.evidence).length} asked=${record.started.length}`,
+  );
   return drive(record, key, provider, deps, onProgress);
 }
 
@@ -484,6 +752,16 @@ async function drive(
     onProgress(refused);
     return refused;
   }
+  if (isPayWalletDirect(option)) {
+    const receiver = directReceiver(request);
+    if (!receiver) {
+      await deps.store.set(key, null);
+      const refused: PayWalletProgress = { state: "failed", orderId: null, reason: "error" };
+      onProgress(refused);
+      return refused;
+    }
+    return driveDirect(record, key, provider, deps, onProgress, receiver, ceiling);
+  }
   const binding = { chainId: request.token.chainId, sourceToken: request.token.address, settle };
   const save = () => deps.store.set(key, record);
   const finish = async (progress: PayWalletProgress) => {
@@ -494,6 +772,7 @@ async function drive(
 
   // Same idempotency key on every attempt: a retry adopts the existing order.
   let view: SwapKitV2OrderView;
+  const commitStarted = deps.now();
   try {
     view = await deps.commit({
       ...quoteArgs(request, asset),
@@ -505,6 +784,11 @@ async function drive(
       minimumSettleAmount: option.settleAmount,
     });
   } catch (error) {
+    payWalletLog(
+      "error",
+      "commit",
+      `failed ${deps.now() - commitStarted}ms ${describeError(error)}`,
+    );
     // The server refused the accepted quote itself (expired / not this
     // request) before creating anything. Only then is the record dropped, so
     // the payer can get a fresh quote; a record that already names an order,
@@ -522,20 +806,71 @@ async function drive(
     throw error;
   }
   const orderId = view.orderId;
+  payWalletLog(
+    "info",
+    "commit",
+    `${record.orderId === orderId ? "adopted" : "created"} ${shortId(orderId)} ${view.status} ${describeActions(view, deps.now())}`,
+  );
   if (record.orderId !== orderId) {
     record.orderId = orderId;
     await save();
   }
 
+  /**
+   * Nothing left the wallet for this order: hand the unfunded order back and
+   * drop the record, so the next attempt quotes afresh. The server refuses a
+   * funded order; then the record stays and a later visit finishes it.
+   */
+  const giveBack = async (actionId: string, reason: string): Promise<PayWalletProgress> => {
+    // This step provably sent nothing: neither of its markers may outlive it.
+    // Every other step's markers stay as they are.
+    record.started = record.started.filter((id) => id !== actionId);
+    if (record.funding) record.funding = record.funding.filter((id) => id !== actionId);
+    await save();
+    try {
+      const cancelled = await deps.cancel(orderId, record.recoveryKey);
+      payWalletLog("info", "cancel", `${shortId(orderId)} -> ${cancelled.status}`);
+      // The server cancels only an unfunded order: once it is over, nothing
+      // is left to resume.
+      if (isSwapKitV2Terminal(cancelled)) await deps.store.set(key, null);
+    } catch (error) {
+      payWalletLog("warn", "cancel", `refused ${shortId(orderId)} ${describeError(error)}`);
+    }
+    const failed: PayWalletProgress = { state: "failed", orderId, reason };
+    onProgress(failed);
+    return failed;
+  };
+
+  // Every action this drive has seen, by id, for judging what a step was.
+  const seen = new Map<string, SwapKitV2Action>();
+  let lastWait = "";
+  let lapsedCancelTried = false;
   for (;;) {
+    for (const action of view.actions ?? []) seen.set(action.actionId, action);
     // Terminal is the v2 client's own definition (COMPLETED, FAILED,
     // REFUNDED, EXPIRED, CANCELLED): every terminal order clears the record.
     if (isSwapKitV2Terminal(view)) {
       const status = String(view.status).toUpperCase();
+      payWalletLog(
+        status === "COMPLETED" ? "info" : "warn",
+        "terminal",
+        `${shortId(orderId)} ${status} raw=${view.rawProviderState ?? "none"} failure=${view.failure?.code ?? view.failure?.message ?? "none"}`,
+      );
+      // Expired or cancelled with nothing ever signed for it: only the
+      // price lapsed, the payer gets a new one.
+      // A step asked with no answer kept counts as possibly sent unless it is
+      // one that sends nothing (a signature, an approval) as last seen.
+      const lapsedUnsigned =
+        (status === "EXPIRED" || status === "CANCELLED") &&
+        Object.keys(record.evidence).length === 0 &&
+        record.started.every((id) => {
+          const action = seen.get(id);
+          return !!action && safeToAskAgain(action);
+        });
       return finish(
         status === "COMPLETED"
           ? { state: "settled", orderId }
-          : { state: "failed", orderId, reason: status },
+          : { state: "failed", orderId, reason: lapsedUnsigned ? "quote_expired" : status },
       );
     }
     const ready = view.actions.find(
@@ -544,6 +879,54 @@ async function drive(
         (action.deadline == null || Date.parse(action.deadline) > deps.now()),
     );
     if (!ready) {
+      // The step to sign ran past its deadline with nothing sent for it: the
+      // order can never finish. Give it back once instead of waiting for the
+      // server to expire it, so the payer gets a new price straight away.
+      const lapsed = view.actions.find(
+        (action) =>
+          action.state === "ready" &&
+          action.deadline != null &&
+          Date.parse(action.deadline) <= deps.now() &&
+          !record.evidence[action.actionId] &&
+          (safeToAskAgain(action) || !record.started.includes(action.actionId)),
+      );
+      if (lapsed && !lapsedCancelTried) {
+        lapsedCancelTried = true;
+        try {
+          const cancelled = await deps.cancel(orderId, record.recoveryKey);
+          payWalletLog(
+            "info",
+            "cancel",
+            `lapsed ${lapsed.kind} ${shortId(orderId)} -> ${cancelled.status}`,
+          );
+          if (isSwapKitV2Terminal(cancelled)) {
+            return finish({ state: "failed", orderId, reason: "quote_expired" });
+          }
+        } catch (error) {
+          payWalletLog(
+            "warn",
+            "cancel",
+            `lapsed refused ${shortId(orderId)} ${describeError(error)}`,
+          );
+        }
+      }
+      // Logged when what the order shows changes, not on every 6 s poll.
+      const waitLine = `${view.status} raw=${view.rawProviderState ?? "none"} ${describeActions(view, deps.now())}`;
+      const shape = waitLine.replace(/:-?\d+s/g, "");
+      if (shape !== lastWait) {
+        lastWait = shape;
+        const expired = view.actions.some(
+          (action) =>
+            action.state === "ready" &&
+            action.deadline != null &&
+            Date.parse(action.deadline) <= deps.now(),
+        );
+        payWalletLog(
+          expired ? "warn" : "info",
+          "wait",
+          `${expired ? "action past deadline " : ""}${waitLine}`,
+        );
+      }
       onProgress({ state: "waiting", orderStatus: view.status });
       await deps.wait(6_000);
       view = await deps.status(orderId, record.recoveryKey);
@@ -551,59 +934,107 @@ async function drive(
     }
     let evidence = record.evidence[ready.actionId];
     if (!evidence) {
-      const data = String(ready.request?.data || "").toLowerCase();
-      const isApprove = ready.kind === "execute_evm_call" && data.startsWith(APPROVE_SELECTOR);
-      if (record.started.includes(ready.actionId) && !isApprove) {
-        // The wallet was asked to send this step and gave nothing back — no
+      if (record.started.includes(ready.actionId) && !safeToAskAgain(ready)) {
+        // The wallet was asked to send this call and gave nothing back — no
         // hash, no rejection (the page died mid-prompt). It may be on-chain.
         // Prompting again could pay twice, so stop and keep the record; the
         // order's own status still settles or refunds it.
+        payWalletLog("warn", "reconcile", `${ready.kind} was asked before, no answer kept`);
         onProgress({ state: "failed", orderId, reason: "needs_reconciliation" });
         return { state: "failed", orderId, reason: "needs_reconciliation" };
       }
       onProgress({ state: "signing", kind: ready.kind });
+      const askedAt = deps.now();
+      payWalletLog(
+        "info",
+        "sign",
+        `asking wallet ${ready.kind} ${shortId(ready.actionId)} deadline=${secondsLeft(ready.deadline, askedAt)} again=${record.started.includes(ready.actionId)}`,
+      );
+      // Whether the wallet was asked at all: a refusal before that (the route
+      // binding, the chain switch) sent nothing, whatever the step.
+      let asked = false;
       try {
         evidence = await executePayerAction(ready, provider, request.payer, binding, ceiling, {
           // Marked only here — after the route binding and chain switch passed,
           // immediately before the wallet is asked to send. A refusal earlier
           // leaves no marker.
           onBeforeBroadcast: async () => {
+            asked = true;
             if (!record.started.includes(ready.actionId)) {
               record.started.push(ready.actionId);
-              await save();
             }
+            // A paying call is marked before the wallet may send it; an
+            // approval never is.
+            if (
+              ready.kind === "execute_evm_call" &&
+              !isApproval(ready) &&
+              !record.funding?.includes(ready.actionId)
+            ) {
+              record.funding = [...(record.funding ?? []), ready.actionId];
+            }
+            await save();
           },
         });
       } catch (error) {
-        if (isWalletRejection(error)) {
-          // The payer said no: nothing was sent. Clear the marker, and give
-          // the unfunded order back (an approval is not funding), so the next
-          // attempt starts clean instead of reading as "may have been sent".
-          record.started = record.started.filter((id) => id !== ready.actionId);
-          await save();
-          try {
-            const cancelled = await deps.cancel(orderId, record.recoveryKey);
-            if (cancelled.status === "EXPIRED") await deps.store.set(key, null);
-          } catch {
-            // Refused (funded) or unreachable: the record stays so a reload
-            // finishes this order rather than opening a second one.
-          }
-          const rejected: PayWalletProgress = { state: "failed", orderId, reason: "rejected" };
-          onProgress(rejected);
-          return rejected;
-        }
+        payWalletLog(
+          isWalletRejection(error) ? "warn" : "error",
+          "sign",
+          `wallet threw ${deps.now() - askedAt}ms deadline=${secondsLeft(ready.deadline, deps.now())} ${describeError(error)}`,
+        );
+        // Nothing was sent when the payer said no, when the wallet was never
+        // asked, or on a signature (the wallet never broadcasts one). Then the
+        // unfunded order goes back (an approval is not funding), so the next
+        // attempt starts clean. Any other error on a call may have sent it:
+        // its markers stay.
+        if (isWalletRejection(error)) return giveBack(ready.actionId, "rejected");
+        if (!asked || ready.kind === "sign_typed_data") return giveBack(ready.actionId, "error");
         throw error;
       }
+      payWalletLog(
+        "info",
+        "sign",
+        `wallet answered ${deps.now() - askedAt}ms ${"txHash" in evidence ? `tx=${evidence.txHash}` : "signature"} deadline=${secondsLeft(ready.deadline, deps.now())}`,
+      );
       record.evidence[ready.actionId] = evidence;
       await save();
+      // A sent call that is not an approval is the payment itself: it left.
+      if ("txHash" in evidence && !isApproval(ready)) onProgress({ state: "paid" });
+    } else {
+      // A kept answer is submitted again: said so before the reply can be lost.
+      onProgress({ state: "waiting", orderStatus: "SUBMITTING" });
     }
-    view = await deps.submit({
-      orderId,
-      actionId: ready.actionId,
-      idempotencyKey: ready.idempotencyKey,
-      recoveryKey: record.recoveryKey,
-      ...evidence,
-    });
+    // Whatever pays is marked before the server holds it, kept answer or new:
+    // once submitted, the order may run whatever the reply said.
+    const funds = "txHash" in evidence ? !isApproval(ready) : !isPermit(ready);
+    if (funds && !record.funding?.includes(ready.actionId)) {
+      record.funding = [...(record.funding ?? []), ready.actionId];
+      await save();
+    }
+    const submitStarted = deps.now();
+    try {
+      view = await deps.submit({
+        orderId,
+        actionId: ready.actionId,
+        idempotencyKey: ready.idempotencyKey,
+        recoveryKey: record.recoveryKey,
+        ...evidence,
+      });
+    } catch (error) {
+      payWalletLog(
+        "error",
+        "submit",
+        `failed ${deps.now() - submitStarted}ms ${describeError(error)}`,
+      );
+      throw error;
+    }
+    payWalletLog(
+      "info",
+      "submit",
+      `${shortId(ready.actionId)} -> ${view.status} ${describeActions(view, deps.now())}`,
+    );
+    // A signed order (CoW) is the payment once the server holds it: the
+    // provider fills it alone. A permit only authorises the call still to come.
+    if ("signature" in evidence && !isPermit(ready)) onProgress({ state: "paid" });
   }
 }
 
@@ -612,10 +1043,40 @@ const hex = (value: bigint | number) => `0x${BigInt(value).toString(16)}`;
 async function ensureChain(provider: Eip1193Provider, chainId: number): Promise<void> {
   const current = Number(await provider.request({ method: "eth_chainId" }));
   if (current === chainId) return;
+  payWalletLog("info", "chain", `switching wallet ${current} -> ${chainId}`);
   await provider.request({
     method: "wallet_switchEthereumChain",
     params: [{ chainId: hex(chainId) }],
   });
+}
+
+/** EIP-712 domain fields in their canonical order, with their types. */
+const DOMAIN_FIELDS = [
+  ["name", "string"],
+  ["version", "string"],
+  ["chainId", "uint256"],
+  ["verifyingContract", "address"],
+  ["salt", "bytes32"],
+] as const;
+
+/**
+ * The typed data's types with the `EIP712Domain` entry the v4 spec asks for.
+ * The server leaves it out (local signers derive it from the domain); some
+ * wallets, Trust Wallet among them, refuse to sign without it. Derived from
+ * the fields the domain carries, so the signed hash is unchanged.
+ */
+export function withDomainType(
+  types: unknown,
+  domain: Record<string, unknown>,
+): Record<string, unknown> {
+  const given = (types ?? {}) as Record<string, unknown>;
+  if (given.EIP712Domain) return given;
+  return {
+    EIP712Domain: DOMAIN_FIELDS.filter(([name]) => domain[name] !== undefined).map(
+      ([name, type]) => ({ name, type }),
+    ),
+    ...given,
+  };
 }
 
 /**
@@ -639,10 +1100,20 @@ export async function executePayerAction(
       data: String(request.data || ""),
     };
     const value = request.value == null ? "0" : String(request.value);
-    if (!/^\d+$/.test(value) || BigInt(value) !== 0n) {
+    if (!/^\d+$/.test(value)) throw new Error("Refusing a call with an unreadable value.");
+    // Native value only when the chain's coin is what the payer accepted to
+    // spend, and exactly what the decoded call spends of it (itself at most the
+    // accepted deposit): any more would be a second payment the route never
+    // named.
+    const native = isPayWalletNative({ address: binding.sourceToken });
+    const refuseValue = () => {
       throw new Error("Refusing a call that sends native value from the payer's wallet.");
-    }
-    assertEvmCallBoundToRoute(call, binding, ceiling, payer);
+    };
+    if (BigInt(value) !== 0n && (!native || BigInt(value) > ceiling)) refuseValue();
+    const spent = assertEvmCallBoundToRoute(call, binding, ceiling, payer);
+    // A native source funds the call by its value alone: zero or missing
+    // value on a call that spends the coin is refused like an excess.
+    if (native ? BigInt(value) !== spent : BigInt(value) !== 0n) refuseValue();
     await ensureChain(provider, call.chainId);
     await hooks.onBeforeBroadcast?.();
     const txHash = await provider.request({
@@ -652,7 +1123,7 @@ export async function executePayerAction(
           from: payer,
           to: call.to,
           data: call.data,
-          value: "0x0",
+          value: hex(BigInt(value)),
           ...(request.gasHint ? { gas: hex(BigInt(String(request.gasHint))) } : {}),
         },
       ],
@@ -679,7 +1150,7 @@ export async function executePayerAction(
         payer,
         JSON.stringify({
           domain: request.domain,
-          types: request.types,
+          types: withDomainType(request.types, domain),
           primaryType: request.primaryType,
           message: request.message,
         }),
