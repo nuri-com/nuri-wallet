@@ -531,10 +531,16 @@ export async function payArkadeLightningInvoice(_params: {
                   // out. Re-decoded from the invoice itself rather than trusting the
                   // figure read minutes ago.
                   assertInvoiceStillPayable(decodeBolt11Facts(invoice).expiresAt);
+                  // The server ends funding before the solver's cutoff; an
+                  // approval that took longer must not fund a dead lockup.
+                  ctx.assertBeforeDeadline?.();
                   await _params.onBeforeBroadcast?.();
                   // Feature checks at the boundary (an eSIM order records the
                   // send in its backed-up record); one that throws sends nothing.
                   await runLightningFundingGuards(payTrace.paymentHash);
+                  // Again with nothing awaited before the send: the hooks above
+                  // can take long enough to cross the deadline themselves.
+                  ctx.assertBeforeDeadline?.();
                   return wallet.send({
                     address: fundingAddress,
                     amount: fundingAmountSats,

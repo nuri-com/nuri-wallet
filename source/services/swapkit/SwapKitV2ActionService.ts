@@ -129,7 +129,27 @@ export type SwapKitV2ActionContext = {
    * it cannot prove happened pre-broadcast.
    */
   markStarted?: () => Promise<void>;
+  /**
+   * Throws when the server's deadline for this action has passed. An executor
+   * that waits on the user (passkey, approval) calls it right before value
+   * moves: past the deadline the server no longer stands behind the action,
+   * e.g. a Lightning lockup the solver can no longer pay (swapkit #385).
+   */
+  assertBeforeDeadline?: () => void;
 };
+
+// Set only on the deadline refusal, which executors raise before value moves:
+// a dispatcher whose STARTED marker an inner hook already wrote may clear it.
+const SENT_NOTHING = Symbol.for("nuri.swapkitV2.deadlineSentNothing");
+
+function v2ActionDeadlineError(actionId: string): SwapKitV2Error {
+  const error = new SwapKitV2Error(
+    `v2 action ${actionId} passed its deadline before anything was sent; request it again`,
+    { code: "action_deadline_passed", retryable: false },
+  );
+  (error as unknown as Record<PropertyKey, unknown>)[SENT_NOTHING] = true;
+  return error;
+}
 
 // ── Money-critical request validation (fail closed, then execute) ──
 
@@ -609,14 +629,26 @@ export async function executeAndSubmitV2Action(
     noteV2MovePaid(orderId);
   };
   ctx.markStarted = markStarted;
+  const deadlineMs = action.deadline == null ? Number.NaN : Date.parse(String(action.deadline));
+  ctx.assertBeforeDeadline = () => {
+    if (deadlineMs <= Date.now()) throw v2ActionDeadlineError(actionId);
+  };
 
   let evidence: Awaited<ReturnType<typeof executeV2Action>>;
   try {
+    // A fresh action past its deadline is never started; an already started
+    // one still reconciles, so funds that moved are always reported.
+    if (!ctx.previouslyStarted) ctx.assertBeforeDeadline();
     evidence = await executeV2Action(action, request, ctx, options);
   } catch (error) {
     // AFTER the boundary: the marker is on disk; a retry reaches the
     // STARTED-without-evidence branch above and fails closed. Rethrow as is.
-    if (markedStarted) throw error;
+    if (markedStarted) {
+      if ((error as Record<PropertyKey, unknown> | null)?.[SENT_NOTHING] !== true) throw error;
+      // A deadline refusal after the marker (an executor hook wrote it) still
+      // sent nothing: drop the marker so the action is not stranded.
+      await clearActionStarted(orderId, actionId);
+    }
     // BEFORE the boundary (bounds rejection, failed simulation, dismissed
     // passkey prompt): nothing moved, so NO marker — the action stays
     // re-runnable. It still stops the loop rather than retrying on its own,

@@ -357,6 +357,14 @@ export class WirexWithdrawUnconfirmedError extends Error {
   }
 }
 
+/** Another card withdrawal or swap is running: nothing was started. */
+export class WirexWithdrawBusyError extends Error {
+  constructor() {
+    super("wirex_withdraw_busy");
+    this.name = "WirexWithdrawBusyError";
+  }
+}
+
 export interface WirexCardDetailsResult {
   cardId: string;
   cardNumber: string | null;
@@ -1429,8 +1437,39 @@ class WirexService {
     }
   }
 
-  /** Withdrawals running in THIS process, before and after their marker. */
+  /** Withdrawals and swaps running or queued in THIS process, before and after their marker. */
   private activeWithdrawals = 0;
+  /**
+   * One card money movement at a time. A withdrawal and a swap share the
+   * card, its approvals and the durable outcome marker, so two in flight
+   * could overwrite each other's marker and lose the at-most-once guard. The
+   * turn is taken synchronously on the call, before any await, and held
+   * through reconciliation and execution.
+   */
+  private withdrawalTurn: Promise<void> = Promise.resolve();
+
+  private takeWithdrawalTurn<T>(run: () => Promise<T>): Promise<T> {
+    const previous = this.withdrawalTurn;
+    let release: () => void = () => {};
+    this.withdrawalTurn = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.activeWithdrawals += 1;
+    return (async () => {
+      try {
+        await previous;
+        return await run();
+      } finally {
+        this.activeWithdrawals -= 1;
+        release();
+      }
+    })();
+  }
+
+  /** Resolves once no withdrawal or swap is running or queued. */
+  async whenWithdrawalsIdle(): Promise<void> {
+    while (this.activeWithdrawals > 0) await this.withdrawalTurn;
+  }
 
   /**
    * True while a card withdrawal may still be moving money: one running now,
@@ -1532,12 +1571,8 @@ class WirexService {
       asset?: WirexWithdrawAsset;
     },
   ): Promise<WirexWithdrawalResult> {
-    this.activeWithdrawals += 1;
-    try {
-      return await this.runWithdrawToWallet(amount, opts);
-    } finally {
-      this.activeWithdrawals -= 1;
-    }
+    // The user asked for it: it waits for a running swap, then reconciles.
+    return this.takeWithdrawalTurn(() => this.runWithdrawToWallet(amount, opts));
   }
 
   /**
@@ -1545,19 +1580,19 @@ class WirexService {
    * currency leaves the card through the same two silent approvals as a
    * withdrawal, to Wirex's swap address (the server takes it from Wirex, never
    * from here), and `to` lands back on the card. One lock with withdrawals:
-   * one at a time, and an unconfirmed outcome holds it.
+   * one at a time, and an unconfirmed outcome holds it. A swap is automatic
+   * and sized from a balance reading, so it never queues behind another
+   * movement with a reading that may be stale: it is refused at once with
+   * WirexWithdrawBusyError, and the caller asks again once
+   * whenWithdrawalsIdle resolves.
    */
   async swapCardCurrency(
     to: "EUR" | "USD",
     amount: string,
     opts?: { onTrace?: (line: string) => void },
   ): Promise<WirexWithdrawalResult> {
-    this.activeWithdrawals += 1;
-    try {
-      return await this.runWithdrawToWallet(amount, opts, to);
-    } finally {
-      this.activeWithdrawals -= 1;
-    }
+    if (this.activeWithdrawals > 0) throw new WirexWithdrawBusyError();
+    return this.takeWithdrawalTurn(() => this.runWithdrawToWallet(amount, opts, to));
   }
 
   private async runWithdrawToWallet(

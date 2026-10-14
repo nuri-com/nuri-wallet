@@ -55,7 +55,6 @@ import ChoiceSheet from "../../components/ChoiceSheet";
 import ReceiveModal from "../../components/ReceiveModal";
 import LightningInvoiceSheet from "../../components/LightningInvoiceSheet";
 import NotificationBadge from "../../components/NotificationBadge";
-import { getAccountEmail } from "../../lib/accountEmail";
 import { useSupportUnreadCount } from "../../lib/nostr/useSupportUnreadCount";
 import { createArkadeLightningInvoice } from "../../services/arkade/ArkadeLightningReceiveService";
 import { groupCount } from "../../lib/formatting";
@@ -193,6 +192,7 @@ import { checkSwapKitSweep } from "../../services/swapkit/SwapKitV2SweepService"
 import type { SwapKitV2SweepResult } from "../../services/swapkit/SwapKitV2SweepService";
 import { wirexAccountService } from "../../services/wirex/WirexAccountService";
 import {
+  WirexWithdrawBusyError,
   WirexWithdrawUnconfirmedError,
   type WirexWithdrawAsset,
   wirexService,
@@ -364,7 +364,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   const supportUnread = useSupportUnreadCount();
   // The account email is pinned during Wirex onboarding; Settings lists it only
   // when there is one.
-  const [accountEmail, setAccountEmail] = useState<string | null>(null);
   const debugTapCountRef = useRef(0);
   const debugTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The Move card's hand-off waits out the closing chooser (see `openMove`), so
@@ -571,17 +570,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       unsubscribeStatus();
     };
   }, []);
-
-  useEffect(() => {
-    if (!settingsOpen || !evmAddress) return;
-    let cancelled = false;
-    void getAccountEmail(evmAddress).then((email) => {
-      if (!cancelled) setAccountEmail(email);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [settingsOpen, evmAddress]);
 
   // Everything in flight, from the one list that names BOTH of a move's
   // screens. Every rail and every history list reads only this.
@@ -1102,6 +1090,10 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     cardSwapTakenRef.current = cardSwapKey;
     cardSwapRunningRef.current = true;
     const to = home === "USD" ? "USD" : "EUR";
+    // Another card movement (a withdrawal from the Move sheet) holds the card:
+    // nothing started, so the reading is not used up. Asked again once it is
+    // done, from a fresh reading.
+    let busy = false;
     void wirexService
       .swapCardCurrency(to, cardSwapAmount)
       .then((done) => {
@@ -1118,6 +1110,11 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         }
       })
       .catch((error) => {
+        if (error instanceof WirexWithdrawBusyError) {
+          busy = true;
+          cardSwapTakenRef.current = null;
+          return;
+        }
         if (error instanceof WirexWithdrawUnconfirmedError) {
           void reportErrorToSupport({
             error,
@@ -1132,9 +1129,14 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         });
       })
       .finally(() => {
-        cardSwapRunningRef.current = false;
-        setCardSwapEnded((n) => n + 1);
-        void wirexAccountService.silentRefresh(true);
+        const ready = busy ? wirexService.whenWithdrawalsIdle() : Promise.resolve();
+        void ready
+          .then(() => wirexAccountService.silentRefresh(true))
+          .catch(() => {})
+          .finally(() => {
+            cardSwapRunningRef.current = false;
+            setCardSwapEnded((n) => n + 1);
+          });
       });
   }, [cardSwapAmount, cardSwapKey, cardOtherReading, home, cardSwapEnded]);
 
@@ -2132,7 +2134,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         visible={settingsOpen}
         onClose={closeSettings}
         username={username}
-        email={accountEmail}
         verification={verificationRow(wirexActivationInput)}
         onVerify={() => {
           const step = verificationRow(wirexActivationInput).action;

@@ -1,50 +1,38 @@
 // @screen app.settings
-// Settings — opened from the home's bottom-right button (the slot support held).
-// Every row is a thin caller of a capability that already exists; nothing here
-// is a second implementation:
-//
-//   Profile       username, the public pay link, the account email — each row
-//                 only when the account actually has it.
-//   Verification  the Wirex status; when not verified, a tap starts (or
-//                 resumes) the SAME onboarding the home's VISA/IBAN rows run.
-//   Notifications on/off for the push registration the debug tools used to own.
-//   Language      overrides the device language; the flag dropdown lists every
-//                 shipped language.
-//   Currency      the display (home) currency, EUR or USD, for every converted
-//                 figure in the app.
-//   Export        one CSV of every transaction across every account.
-//   Address book  saved recipients (screens/addressBook), plus copying the
-//                 address-book-only key for the desktop CLI/MCP.
-//   eSIM          buy a travel data eSIM with Bitcoin over Lightning
-//                 (screens/esim), and the eSIMs already bought.
-//   Support       the support chat, with its unread count.
-//   The version of the running bundle closes the page as plain text.
+// Settings: the DS profile page (rn/v0.1.0-alpha.15, playground pages/profile.html),
+// built 1:1 from it. Opened from the home's bottom-right button; every row is a
+// thin caller of a capability that already exists. While the account is not
+// verified and a tap can move verification forward, the Bank and Cards card takes
+// the place of the first hairline (the design's second board); once verified the
+// handle carries the check badge (its first board).
 //
 // Rendered as its own Layer so the home stays mounted behind it, like the
 // asset screen. Pickers are ChoiceSheets stacked above it.
 import * as React from "react";
 import { useCallback, useEffect, useState } from "react";
-import { Linking, Platform } from "react-native";
+import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Button,
   ButtonText,
+  Dock,
   Header,
   IconButton,
+  Image,
   List,
   ListAction,
   ListActionText,
-  ListActionTrailIcon,
   ListActionTextMuted,
-  ListActionTrailingText,
-  ListActionTrailingTextMuted,
-  ListSeparator,
+  ListActionTrailIcon,
+  ListSwitch,
+  ListSwitchText,
+  NuriIcon,
   NuriSafeAreaProvider,
   Screen,
   Scroll,
+  Separator,
   Text,
   Topbar,
-  TopbarTitle,
   TopbarTrailing,
   View,
 } from "@ds";
@@ -52,7 +40,6 @@ import ChoiceSheet from "../../components/ChoiceSheet";
 import PayLinkCreateSheet from "../../components/PayLinkCreateSheet";
 import { Layer } from "../../components/LayerHost";
 import { PAY_LINK_ORIGIN } from "../../config/endpoints";
-import { copyToClipboard } from "../../lib/copyToClipboard";
 import {
   DISPLAY_CURRENCIES,
   type DisplayCurrency,
@@ -63,7 +50,6 @@ import { type AppLocale, SUPPORTED_LOCALES, t } from "../../lib/i18n";
 import { LANGUAGE_OPTIONS } from "../../lib/i18n/languages";
 import { useAppLocale } from "../../lib/i18n/useAppLocale";
 import { getAppVersion } from "../../lib/loadedAppVersion";
-import { useSupportUnreadCount } from "../../lib/nostr/useSupportUnreadCount";
 import { payLinkUrl } from "../../lib/pay/payLinkPath";
 import {
   PAY_WALLET_AVAILABLE,
@@ -72,8 +58,6 @@ import {
 } from "../../lib/pay/payWallet";
 import { setLanguagePreference } from "../../services/app/LanguagePreferenceService";
 import { EventBus } from "../../services/events/AppEventBusService";
-import { exportAllTransactionsCsv } from "../../services/export/AllTransactionsExport";
-import type { ExportAccount } from "../../services/export/allTransactionsRows";
 import {
   getActiveNotificationCategories,
   getNotificationPreferences,
@@ -89,6 +73,8 @@ import type { VerificationRowState } from "./settingsModel";
 
 const K = "screen.Settings";
 
+const BANK_AND_CARDS = require("../../assets/photos/bank-and-cards.png");
+
 const CURRENCY_FLAGS: Record<DisplayCurrency, number> = {
   EUR: require("../../assets/flags/eur.png"),
   USD: require("../../assets/flags/usa.png"),
@@ -98,7 +84,6 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   username: string | null;
-  email: string | null;
   verification: { state: VerificationRowState; action: "start" | "resume" | null };
   onVerify: () => void;
   onOpenAddressBook: () => void;
@@ -133,26 +118,19 @@ function categoryOn(view: NonNullable<NotificationsView>, category: Notification
   return view.blocked ? view.preferences[category] : view.active[category];
 }
 
-type ExportState =
-  | { kind: "idle" | "busy" | "empty" | "failed" }
-  | { kind: "incomplete"; missing: ExportAccount[] };
-
-const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
-  <View direction="column" align="stretch" gap="sm">
-    <View paddingX="lg">
-      <Text size="sm" emphasis muted>
+const Heading: React.FC<{ title: string; hairline?: boolean }> = ({ title, hairline = true }) => (
+  <>
+    {hairline ? (
+      <View paddingX="lg">
+        <Separator ySpace="none" />
+      </View>
+    ) : null}
+    <View paddingX="lg" paddingTop="xl">
+      <Text size="lg" emphasis>
         {title}
       </Text>
     </View>
-    <List>
-      {React.Children.toArray(children).map((row, index) => (
-        <React.Fragment key={(row as React.ReactElement).key ?? index}>
-          {index > 0 ? <ListSeparator /> : null}
-          {row}
-        </React.Fragment>
-      ))}
-    </List>
-  </View>
+  </>
 );
 
 /**
@@ -161,29 +139,23 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title
  * open, inside its own PayWalletProvider, so the wallet clients are not built
  * for a session that never looks at them.
  */
-const OtherWalletsSection: React.FC = () => {
+const CryptoWalletRow: React.FC = () => {
   const wallet = usePayWalletConnection();
   const [confirming, setConfirming] = useState(false);
   if (!wallet.available) return null;
   const name = wallet.walletName ?? t(`${K}.walletFallback`);
   const short = wallet.account ? `${wallet.account.slice(0, 6)}…${wallet.account.slice(-4)}` : "";
+  const value = wallet.account ? `${name}, ${short}` : t(`${K}.connectWalletHint`);
   return (
     <>
-      <Section title={t(`${K}.otherWallets`)}>
-        {wallet.account ? (
-          <ListAction accessibilityLabel={`${name}, ${short}`} onPress={() => setConfirming(true)}>
-            <ListActionText>{name}</ListActionText>
-            <ListActionTextMuted>{short}</ListActionTextMuted>
-            <ListActionTrailIcon name="chevron-right" />
-          </ListAction>
-        ) : (
-          <ListAction accessibilityLabel={t(`${K}.connectWallet`)} onPress={wallet.openConnect}>
-            <ListActionText>{t(`${K}.connectWallet`)}</ListActionText>
-            <ListActionTextMuted>{t(`${K}.connectWalletHint`)}</ListActionTextMuted>
-            <ListActionTrailIcon name="chevron-right" />
-          </ListAction>
-        )}
-      </Section>
+      <ListAction
+        accessibilityLabel={`${t(`${K}.cryptoWallet`)}, ${value}`}
+        onPress={wallet.account ? () => setConfirming(true) : wallet.openConnect}
+      >
+        <ListActionText>{t(`${K}.cryptoWallet`)}</ListActionText>
+        <ListActionTextMuted>{value}</ListActionTextMuted>
+        <ListActionTrailIcon name="chevron-right" />
+      </ListAction>
       <ChoiceSheet<"disconnect">
         visible={confirming && wallet.account !== null}
         onClose={() => setConfirming(false)}
@@ -203,7 +175,6 @@ const SettingsScreen: React.FC<Props> = ({
   visible,
   onClose,
   username,
-  email,
   verification,
   onVerify,
   onOpenAddressBook,
@@ -213,18 +184,15 @@ const SettingsScreen: React.FC<Props> = ({
   const insets = useSafeAreaInsets();
   const locale = useAppLocale();
   const currency = useHomeCurrency();
-  const supportUnread = useSupportUnreadCount();
-  const [picker, setPicker] = useState<"language" | "currency" | NotificationCategory | null>(null);
+  const [picker, setPicker] = useState<"language" | "currency" | null>(null);
   const [creatingPayLink, setCreatingPayLink] = useState(false);
   const [notifications, setNotifications] = useState<NotificationsView>(null);
-  const [exportState, setExportState] = useState<ExportState>({ kind: "idle" });
 
   // Read fresh on every open: the OS permission can change while away.
   useEffect(() => {
     if (!visible) {
       setPicker(null);
       setCreatingPayLink(false);
-      setExportState({ kind: "idle" });
       return;
     }
     let cancelled = false;
@@ -239,11 +207,10 @@ const SettingsScreen: React.FC<Props> = ({
 
   const chooseCategory = useCallback(
     (category: NotificationCategory, enabled: boolean) => {
-      setPicker(null);
       if (!notifications || notifications.busy) return;
       // Nothing to do only when both the stored choice and what the row shows
-      // already match. "On" on a row that is chosen but not reaching the device
-      // retries turning it on; "Off" there still stores the opt-out.
+      // already match. Switching on a row that is chosen but not reaching the
+      // device retries turning it on; switching it off still stores the opt-out.
       if (
         enabled === categoryOn(notifications, category) &&
         enabled === notifications.preferences[category]
@@ -259,17 +226,6 @@ const SettingsScreen: React.FC<Props> = ({
     [notifications],
   );
 
-  const runExport = useCallback(() => {
-    if (exportState.kind === "busy") return;
-    setExportState({ kind: "busy" });
-    void exportAllTransactionsCsv().then((result) => {
-      if (result.ok === true) setExportState({ kind: "idle" });
-      else if (result.reason === "incomplete") {
-        setExportState({ kind: "incomplete", missing: result.missing });
-      } else setExportState({ kind: result.reason });
-    });
-  }, [exportState]);
-
   const openSupport = useCallback(() => {
     try {
       EventBus.emit("support:openNostrChat");
@@ -281,20 +237,8 @@ const SettingsScreen: React.FC<Props> = ({
       ? window.location.origin
       : PAY_LINK_ORIGIN;
   const payLink = payLinkUrl(origin, username);
-  const hasProfile = Boolean(username || email);
-
-  const exportLabel =
-    exportState.kind === "busy"
-      ? t(`${K}.exportBusy`)
-      : exportState.kind === "empty"
-        ? t(`${K}.exportEmpty`)
-        : exportState.kind === "failed"
-          ? t(`${K}.exportFailed`)
-          : exportState.kind === "incomplete"
-            ? t(`${K}.exportIncomplete`, {
-                accounts: exportState.missing.map((a) => t(`${K}.exportAccount_${a}`)).join(", "),
-              })
-            : null;
+  const verified = verification.state === "verified";
+  const showBankCards = verification.action !== null;
 
   return (
     <>
@@ -302,143 +246,53 @@ const SettingsScreen: React.FC<Props> = ({
         {/* A Layer renders outside DsOverlayRoot's NuriSafeAreaProvider, so DS
             `safeArea*` would see inset 0 without this. */}
         <NuriSafeAreaProvider top={insets.top} bottom={insets.bottom}>
-          <Screen>
-            <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
-              <Header safeAreaTop chrome="canvas">
-                <Topbar layout="fluid" surface="transparent">
-                  <TopbarTitle>{t(`${K}.title`)}</TopbarTitle>
-                  <TopbarTrailing>
-                    <IconButton
-                      icon="cross"
-                      variant="soft"
-                      accessibilityLabel={t("common.close")}
-                      onPress={onClose}
-                    />
-                  </TopbarTrailing>
-                </Topbar>
-              </Header>
+          {/* The Layer's host is transparent and the home stays mounted behind
+              it: this canvas keeps the home from showing through. */}
+          <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
+            <Screen>
+              {/* The bar pins above the scroll and the content passes behind it;
+                the Scroll's dock inset starts the handle at the bar's edge. */}
+              <Dock edge="top">
+                <Header safeAreaTop chrome="transparent" safeAreaChrome="canvas">
+                  <Topbar surface="transparent">
+                    <TopbarTrailing>
+                      <IconButton
+                        icon="cross"
+                        variant="soft"
+                        accessibilityLabel={t("common.close")}
+                        onPress={onClose}
+                      />
+                    </TopbarTrailing>
+                  </Topbar>
+                </Header>
+              </Dock>
 
-              <Scroll safeAreaBottom>
-                <View direction="column" align="stretch" gap="xl" paddingY="md">
-                  {hasProfile ? (
-                    <Section title={t(`${K}.profile`)}>
-                      {username ? (
-                        <ListAction accessibilityLabel={`@${username}`}>
-                          <ListActionText>{`@${username}`}</ListActionText>
-                        </ListAction>
-                      ) : null}
-                      {payLink ? (
-                        <ListAction
-                          accessibilityLabel={t(`${K}.payLinkA11yLabel`)}
-                          onPress={() => void copyToClipboard(payLink)}
-                        >
-                          <ListActionText>{t(`${K}.payLink`)}</ListActionText>
-                          <ListActionTextMuted>
-                            {payLink.replace(/^https?:\/\//, "")}
-                          </ListActionTextMuted>
-                          <ListActionTrailIcon name="copy" />
-                        </ListAction>
-                      ) : null}
-                      {payLink && username ? (
-                        <ListAction
-                          accessibilityLabel={t(`${K}.createPayLink`)}
-                          onPress={() => setCreatingPayLink(true)}
-                        >
-                          <ListActionText>{t(`${K}.createPayLink`)}</ListActionText>
-                          <ListActionTrailIcon name="chevron-right" />
-                        </ListAction>
-                      ) : null}
-                      {email ? (
-                        <ListAction accessibilityLabel={email}>
-                          <ListActionText>{email}</ListActionText>
-                        </ListAction>
-                      ) : null}
-                    </Section>
+              <Scroll safeAreaBottom insetTop="dock">
+                <View
+                  direction="column"
+                  align="stretch"
+                  justify="start"
+                  gap="md"
+                  paddingBottom="xl"
+                  fill="grow"
+                >
+                  {username ? (
+                    <View direction="row" align="center" gap="sm" paddingX="lg" paddingTop="md">
+                      <Text size="lg" emphasis>{`@${username}`}</Text>
+                      {verified ? <NuriIcon name="check-circle" /> : null}
+                    </View>
                   ) : null}
 
-                  <Section title={t(`${K}.verification`)}>
-                    <ListAction
-                      accessibilityLabel={`${t(`${K}.verificationRow`)}, ${t(`${K}.verification_${verification.state}`)}`}
-                      onPress={verification.action ? onVerify : undefined}
-                    >
-                      <ListActionText>{t(`${K}.verificationRow`)}</ListActionText>
-                      <ListActionTrailingTextMuted>
-                        {t(`${K}.verification_${verification.state}`)}
-                      </ListActionTrailingTextMuted>
-                      {verification.state === "verified" ? (
-                        <ListActionTrailIcon name="check-circle" />
-                      ) : verification.action ? (
-                        <ListActionTrailIcon name="chevron-right" />
-                      ) : null}
-                    </ListAction>
-                  </Section>
-
-                  <Section title={t(`${K}.notifications`)}>
-                    {notifications?.blocked ? (
-                      // The OS refuses the prompt once it was declined; only its
-                      // settings can allow notifications again.
+                  <List>
+                    {payLink && username ? (
                       <ListAction
-                        accessibilityLabel={t(`${K}.notificationsBlocked`)}
-                        onPress={
-                          Platform.OS === "web" ? undefined : () => void Linking.openSettings()
-                        }
+                        accessibilityLabel={t(`${K}.payLink`)}
+                        onPress={() => setCreatingPayLink(true)}
                       >
-                        <ListActionText>{t(`${K}.notificationsBlocked`)}</ListActionText>
-                        {Platform.OS === "web" ? null : (
-                          <ListActionTrailIcon name="chevron-right" />
-                        )}
+                        <ListActionText>{t(`${K}.payLink`)}</ListActionText>
+                        <ListActionTrailIcon name="chevron-right" />
                       </ListAction>
                     ) : null}
-                    {NOTIFICATION_CATEGORIES.map((category) => {
-                      const on = notifications ? categoryOn(notifications, category) : false;
-                      const status =
-                        !notifications || notifications.busy === category
-                          ? t("common.loading")
-                          : t(on ? `${K}.notificationsOn` : `${K}.notificationsOff`);
-                      return (
-                        <ListAction
-                          key={category}
-                          accessibilityLabel={`${t(`${K}.notify_${category}`)}, ${status}`}
-                          onPress={() => {
-                            if (notifications && !notifications.busy) setPicker(category);
-                          }}
-                        >
-                          <ListActionText>{t(`${K}.notify_${category}`)}</ListActionText>
-                          <ListActionTrailingTextMuted>{status}</ListActionTrailingTextMuted>
-                          <ListActionTrailIcon name="chevron-right" />
-                        </ListAction>
-                      );
-                    })}
-                  </Section>
-
-                  <Section title={t(`${K}.general`)}>
-                    <ListAction
-                      accessibilityLabel={`${t(`${K}.language`)}, ${LANGUAGE_OPTIONS[locale].label}`}
-                      onPress={() => setPicker("language")}
-                    >
-                      <ListActionText>{t(`${K}.language`)}</ListActionText>
-                      <ListActionTrailingTextMuted>
-                        {LANGUAGE_OPTIONS[locale].label}
-                      </ListActionTrailingTextMuted>
-                      <ListActionTrailIcon name="chevron-right" />
-                    </ListAction>
-                    <ListAction
-                      accessibilityLabel={`${t(`${K}.currency`)}, ${t(`${K}.currency_${currency}`)}`}
-                      onPress={() => setPicker("currency")}
-                    >
-                      <ListActionText>{t(`${K}.currency`)}</ListActionText>
-                      <ListActionTrailingTextMuted>
-                        {t(`${K}.currency_${currency}`)}
-                      </ListActionTrailingTextMuted>
-                      <ListActionTrailIcon name="chevron-right" />
-                    </ListAction>
-                  </Section>
-                  {visible && PAY_WALLET_AVAILABLE ? (
-                    <PayWalletProvider>
-                      <OtherWalletsSection />
-                    </PayWalletProvider>
-                  ) : null}
-                  <Section title={t(`${K}.data`)}>
                     <ListAction
                       accessibilityLabel={t(`${K}.addressBook`)}
                       onPress={onOpenAddressBook}
@@ -446,53 +300,117 @@ const SettingsScreen: React.FC<Props> = ({
                       <ListActionText>{t(`${K}.addressBook`)}</ListActionText>
                       <ListActionTrailIcon name="chevron-right" />
                     </ListAction>
-                    <ListAction accessibilityLabel={t(`${K}.export`)} onPress={runExport}>
-                      <ListActionText>{t(`${K}.export`)}</ListActionText>
-                      {exportLabel ? (
-                        <ListActionTrailingTextMuted>{exportLabel}</ListActionTrailingTextMuted>
-                      ) : null}
+                    <ListAction accessibilityLabel={t(`${K}.support`)} onPress={openSupport}>
+                      <ListActionText>{t(`${K}.support`)}</ListActionText>
+                      <ListActionTrailIcon name="chevron-right" />
                     </ListAction>
-                  </Section>
+                  </List>
 
-                  <Section title={t(`${K}.shop`)}>
+                  {showBankCards ? (
+                    // The activation card takes the hairline's place.
+                    <View paddingX="lg" paddingTop="md">
+                      <View
+                        direction="row"
+                        align="stretch"
+                        chrome="strong"
+                        radius="lg"
+                        clip
+                        aspectRatio="banner"
+                      >
+                        <View
+                          direction="column"
+                          align="start"
+                          justify="between"
+                          padding="lg"
+                          fill="grow-shrink"
+                        >
+                          <View direction="column" align="start" gap="xs">
+                            <Text size="md" emphasis>
+                              {t(`${K}.bankCards`)}
+                            </Text>
+                            <Text size="sm" muted>
+                              {t(`${K}.bankCardsBody`)}
+                            </Text>
+                          </View>
+                          <Button variant="solid" size="sm" onPress={onVerify}>
+                            <ButtonText>{t(`${K}.activate`)}</ButtonText>
+                          </Button>
+                        </View>
+                        <Image source={BANK_AND_CARDS} fit="cover" aspectRatio="portrait" />
+                      </View>
+                    </View>
+                  ) : null}
+
+                  <Heading title={t(`${K}.notifications`)} hairline={!showBankCards} />
+                  <List>
+                    {NOTIFICATION_CATEGORIES.map((category) => {
+                      const on = notifications ? categoryOn(notifications, category) : false;
+                      return (
+                        <ListSwitch
+                          key={category}
+                          accent="lilac"
+                          checked={on}
+                          onPress={() => chooseCategory(category, !on)}
+                        >
+                          <ListSwitchText>{t(`${K}.notify_${category}`)}</ListSwitchText>
+                        </ListSwitch>
+                      );
+                    })}
+                  </List>
+
+                  <Heading title={t(`${K}.settings`)} />
+                  <List>
+                    <ListAction
+                      accessibilityLabel={`${t(`${K}.language`)}, ${LANGUAGE_OPTIONS[locale].label}`}
+                      onPress={() => setPicker("language")}
+                    >
+                      <ListActionText>{t(`${K}.language`)}</ListActionText>
+                      <ListActionTextMuted>{LANGUAGE_OPTIONS[locale].label}</ListActionTextMuted>
+                      <ListActionTrailIcon name="chevron-right" />
+                    </ListAction>
+                    <ListAction
+                      accessibilityLabel={`${t(`${K}.currency`)}, ${t(`${K}.currency_${currency}`)}`}
+                      onPress={() => setPicker("currency")}
+                    >
+                      <ListActionText>{t(`${K}.currency`)}</ListActionText>
+                      <ListActionTextMuted>{t(`${K}.currency_${currency}`)}</ListActionTextMuted>
+                      <ListActionTrailIcon name="chevron-right" />
+                    </ListAction>
+                    {visible && PAY_WALLET_AVAILABLE ? (
+                      <PayWalletProvider>
+                        <CryptoWalletRow />
+                      </PayWalletProvider>
+                    ) : null}
+                  </List>
+
+                  <Heading title={t(`${K}.shop`)} />
+                  <List>
                     <ListAction accessibilityLabel={t(`${K}.esim`)} onPress={onOpenEsim}>
                       <ListActionText>{t(`${K}.esim`)}</ListActionText>
                       <ListActionTrailIcon name="chevron-right" />
                     </ListAction>
-                  </Section>
+                  </List>
 
-                  <Section title={t(`${K}.help`)}>
-                    <ListAction accessibilityLabel={t(`${K}.support`)} onPress={openSupport}>
-                      <ListActionText>{t(`${K}.support`)}</ListActionText>
-                      {supportUnread > 0 ? (
-                        <ListActionTrailingText>
-                          {t(`${K}.supportUnread`, { count: supportUnread })}
-                        </ListActionTrailingText>
-                      ) : null}
+                  <Heading title={t(`${K}.account`)} />
+                  <List>
+                    <ListAction accessibilityLabel={t(`${K}.logout`)} onPress={onLogout}>
+                      <ListActionText>{t(`${K}.logout`)}</ListActionText>
                       <ListActionTrailIcon name="chevron-right" />
                     </ListAction>
-                  </Section>
-
-                  <View direction="column" align="stretch" paddingX="lg">
-                    <Button
-                      size="lg"
-                      variant="soft"
-                      accessibilityLabel={t(`${K}.logout`)}
-                      onPress={onLogout}
-                    >
-                      <ButtonText>{t(`${K}.logout`)}</ButtonText>
-                    </Button>
-                  </View>
+                  </List>
 
                   <View paddingX="lg">
-                    <Text size="sm" emphasis muted align="center">
+                    <Separator ySpace="none" />
+                  </View>
+                  <View paddingX="lg">
+                    <Text size="sm" muted>
                       {t(`${K}.version`, { version: getAppVersion() })}
                     </Text>
                   </View>
                 </View>
               </Scroll>
-            </View>
-          </Screen>
+            </Screen>
+          </View>
         </NuriSafeAreaProvider>
       </Layer>
 
@@ -536,23 +454,6 @@ const SettingsScreen: React.FC<Props> = ({
           void homeCurrencyService.setHomeCurrency(code);
         }}
       />
-      {NOTIFICATION_CATEGORIES.map((category) => {
-        const on = notifications ? categoryOn(notifications, category) : false;
-        return (
-          <ChoiceSheet<"on" | "off">
-            key={category}
-            visible={visible && picker === category}
-            onClose={() => setPicker(null)}
-            title={t(`${K}.notify_${category}`)}
-            items={(["on", "off"] as const).map((key) => ({
-              key,
-              label: t(key === "on" ? `${K}.notificationsOn` : `${K}.notificationsOff`),
-              ...((key === "on") === on ? { sublabel: t(`${K}.selected`) } : {}),
-            }))}
-            onSelect={(key) => chooseCategory(category, key === "on")}
-          />
-        );
-      })}
     </>
   );
 };

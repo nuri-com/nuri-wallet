@@ -23,7 +23,6 @@ import {
 } from '../generated/components/modal-panel';
 import { usePresentedLayer } from '../presented-layer';
 import { useNuriSafeAreaInsets } from '../safe-area';
-import { useNuriTheme } from '../theme';
 import { FixedRegionLayoutProvider, useFixedRegionLayout } from './FixedRegionLayout';
 import {
   isTopmostOpenModal,
@@ -169,16 +168,9 @@ export const Modal: React.FC<ModalProps> = ({
   }, [modalId, mode, open]);
 
   const sheetMaxHeight = Math.round(windowHeight * CONTENT_MAX_FRACTION);
-  // Full modals must paint an opaque backdrop on every platform. Web renders
-  // the DS chrome:canvas as CSS; native's colour-free recipe leaves the
-  // absolute-fill surface transparent, so the home screen shows through.
-  // This is the single point where full modals get their backdrop. The color
-  // comes from the ACTIVE theme (chrome.canvas.bg: #fffdf2 light / #12110b
-  // dark, generated tokens.ts) so dark NuriScope flows keep their canvas.
-  const theme = useNuriTheme();
   const surfaceStyle: ViewStyle = isSheet
     ? { width: '100%', maxHeight: sheetMaxHeight }
-    : { ...StyleSheet.absoluteFillObject, backgroundColor: theme.chrome.canvas.bg };
+    : StyleSheet.absoluteFillObject;
 
   usePresentedLayer({
     open,
