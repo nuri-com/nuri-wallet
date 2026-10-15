@@ -7,9 +7,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getCacheValue, setCacheValue } from "../../../services/balance/TransactionCacheService";
 import { usePayWalletConnection } from "../../../lib/pay/payWallet";
 import {
-  PAY_WALLET_CHAIN_IDS,
-  PAY_WALLET_NATIVE_COIN,
-  isPayWalletNative,
   type PayWalletDeps,
   type PayWalletProgress,
   type PayWalletQuote,
@@ -31,7 +28,6 @@ import {
   fetchPayWalletHoldings,
   type PayWalletHolding,
 } from "../../../services/pay/PayWalletBalanceService";
-import { resolveCanonicalToken } from "../../../services/swapkit/SwapKitTokenRegistry";
 import { exactBaseUnits } from "../../../lib/pay/payTarget";
 import { withFallback } from "../../../lib/rpc/chainRpc";
 import type { ChainId } from "../../../lib/tokens";
@@ -274,17 +270,11 @@ export function usePayWalletSwap(
   }, [wallet]);
 
   /**
-   * Quote `amount` of a token the payer holds (picked from their balances).
-   * The token must be the canonical contract for its symbol on that chain —
-   * the one SwapKit's `SYMBOL_CHAIN` id resolves to — and the amount at most
-   * the balance, both exact.
-   */
-  /**
    * Quote a token the payer holds (picked from their balances). Without a
    * fixed amount, `amount` is what they spend (at most the balance). On a
    * fixed-amount link the recipient's figure is quoted instead and the spend
-   * the route asks for must fit the balance. Either way the token must be the
-   * canonical contract for its symbol on that chain.
+   * the route asks for must fit the balance. The quote names the token by its
+   * contract, so whatever the wallet calls it, that exact token is priced.
    */
   const quote = useCallback(
     async (holding: PayWalletHolding, amount: string) => {
@@ -311,32 +301,18 @@ export function usePayWalletSwap(
       const id = ++requestId.current;
       setState({ step: "busy", account, chainId });
       try {
-        // The chain's own coin has no contract to match.
-        const native = isPayWalletNative(holding) && !!PAY_WALLET_NATIVE_COIN[holding.chainId];
-        const canonical =
-          !native && PAY_WALLET_CHAIN_IDS.includes(holding.chainId)
-            ? await resolveCanonicalToken(holding.chainId, holding.symbol)
-            : null;
-        const token =
-          native ||
-          (canonical &&
-            canonical.address.toLowerCase() === holding.address.toLowerCase() &&
-            canonical.decimals === holding.decimals)
-            ? {
-                chainId: holding.chainId,
-                address: holding.address,
-                decimals: holding.decimals,
-                symbol: holding.symbol,
-              }
-            : null;
-        const accepted = token
-          ? await quotePayWalletSwap(
-              fixedAmount
-                ? { token, amount: fixedAmount, side: "settle", payer: account, settle, recipient }
-                : { token, amount, payer: account, settle, recipient },
-              deps,
-            )
-          : null;
+        const token = {
+          chainId: holding.chainId,
+          address: holding.address,
+          decimals: holding.decimals,
+          symbol: holding.symbol,
+        };
+        const accepted = await quotePayWalletSwap(
+          fixedAmount
+            ? { token, amount: fixedAmount, side: "settle", payer: account, settle, recipient }
+            : { token, amount, payer: account, settle, recipient },
+          deps,
+        );
         if (requestId.current !== id) return;
         // On a fixed-amount link the route decides the spend: it must fit.
         const spend = accepted

@@ -138,6 +138,7 @@ import {
   isWirexBankReady,
   isWirexCardReady,
 } from "../../lib/wirex/cardState";
+import { mayRevealCardSecrets, visibleBankDetails } from "../../lib/wirex/accountBlocked";
 import { useWirexOnboarding } from "../wirex/hooks/useWirexOnboarding";
 import WirexEmailEntryModal from "../wirex/modals/WirexEmailEntryModal";
 import WirexCardDetailsModal from "../wirex/WirexCardDetailsModal";
@@ -1433,9 +1434,15 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // shows the unfreeze hint instead); bank details open without fetching.
   const openCardDetails = useCallback(() => {
     const cardId = wirex.card?.id ?? null;
-    if (!cardId || wirex.isFrozen === true) return reveal.open("card");
+    if (
+      !cardId ||
+      !mayRevealCardSecrets(wirex.isAccountBlocked, cardId) ||
+      wirex.isFrozen === true
+    ) {
+      return reveal.open("card");
+    }
     return void reveal.reveal({ id: cardId });
-  }, [reveal.open, reveal.reveal, wirex.card?.id, wirex.isFrozen]);
+  }, [reveal.open, reveal.reveal, wirex.card?.id, wirex.isAccountBlocked, wirex.isFrozen]);
   const openBankDetails = useCallback(() => reveal.open("bank"), [reveal.open]);
   // Details on Visa & Banking asks which one first.
   const [detailsChoiceVisible, setDetailsChoiceVisible] = useState(false);
@@ -2895,11 +2902,11 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         holderName={wirex.holderName}
         expiry={reveal.details?.expiry ?? null}
         cvv={reveal.details?.cvv ?? null}
-        iban={wirex.iban?.iban ?? null}
-        bic={wirex.iban?.bic ?? null}
+        {...visibleBankDetails(wirex.isAccountBlocked, wirex.iban)}
         wallet={wirex.wallet}
         cardId={detailsSheetCardId(wirex, lifecycle.activeCard?.id)}
         isFrozen={lifecycle.activeCard?.isFrozen ?? wirex.isFrozen}
+        isAccountBlocked={wirex.isAccountBlocked}
         freezeBusy={wirex.actionBusy}
         freezeError={wirex.actionError}
         onToggleFreeze={() => wirex.toggleFreeze(lifecycle.activeCard?.id)}

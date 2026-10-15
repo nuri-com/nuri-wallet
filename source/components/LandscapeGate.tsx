@@ -34,9 +34,11 @@ export default function LandscapeGate() {
   );
 }
 
+// Above the DS overlay outlet (zIndex 100000), where Settings, the QR scanner
+// and every other sheet or layer render; otherwise they paint over this gate.
 const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: 100,
+    zIndex: 100001,
   },
 });

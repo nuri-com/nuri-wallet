@@ -2,9 +2,11 @@ import * as Localization from "expo-localization";
 
 import { en } from "./en";
 import { de } from "./de";
+import { sw } from "./sw";
+import { es } from "./es";
 import { resolveAppLocale, translate } from "./locale";
 
-const translations = { en, de };
+const translations = { en, de, sw, es };
 
 /** Every language the app ships, in the order the language picker lists them. */
 export const SUPPORTED_LOCALES = Object.keys(translations) as AppLocale[];

@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, AlertIcon, useToast } from "@ds";
 import { t } from "../../../lib/i18n";
+import { mayRevealCardSecrets, withoutBlockedCardActions } from "../../../lib/wirex/accountBlocked";
 import { isWirexCardLast4 } from "../../../lib/wirex/cardActionMessage";
 import { isAwaitingReplacementCard, isWirexCardReady } from "../../../lib/wirex/cardState";
 import { wirexAccountService } from "../../../services/wirex/WirexAccountService";
@@ -110,9 +111,16 @@ export function useWirexCardLifecycle(snapshot: WirexCardState): WirexCardLifecy
 
   const revealCard = useCallback(async () => {
     if (!activeCard?.id || !snapshot.card?.id) return;
+    if (!mayRevealCardSecrets(snapshot.isAccountBlocked, activeCard.id)) return;
     void snapshot.silentRefetch();
     await reveal.reveal({ id: activeCard.id });
-  }, [activeCard, snapshot.card?.id, snapshot.silentRefetch, reveal.reveal]);
+  }, [
+    activeCard,
+    snapshot.card?.id,
+    snapshot.isAccountBlocked,
+    snapshot.silentRefetch,
+    reveal.reveal,
+  ]);
 
   // Manual "Add to wallet": reveal the PAN (one biometric signing), auto-copy it
   // so the paste is ready, and show the manual steps. Wirex has no in-app
@@ -123,8 +131,10 @@ export function useWirexCardLifecycle(snapshot: WirexCardState): WirexCardLifecy
     if (!cardReady) return undefined;
     const cardId = activeCard?.id;
     if (!cardId || !snapshot.card?.id) return undefined;
+    // Adding to a wallet reveals the PAN: same gate as the reveal.
+    if (!mayRevealCardSecrets(snapshot.isAccountBlocked, cardId)) return undefined;
     return () => void appleWallet.open(cardId);
-  }, [cardReady, activeCard?.id, snapshot.card?.id, appleWallet.open]);
+  }, [cardReady, activeCard?.id, snapshot.card?.id, snapshot.isAccountBlocked, appleWallet.open]);
 
   const issueNewCard = useCallback(() => {
     void snapshot.issueVirtualCard().then((ok) => {
@@ -158,23 +168,28 @@ export function useWirexCardLifecycle(snapshot: WirexCardState): WirexCardLifecy
   }, [activeCard?.id, activeCard?.last4, snapshot.closeCard, reveal.close, toast]);
 
   const detailsProps = useMemo<WirexCardLifecycleDetailsProps>(
-    () => ({
-      issueBusy: snapshot.actionBusy,
-      onIssueNewCard:
-        // Withheld while an earlier issuance is unresolved: a retry signs a fresh
-        // request, and replay protection is per signature, so tapping again
-        // before the outcome is known can produce a second card.
-        (cardReady || awaitingReplacementCard) && !snapshot.issueUnresolved
-          ? issueNewCard
-          : undefined,
-      closeError,
-      onCloseCard:
-        // Offered only with the digits in hand: they are signed and verified
-        // server-side (format first — `last4_must_be_4_digits`), so a card whose
-        // last4 we can't show as four digits can't be closed.
-        activeCard?.id && isWirexCardLast4(activeCard.last4) ? closeActiveCard : undefined,
-    }),
+    () =>
+      withoutBlockedCardActions<WirexCardLifecycleDetailsProps>(
+        {
+          issueBusy: snapshot.actionBusy,
+          onIssueNewCard:
+            // Withheld while an earlier issuance is unresolved: a retry signs a fresh
+            // request, and replay protection is per signature, so tapping again
+            // before the outcome is known can produce a second card.
+            (cardReady || awaitingReplacementCard) && !snapshot.issueUnresolved
+              ? issueNewCard
+              : undefined,
+          closeError,
+          onCloseCard:
+            // Offered only with the digits in hand: they are signed and verified
+            // server-side (format first — `last4_must_be_4_digits`), so a card whose
+            // last4 we can't show as four digits can't be closed.
+            activeCard?.id && isWirexCardLast4(activeCard.last4) ? closeActiveCard : undefined,
+        },
+        snapshot.isAccountBlocked,
+      ),
     [
+      snapshot.isAccountBlocked,
       snapshot.actionBusy,
       snapshot.issueUnresolved,
       cardReady,

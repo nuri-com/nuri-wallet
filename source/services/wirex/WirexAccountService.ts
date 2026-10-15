@@ -184,6 +184,11 @@ export interface WirexCardSnapshot {
   // deliberately having no usable card — not the incomplete response an empty
   // card list can also be, which is why the two cannot share a shape.
   allCardsClosed: boolean;
+  // Derived from user_status / bank_eligibility: the account was blocked by the
+  // partner bank. When true, the IBAN row and the issue-card CTA must not render
+  // (a blocked account still reads bank_accounts[].status "Active" and
+  // verification "Approved", so neither of those is the signal).
+  isAccountBlocked: boolean;
 }
 
 const INITIAL_STATE: WirexCardSnapshot = {
@@ -202,6 +207,7 @@ const INITIAL_STATE: WirexCardSnapshot = {
   isFrozen: null,
   allCardsClosed: false,
   holderName: null,
+  isAccountBlocked: false,
 };
 
 function hasCompleteApprovedSnapshot(snapshot: WirexCardSnapshot): boolean {
@@ -357,7 +363,14 @@ function mergePreservedSnapshot(
   }
 
   if (retainsPriorSnapshot(previous, next)) {
-    return { ...previous, loading: false, error: next.error };
+    // The cached display data may win; the block flag is safety state and
+    // always comes from the fresh read.
+    return {
+      ...previous,
+      loading: false,
+      error: next.error,
+      isAccountBlocked: next.isAccountBlocked,
+    };
   }
 
   // The name arrives on its own route, so a live /status read that predates it
@@ -1135,6 +1148,7 @@ class WirexAccountService {
       allCardsClosed,
       // From the cache; the fetch below fills it in and patches the snapshot.
       holderName: holderNameCache?.wallet === wallet ? holderNameCache.name : null,
+      isAccountBlocked: status.isAccountBlocked,
     };
     // Last gate before anything is published or persisted: a reset that landed
     // during /status or /wallet means this whole result belongs to the previous

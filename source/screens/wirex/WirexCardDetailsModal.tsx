@@ -38,6 +38,8 @@ import { useReveal } from "../../components/sensitiveReveal";
 import Spinner from "../../components/Spinner";
 import { SwapTryAgainView } from "../../components/SwapProcessingView";
 import { t } from "../../lib/i18n";
+import { detailsSheetPage, mayRevealCardSecrets } from "../../lib/wirex/accountBlocked";
+import { cardTabHolderName, cardTabOffersIssueOnly } from "../../lib/wirex/cardState";
 import { type WirexCardLimit, wirexService } from "../../services/wirex/WirexService";
 import WirexCardLimitEditor from "./WirexCardLimitEditor";
 import WirexCloseCardConfirm from "./WirexCloseCardConfirm";
@@ -62,6 +64,11 @@ type Props = {
   wallet: string | null;
   cardId: string | null;
   isFrozen: boolean | null;
+  // The account was blocked by the partner bank. When true the sheet shows only
+  // the block notice — no IBAN/BIC row, no card rows, no issue/close CTA. The
+  // parent already withholds iban/bic/onIssueNewCard; this gate makes the sheet
+  // render nothing but the notice regardless of what it is handed.
+  isAccountBlocked?: boolean;
   freezeBusy?: boolean;
   freezeError?: boolean;
   onToggleFreeze?: () => void;
@@ -120,6 +127,7 @@ const WirexCardDetailsModal: React.FC<Props> = ({
   wallet,
   cardId,
   isFrozen,
+  isAccountBlocked,
   freezeBusy,
   freezeError,
   onToggleFreeze,
@@ -133,7 +141,8 @@ const WirexCardDetailsModal: React.FC<Props> = ({
 }) => {
   const { isRevealed, toggle, reset } = useReveal();
   const [tab, setTab] = useState<WirexDetailsTab>(initialTab ?? "card");
-  const [page, setPage] = useState<ActivePage>("details");
+  const [requestedPage, setPage] = useState<ActivePage>("details");
+  const page = detailsSheetPage(requestedPage, Boolean(isAccountBlocked));
   const [limit, setLimit] = useState<WirexCardLimit | null>(null);
 
   const loadLimit = useCallback(async () => {
@@ -176,14 +185,16 @@ const WirexCardDetailsModal: React.FC<Props> = ({
     // First row on the tab: at an online checkout the name is asked for before
     // the number, and it is the field users cannot guess (Wirex holds no middle
     // name, so whatever is here is the complete name to type).
-    if (holderName) {
+    // Gated on the card like every other row here (see cardTabHolderName).
+    const cardHolder = cardTabHolderName(cardId, holderName);
+    if (cardHolder) {
       list.push({
         key: "holder",
         icon: "card",
-        title: holderName,
+        title: cardHolder,
         subtitle: t("screen.WirexCard.cardHolderLabel"),
         trailIcon: "copy",
-        onPress: () => void copyToClipboard(holderName),
+        onPress: () => void copyToClipboard(cardHolder),
       });
     }
     if (cardNumber) {
@@ -204,7 +215,7 @@ const WirexCardDetailsModal: React.FC<Props> = ({
       list.push(revealableRow("cvv", cvv, t("screen.CardScreen.overlayCvvLabel")));
     }
     return list;
-  }, [holderName, cardNumber, expiry, cvv, revealableRow]);
+  }, [cardId, holderName, cardNumber, expiry, cvv, revealableRow]);
 
   // Daily-limit row value, e.g. "€8000".
   const daily = limit?.daily_limit;
@@ -285,7 +296,7 @@ const WirexCardDetailsModal: React.FC<Props> = ({
   // still an action about the Card tab, and without the tab the footer CTA (gated
   // on it) would be unreachable. That is the only route left when the account's
   // last card was closed.
-  const offersIssueOnly = !cardId && Boolean(onIssueNewCard);
+  const offersIssueOnly = cardTabOffersIssueOnly(cardId, Boolean(onIssueNewCard));
   const hasCardTabContent =
     cardItems.length > 0 ||
     showFreezeRow ||
@@ -331,6 +342,7 @@ const WirexCardDetailsModal: React.FC<Props> = ({
     }
     if (
       activeTab === "card" &&
+      mayRevealCardSecrets(Boolean(isAccountBlocked), cardId) &&
       !hasCardSecrets &&
       loading !== true &&
       isFrozen !== true &&
@@ -339,7 +351,16 @@ const WirexCardDetailsModal: React.FC<Props> = ({
       requestedRevealRef.current = true;
       onRequestReveal?.();
     }
-  }, [visible, activeTab, hasCardSecrets, loading, isFrozen, onRequestReveal]);
+  }, [
+    visible,
+    activeTab,
+    isAccountBlocked,
+    cardId,
+    hasCardSecrets,
+    loading,
+    isFrozen,
+    onRequestReveal,
+  ]);
 
   // Static heading — the current limit renders once, inside the page.
   const title =
@@ -365,13 +386,20 @@ const WirexCardDetailsModal: React.FC<Props> = ({
     </List>
   );
 
-  const showIssueCta = page === "details" && !loading && activeTab === "card" && !!onIssueNewCard;
+  const showIssueCta =
+    page === "details" && !loading && activeTab === "card" && !!onIssueNewCard && !isAccountBlocked;
   // Closing is destructive and irreversible: it sits at the very bottom of the
   // Card tab, below freeze, and only opens the confirm page — never acts on tap.
   const showCloseAction =
-    page === "details" && !loading && activeTab === "card" && Boolean(cardId) && !!onCloseCard;
+    page === "details" &&
+    !loading &&
+    activeTab === "card" &&
+    Boolean(cardId) &&
+    !!onCloseCard &&
+    !isAccountBlocked;
   // The confirm itself sits in the footer, where every full-screen sheet puts its
   // primary action.
+  // A block forces `page` back to details, so an open confirm loses its CTA too.
   const showCloseCta = page === "close" && !!onCloseCard;
 
   return (
@@ -419,6 +447,15 @@ const WirexCardDetailsModal: React.FC<Props> = ({
           ) : page === "close" ? (
             <View paddingX="lg">
               <WirexCloseCardConfirm error={closeError} />
+            </View>
+          ) : isAccountBlocked ? (
+            // Blocked account: one plain sentence, nothing else. No IBAN/BIC
+            // row, no card rows, no issue/close CTA — a blocked account must not
+            // look like it can receive money or mint a card.
+            <View paddingX="lg">
+              <Text size="md" muted align="center">
+                {t("screen.WirexCard.blockedNotice")}
+              </Text>
             </View>
           ) : loading ? (
             <View direction="column" align="center" paddingY="xl">

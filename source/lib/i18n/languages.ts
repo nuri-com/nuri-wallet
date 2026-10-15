@@ -8,4 +8,6 @@ import type { AppLocale } from "./index";
 export const LANGUAGE_OPTIONS: Record<AppLocale, { label: string; flag: ImageSourcePropType }> = {
   en: { label: "English", flag: require("../../assets/flags/gbr.png") },
   de: { label: "Deutsch", flag: require("../../assets/flags/deu.png") },
+  sw: { label: "Kiswahili", flag: require("../../assets/flags/tza.png") },
+  es: { label: "Español", flag: require("../../assets/flags/esp.png") },
 };

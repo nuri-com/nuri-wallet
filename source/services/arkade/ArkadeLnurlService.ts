@@ -262,6 +262,11 @@ export async function hydrateArkadeLnurlStatus(): Promise<void> {
   }
 }
 
+function isExpiredAuthError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("http_401") && message.includes("token expired");
+}
+
 export async function claimArkadeLnurlUsername(username: string): Promise<ArkadeLnurlStatus> {
   const normalized = normalizeLnurlUsername(username);
   if (!/^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/.test(normalized)) {
@@ -283,14 +288,29 @@ export async function claimArkadeLnurlUsername(username: string): Promise<Arkade
     status: "attempt",
     detail: `username=${normalized} evm=${local.evmAddress ? 1 : 0} ark=${local.arkadeAddress ? 1 : 0} btc=${local.btcAddress ? 1 : 0}`,
   });
-  await arkadeLnurlRegister(assertion, {
+  const payload = {
     username: normalized,
     client_pk33: pubCtx.clientPk33,
     aggregated_pk33: pubCtx.aggregatedPk33,
     ...(local.evmAddress ? { evm_address: local.evmAddress } : {}),
     ...(local.arkadeAddress ? { arkade_address: local.arkadeAddress } : {}),
     ...(local.btcAddress ? { btc_address: local.btcAddress } : {}),
-  });
+  };
+  try {
+    await arkadeLnurlRegister(assertion, payload);
+  } catch (error) {
+    if (!isExpiredAuthError(error)) throw error;
+    // The reused passkey login expired on the server while the user sat on the
+    // claim screen: ask for one fresh passkey prompt and claim again (#1377).
+    emitTrace({
+      atMs: Date.now(),
+      op: "lnurl_register",
+      status: "retry",
+      detail: `username=${normalized} why=auth_expired`,
+    });
+    const fresh = await identity.getPrfSigningAssertion(true, "lnurl_register_auth_expired");
+    await arkadeLnurlRegister(fresh, payload);
+  }
   emitTrace({
     atMs: Date.now(),
     op: "lnurl_register",

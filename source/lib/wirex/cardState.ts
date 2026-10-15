@@ -52,3 +52,21 @@ export function detailsSheetCardId(
   if (!snapshot?.cards.length) return null;
   return activeCardId ?? null;
 }
+
+/**
+ * The holder name the Card tab shows, or null. The name comes from the Wirex
+ * PROFILE, not from a card, so it survives closing the last card; without a card
+ * it would leave a lone "Name auf der Karte" row that reads as a broken card.
+ * The name stays on the bank tab, where it belongs to the account.
+ */
+export function cardTabHolderName(
+  cardId: string | null,
+  holderName: string | null | undefined,
+): string | null {
+  return cardId && holderName ? holderName : null;
+}
+
+/** With no card the Card tab offers only "issue a new card", when that action exists. */
+export function cardTabOffersIssueOnly(cardId: string | null, canIssueNewCard: boolean): boolean {
+  return !cardId && canIssueNewCard;
+}

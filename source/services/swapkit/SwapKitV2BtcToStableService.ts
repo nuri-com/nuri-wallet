@@ -24,7 +24,10 @@ import { wirexService } from "../wirex/WirexService";
 // Static import for the same reason as SwapContract/SwapKitCardTopupService: the
 // web export is one bundle, so an async require has no chunk to resolve and the
 // on-chain funding leg would throw "Requiring unknown module" on the PWA.
-import { sendBitcoinOnchainFromMusig2 } from "../bitcoin/OnchainSendService";
+import {
+  preflightOnchainSendFromMusig2,
+  sendBitcoinOnchainFromMusig2,
+} from "../bitcoin/OnchainSendService";
 import {
   type SwapKitV2SignerClass,
   SWAPKIT_V2_ACTION_KINDS,
@@ -265,6 +268,14 @@ export async function executeV2BtcToStable(
           ? "On-chain wallet is not ready yet — try again in a moment."
           : "Bitcoin refund address is missing or invalid.",
       );
+    }
+
+    // The on-chain wallet pays the deposit AND the miner fee on top. Prove the
+    // PSBT can be built BEFORE the commit: committing first opened a provider
+    // order the wallet then could not fund ("could not build PSBT (insufficient
+    // funds for fee)"), and every retry opened another unpaid one.
+    if (args.rail === BTC_ONCHAIN_ASSET && args.sendSource === "onchain") {
+      await preflightOnchainSendFromMusig2(args.sats);
     }
 
     args.onStatus?.(t("swap.status.exchanging"));

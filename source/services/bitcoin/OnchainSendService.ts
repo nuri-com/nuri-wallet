@@ -56,6 +56,64 @@ export async function estimateOnchainSendFeeSats(): Promise<number> {
 }
 
 /**
+ * The on-chain wallet cannot pay `amountSats` AND the miner fee on top of it.
+ * Thrown by the preflight below before anything with a side effect runs, so a
+ * caller never opens a provider order the wallet then cannot fund.
+ */
+export class OnchainFeeShortfallError extends Error {
+  readonly code = "onchain_fee_shortfall";
+  constructor(
+    /** The most the recipient can receive with the current UTXOs and fee rate. */
+    readonly maxSendableSats: number,
+    /** The miner fee that has to be left in the wallet for that spend. */
+    readonly feeSats: number,
+  ) {
+    super(
+      maxSendableSats > 0
+        ? `Not enough bitcoin left for the network fee (about ${feeSats} sats). ` +
+            `You can move up to ${maxSendableSats} sats from this wallet right now.`
+        : `Not enough bitcoin to cover the network fee (about ${feeSats} sats).`,
+    );
+    this.name = "OnchainFeeShortfallError";
+  }
+}
+
+/**
+ * Prove, before any side effect, that the MuSig2 wallet can fund `amountSats`
+ * plus its miner fee. Builds the same PSBT the send will build — never signs,
+ * never broadcasts, registers no intent — paying the wallet's own P2TR address:
+ * P2TR is the largest output script there is, so a real deposit address of any
+ * type costs no more than this. The send itself stays the authority; this only
+ * moves its "insufficient funds for fee" refusal ahead of the provider order.
+ */
+export async function preflightOnchainSendFromMusig2(
+  amountSats: number,
+): Promise<{ feeSats: number }> {
+  const sats = Math.trunc(Number(amountSats));
+  if (!Number.isFinite(sats) || sats <= 0) throw new Error("amount_sats must be above zero");
+  const from = walletService.getMusig2SendSource();
+  if (!from) throw new Error("onchain_send_wallet_unavailable");
+  try {
+    const built = await buildBitcoinSendPsbt({ toAddress: from.address, from, amountSats: sats });
+    return { feeSats: Number(built.fee) };
+  } catch (error: unknown) {
+    if (!/insufficient funds for fee/.test(errMsg(error, ""))) throw error;
+    const utxos: Array<{ value: number }> = await blockchainService
+      .fetchUTXOs(from.address)
+      .catch((): Array<{ value: number }> => []);
+    const totalSats = utxos.reduce((sum, utxo) => sum + (Number(utxo.value) || 0), 0);
+    const feeSats = await estimateBitcoinSendFeeSats(utxos.length);
+    logWithId(
+      `${LOG_EMOJI.bitcoin} Bitcoin.onchainSend`,
+      "preflight refused: fee shortfall",
+      { requestedSats: sats, totalSats, feeSats, stage: "preflight", sideEffect: "none" },
+      { context: "user", event: "API_ERR", action: "send", source: `${SOURCE}#preflight` },
+    );
+    throw new OnchainFeeShortfallError(Math.max(0, totalSats - feeSats), feeSats);
+  }
+}
+
+/**
  * Send from the MuSig2 on-chain wallet to a Bitcoin address.
  *
  * The amount is what the RECIPIENT receives; the miner fee is added on top and

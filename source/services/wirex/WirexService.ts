@@ -55,6 +55,7 @@ import {
   buildWirexSepaTransferMessage,
 } from "../../lib/wirex/cardActionMessage";
 import { verifyRegisterCallData } from "../../lib/wirex/registerVerification";
+import { isAccountBlocked, type WirexBankEligibility } from "../../lib/wirex/accountBlocked";
 import { authStateManager } from "../auth/AuthStateService";
 import { EventBus } from "../events/AppEventBusService";
 import { wirexConfig } from "./wirexConfig";
@@ -181,6 +182,12 @@ interface StatusData {
   bank_accounts?: WirexBankAccount[];
   cards?: WirexCard[];
   capabilities?: WirexCapability[] | null;
+  // The Wirex profile's user_status ("" | "Active" | "Deleted" | "Blocked" | …)
+  // and the per-rail bank eligibility. Both carry the block signal that
+  // verification_status (historic KYC) and bank_accounts[].status (stays
+  // "Active" on a blocklist offboard) do not.
+  user_status?: string | null;
+  bank_eligibility?: WirexBankEligibility[] | null;
 }
 
 // ── Wallet endpoint shape (GET /wallet?wallet=<eoa>) ──────────────────
@@ -296,6 +303,13 @@ export interface WirexStatusResult {
   bankAccounts: unknown[];
   cards: unknown[];
   capabilities: WirexCapability[];
+  // The Wirex profile's user_status ("" | "Active" | "Deleted" | "Blocked" | …)
+  // and the per-rail bank eligibility, passed through verbatim for the block
+  // derivation.
+  userStatus: string | null;
+  bankEligibility: WirexBankEligibility[];
+  // Derived: the account is blocked — no IBAN row, no "issue card" CTA.
+  isAccountBlocked: boolean;
 }
 
 export interface WirexTokenBalance {
@@ -1220,12 +1234,19 @@ class WirexService {
       },
       { authorized: true, abortIf },
     );
+    const bankEligibility = Array.isArray(data.bank_eligibility) ? data.bank_eligibility : [];
     const result: WirexStatusResult = {
       verificationStatus: data.verification_status ?? data.status ?? "unknown",
       kycUrl: data.kyc_url ?? null,
       bankAccounts: Array.isArray(data.bank_accounts) ? data.bank_accounts : [],
       cards: Array.isArray(data.cards) ? data.cards : [],
       capabilities: Array.isArray(data.capabilities) ? data.capabilities : [],
+      userStatus: data.user_status ?? null,
+      bankEligibility,
+      isAccountBlocked: isAccountBlocked({
+        userStatus: data.user_status ?? null,
+        bankEligibility,
+      }),
     };
 
     // When no card has been issued yet, gather the diagnostic detail: /status's
