@@ -14,6 +14,7 @@
 import {
   decodeAbiParameters,
   decodeFunctionData,
+  isAddress,
   isAddressEqual,
   keccak256,
   parseAbi,
@@ -584,13 +585,14 @@ const PERMIT_CALL_ABI = parseAbi([
 ]);
 
 /**
- * A CoW order commits to its appData only by hash. The zero hash (the approve
- * route) carries nothing. Any other hash must come with the canonical JSON it
- * hashes, and that JSON may hold exactly one thing: a pre-hook that calls
- * permit() on the source token for this wallet, to the Vault Relayer, covering
- * the order and not outliving the deadline rules. Anything else in it (post
- * hooks, partner fees, other metadata) is refused, because the wallet cannot
- * see what it would do.
+ * A CoW order commits to its appData only by hash. The zero hash carries
+ * nothing. Any other hash must come with the canonical JSON it hashes, and that
+ * JSON may hold only two things: Nuri's partner fee (a share of volume of at
+ * most 100 bps, CoW's own cap, already out of the signed buy amount) and/or a
+ * pre-hook that calls permit() on the source token for this wallet, to the
+ * Vault Relayer, covering the order and not outliving the deadline rules.
+ * Anything else in it (post hooks, other fee shapes, other metadata) is
+ * refused, because the wallet cannot see what it would do.
  */
 function assertCowAppDataBound(
   appDataJson: unknown,
@@ -622,8 +624,25 @@ function assertCowAppDataBound(
     throw new Error("CoW order appData is not readable JSON.");
   }
   const metadata = (doc.metadata ?? {}) as Record<string, unknown>;
-  if (Object.keys(metadata).some((key) => key !== "hooks")) {
-    throw new Error("CoW order appData carries metadata other than the permit hook.");
+  if (Object.keys(metadata).some((key) => key !== "hooks" && key !== "partnerFee")) {
+    throw new Error("CoW order appData carries metadata other than the permit hook and fee.");
+  }
+  if (metadata.partnerFee != null) {
+    const fee = metadata.partnerFee as Record<string, unknown>;
+    const bps = fee.volumeBps;
+    if (
+      typeof fee !== "object" ||
+      Array.isArray(fee) ||
+      Object.keys(fee).some((key) => key !== "volumeBps" && key !== "recipient") ||
+      !Number.isInteger(bps) ||
+      (bps as number) < 1 ||
+      (bps as number) > 100 ||
+      typeof fee.recipient !== "string" ||
+      !isAddress(fee.recipient)
+    ) {
+      throw new Error("CoW order appData carries a fee other than a volume fee of at most 1%.");
+    }
+    if (metadata.hooks == null) return;
   }
   const hooks = (metadata.hooks ?? {}) as Record<string, unknown>;
   if (Object.keys(hooks).some((key) => key !== "version" && key !== "pre" && key !== "post")) {
