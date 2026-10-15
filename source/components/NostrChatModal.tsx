@@ -1814,12 +1814,12 @@ const NostrChatModal: React.FC<Props> = ({
                 accent="lilac"
                 onPress={() => EventBus.emit("app:openInternalLink", V1_WALLET_MIGRATION_LINK)}
               >
-                <ButtonText>Migrate Funds</ButtonText>
+                <ButtonText>{t("screen.NostrChatModal.migrateFunds")}</ButtonText>
               </Button>
             ) : keypairOverride && onCreatePasskey && autoSentRef.current ? (
               <View direction="column" align="stretch" gap="sm">
                 <ChatBubble outgoing={false} highlight>
-                  We updated Nuri, please create a new passkey here.
+                  {t("screen.NostrChatModal.newPasskeyPrompt")}
                 </ChatBubble>
                 {isNativePasskeyLoginAvailable() ? (
                   <Button
@@ -1829,12 +1829,12 @@ const NostrChatModal: React.FC<Props> = ({
                     disabled={nativePasskeyBusy}
                     onPress={() => void handleNativeCreatePasskey()}
                   >
-                    <ButtonText>Create Passkey Wallet</ButtonText>
+                    <ButtonText>{t("screen.PasskeyLoginScreen.passkeyButton")}</ButtonText>
                   </Button>
                 ) : (
                   <PasskeyWebAuthnPrfView
                     mode="create"
-                    buttonLabel="Create Passkey Wallet"
+                    buttonLabel={t("screen.PasskeyLoginScreen.passkeyButton")}
                     label={newPasskeyLabel}
                     onAttemptStart={() => setStatus(null)}
                     onCreateResult={onCreatePasskey}

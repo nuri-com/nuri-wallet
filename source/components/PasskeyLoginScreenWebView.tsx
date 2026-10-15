@@ -334,15 +334,14 @@ function PasskeyLoginScreenWebViewInner({
       <View style={styles.unsupportedContainer}>
         <DsView variant="soft" radius="lg" padding="lg" direction="column" align="stretch" gap="sm">
           <Text size="md" emphasis>
-            Passkeys are not available here.
+            {t("screen.PasskeyLoginScreen.webauthnUnavailableTitle")}
           </Text>
           <Text size="md" muted>
-            WebAuthn is unavailable in this WebView. Use a physical Android device in Chrome or an
-            iOS device to create/import a passkey.
+            {t("screen.PasskeyLoginScreen.webauthnUnavailableBody")}
           </Text>
           {onDismiss ? (
             <Button size="sm" variant="solid" accent="neutral" onPress={onDismiss}>
-              <ButtonText>Close</ButtonText>
+              <ButtonText>{t("common.close")}</ButtonText>
             </Button>
           ) : null}
         </DsView>

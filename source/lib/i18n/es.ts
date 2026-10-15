@@ -91,6 +91,9 @@ export const es = {
       },
     },
     PasskeyLoginScreen: {
+      webauthnUnavailableTitle: "Las passkeys no están disponibles aquí.",
+      webauthnUnavailableBody:
+        "Esta vista del navegador no puede crear ni usar passkeys. Abre Nuri en Chrome en Android o en un iPhone para crear o importar una passkey.",
       headline: "Nuri Bitcoin Neowallet con VISA e IBAN gratis",
       passkeyButton: "Crear cartera con passkey",
       restoreWallet: "Usar passkey existente",
@@ -161,6 +164,7 @@ export const es = {
       onchainTitle: "Saldo onchain",
     },
     BitcoinTransactionsModal: {
+      title: "Actividad de Bitcoin",
       pendingBalanceLabel: "Bitcoin pendiente",
     },
     BitcoinReceiveModal: {
@@ -290,6 +294,7 @@ export const es = {
       errorDefault: "No se pudo actualizar el límite diario",
     },
     CardTransactionsModal: {
+      title: "Actividad de la tarjeta",
       empty: "Aún no hay transacciones",
       errorDefault: "No se pudieron cargar las transacciones",
       typeRefund: "Reembolso",
@@ -298,6 +303,7 @@ export const es = {
       statusFailed: "Rechazado",
     },
     WalletTransactionsModal: {
+      title: "Actividad de efectivo",
       fromSomeone: "De alguien",
       toSomeone: "Para alguien",
       fromYourWallet: "De tu cartera",
@@ -344,6 +350,8 @@ export const es = {
       generateAddressHint: "Genera una dirección BTC para continuar",
     },
     NostrChatModal: {
+      migrateFunds: "Migrar fondos",
+      newPasskeyPrompt: "Hemos actualizado Nuri, crea aquí una nueva passkey.",
       userWithSuffix: "Usuario %{suffix}",
       supportKeyInvalid: "La clave de soporte no es válida.",
       supportKeyNotConfigured: "Clave de soporte no configurada.",

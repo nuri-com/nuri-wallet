@@ -92,6 +92,9 @@ export const sw = {
       },
     },
     PasskeyLoginScreen: {
+      webauthnUnavailableTitle: "Passkey hazipatikani hapa.",
+      webauthnUnavailableBody:
+        "Mwonekano huu wa kivinjari hauwezi kuunda au kutumia passkey. Fungua Nuri kwenye Chrome kwenye Android au kwenye iPhone ili kuunda au kuingiza passkey.",
       headline: "Nuri Bitcoin Neowallet yenye VISA na IBAN bure",
       passkeyButton: "Unda Pochi ya Passkey",
       restoreWallet: "Tumia Passkey uliyonayo",
@@ -162,6 +165,7 @@ export const sw = {
       onchainTitle: "Salio la onchain",
     },
     BitcoinTransactionsModal: {
+      title: "Shughuli za Bitcoin",
       pendingBalanceLabel: "Bitcoin inayosubiri",
     },
     BitcoinReceiveModal: {
@@ -293,6 +297,7 @@ export const sw = {
       errorDefault: "Imeshindwa kusasisha kikomo cha siku",
     },
     CardTransactionsModal: {
+      title: "Shughuli za kadi",
       empty: "Bado hakuna miamala",
       errorDefault: "Imeshindwa kupakia miamala",
       typeRefund: "Marejesho",
@@ -301,6 +306,7 @@ export const sw = {
       statusFailed: "Imekataliwa",
     },
     WalletTransactionsModal: {
+      title: "Shughuli za pesa",
       fromSomeone: "Kutoka kwa mtu",
       toSomeone: "Kwa mtu",
       fromYourWallet: "Kutoka pochi yako",
@@ -342,6 +348,8 @@ export const sw = {
       generateAddressHint: "Tengeneza anwani ya BTC ili kuendelea",
     },
     NostrChatModal: {
+      migrateFunds: "Hamisha fedha",
+      newPasskeyPrompt: "Tumesasisha Nuri, tafadhali unda passkey mpya hapa.",
       userWithSuffix: "Mtumiaji %{suffix}",
       supportKeyInvalid: "Ufunguo wa msaada si sahihi.",
       supportKeyNotConfigured: "Ufunguo wa msaada haujawekwa.",

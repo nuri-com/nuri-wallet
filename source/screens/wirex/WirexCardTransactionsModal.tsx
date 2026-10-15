@@ -109,7 +109,7 @@ const WirexCardTransactionsModal: React.FC<Props> = ({
       <ActivitySheet
         visible={visible}
         onClose={onClose}
-        title="Card Activity"
+        title={t("screen.CardTransactionsModal.title")}
         items={pendingRows.length > 0 ? [...pendingRows, ...items] : items}
         loading={loading}
         refreshing={refreshing}

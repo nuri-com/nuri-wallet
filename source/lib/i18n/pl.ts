@@ -98,6 +98,9 @@ export const pl = {
       },
     },
     PasskeyLoginScreen: {
+      webauthnUnavailableTitle: "Passkey nie jest tu dostępny.",
+      webauthnUnavailableBody:
+        "Ten widok przeglądarki nie obsługuje passkey. Otwórz Nuri w Chrome na Androidzie lub na iPhonie, aby utworzyć lub zaimportować passkey.",
       headline: "Nuri – neoportfel Bitcoin z darmową VISA i IBAN",
       passkeyButton: "Utwórz portfel z passkey",
       restoreWallet: "Użyj istniejącego passkey",
@@ -164,6 +167,7 @@ export const pl = {
       onchainTitle: "Saldo onchain",
     },
     BitcoinTransactionsModal: {
+      title: "Aktywność Bitcoin",
       pendingBalanceLabel: "Bitcoin w toku",
     },
     BitcoinReceiveModal: {
@@ -292,6 +296,7 @@ export const pl = {
       errorDefault: "Nie udało się zmienić dziennego limitu",
     },
     CardTransactionsModal: {
+      title: "Aktywność karty",
       empty: "Brak transakcji",
       errorDefault: "Nie udało się wczytać transakcji",
       typeRefund: "Zwrot",
@@ -300,6 +305,7 @@ export const pl = {
       statusFailed: "Odrzucona",
     },
     WalletTransactionsModal: {
+      title: "Aktywność gotówki",
       fromSomeone: "Od kogoś",
       toSomeone: "Do kogoś",
       fromYourWallet: "Z twojego portfela",
@@ -346,6 +352,8 @@ export const pl = {
       generateAddressHint: "Wygeneruj adres BTC, aby kontynuować",
     },
     NostrChatModal: {
+      migrateFunds: "Przenieś środki",
+      newPasskeyPrompt: "Zaktualizowaliśmy Nuri, utwórz tutaj nowy passkey.",
       userWithSuffix: "Użytkownik %{suffix}",
       supportKeyInvalid: "Klucz pomocy jest nieprawidłowy.",
       supportKeyNotConfigured: "Klucz pomocy nie jest skonfigurowany.",

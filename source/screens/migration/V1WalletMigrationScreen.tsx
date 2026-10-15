@@ -7,6 +7,7 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { IconButton, useNuriTheme, View } from "@ds";
 import ScreenHeader from "../../components/ScreenHeader";
 import { Layer } from "../../components/LayerHost";
+import { t } from "../../lib/i18n";
 
 const V1_WALLET_URL = "https://v1.nuri.com";
 
@@ -76,7 +77,12 @@ export default function V1WalletMigrationScreen({
       <View chrome="canvas" direction="column" align="stretch" fill="grow">
         <ScreenHeader
           rightExtra={
-            <IconButton icon="cross" variant="soft" accessibilityLabel="Close" onPress={onClose} />
+            <IconButton
+              icon="cross"
+              variant="soft"
+              accessibilityLabel={t("common.close")}
+              onPress={onClose}
+            />
           }
         />
         <View fill="grow">

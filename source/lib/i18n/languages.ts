@@ -16,4 +16,6 @@ export const LANGUAGE_OPTIONS: Record<AppLocale, { label: string; flag: ImageSou
   pl: { label: "Polski", flag: require("../../assets/flags/pol.png") },
   "pt-PT": { label: "Português (Portugal)", flag: require("../../assets/flags/prt.png") },
   "pt-BR": { label: "Português (Brasil)", flag: require("../../assets/flags/bra.png") },
+  tr: { label: "Türkçe", flag: require("../../assets/flags/tur.png") },
+  uk: { label: "Українська", flag: require("../../assets/flags/ukr.png") },
 };

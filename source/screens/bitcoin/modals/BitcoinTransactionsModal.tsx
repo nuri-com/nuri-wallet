@@ -512,7 +512,7 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
       <ActivitySheet
         visible={visible}
         onClose={onClose}
-        title="Bitcoin Activity"
+        title={t("screen.BitcoinTransactionsModal.title")}
         items={items}
         loading={loading}
         refreshing={refreshing}

@@ -426,7 +426,7 @@ const WalletTransactionsModal: React.FC<Props> = ({
       <ActivitySheet
         visible={visible}
         onClose={onClose}
-        title="Cash Activity"
+        title={t("screen.WalletTransactionsModal.title")}
         items={items}
         loading={loading}
         refreshing={refreshing}

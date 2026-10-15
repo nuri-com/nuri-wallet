@@ -96,6 +96,9 @@ export const nl = {
       },
     },
     PasskeyLoginScreen: {
+      webauthnUnavailableTitle: "Passkeys zijn hier niet beschikbaar.",
+      webauthnUnavailableBody:
+        "Deze browserweergave kan geen passkeys maken of gebruiken. Open Nuri in Chrome op Android of op een iPhone om een passkey te maken of te importeren.",
       headline: "Nuri Bitcoin-neowallet met gratis VISA & IBAN",
       passkeyButton: "Passkey-wallet maken",
       restoreWallet: "Bestaande passkey gebruiken",
@@ -163,6 +166,7 @@ export const nl = {
       onchainTitle: "Onchain-saldo",
     },
     BitcoinTransactionsModal: {
+      title: "Bitcoin-activiteit",
       pendingBalanceLabel: "Bitcoin in behandeling",
     },
     BitcoinReceiveModal: {
@@ -289,6 +293,7 @@ export const nl = {
       errorDefault: "Daglimiet kon niet worden bijgewerkt",
     },
     CardTransactionsModal: {
+      title: "Kaartactiviteit",
       empty: "Nog geen transacties",
       errorDefault: "Transacties konden niet worden geladen",
       typeRefund: "Terugbetaling",
@@ -297,6 +302,7 @@ export const nl = {
       statusFailed: "Geweigerd",
     },
     WalletTransactionsModal: {
+      title: "Cash-activiteit",
       fromSomeone: "Van iemand",
       toSomeone: "Aan iemand",
       fromYourWallet: "Van je wallet",
@@ -344,6 +350,8 @@ export const nl = {
       generateAddressHint: "Maak een BTC-adres aan om verder te gaan",
     },
     NostrChatModal: {
+      migrateFunds: "Geld overzetten",
+      newPasskeyPrompt: "We hebben Nuri bijgewerkt, maak hier een nieuwe passkey aan.",
       userWithSuffix: "Gebruiker %{suffix}",
       supportKeyInvalid: "Supportsleutel is ongeldig.",
       supportKeyNotConfigured: "Supportsleutel niet ingesteld.",

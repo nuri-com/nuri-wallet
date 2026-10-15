@@ -2,7 +2,7 @@ export const de = {
   screen: {
     PaymentReceivedModal: {
       title: "Bitcoin-Zahlung erhalten",
-      unlockButton: "Passkey Unlock",
+      unlockButton: "Mit Passkey entsperren",
       laterButton: "Später claimen",
     },
     DesktopGate: {
@@ -93,6 +93,9 @@ export const de = {
       },
     },
     PasskeyLoginScreen: {
+      webauthnUnavailableTitle: "Passkeys sind hier nicht verfügbar.",
+      webauthnUnavailableBody:
+        "Diese Browseransicht kann keine Passkeys erstellen oder nutzen. Öffne Nuri in Chrome auf Android oder auf einem iPhone, um einen Passkey zu erstellen oder zu importieren.",
       headline: "Nuri Bitcoin Neowallet mit gratis VISA & IBAN",
       passkeyButton: "Passkey-Wallet erstellen",
       restoreWallet: "Vorhandenen Passkey verwenden",
@@ -159,6 +162,7 @@ export const de = {
       onchainTitle: "Onchain-Guthaben",
     },
     BitcoinTransactionsModal: {
+      title: "Bitcoin-Aktivität",
       pendingBalanceLabel: "Ausstehende Bitcoin",
     },
     BitcoinReceiveModal: {
@@ -292,6 +296,7 @@ export const de = {
       errorDefault: "Tageslimit konnte nicht aktualisiert werden",
     },
     CardTransactionsModal: {
+      title: "Kartenaktivität",
       empty: "Noch keine Transaktionen",
       errorDefault: "Transaktionen konnten nicht geladen werden",
       typeRefund: "Erstattung",
@@ -300,6 +305,7 @@ export const de = {
       statusFailed: "Abgelehnt",
     },
     WalletTransactionsModal: {
+      title: "Cash-Aktivität",
       fromSomeone: "Von jemandem",
       toSomeone: "An jemanden",
       fromYourWallet: "Von deinem Wallet",
@@ -347,6 +353,8 @@ export const de = {
       generateAddressHint: "Erstelle eine BTC-Adresse, um fortzufahren",
     },
     NostrChatModal: {
+      migrateFunds: "Guthaben umziehen",
+      newPasskeyPrompt: "Wir haben Nuri aktualisiert, bitte erstelle hier einen neuen Passkey.",
       userWithSuffix: "Nutzer %{suffix}",
       supportKeyInvalid: "Support-Schl\u00fcssel ist ung\u00fcltig.",
       supportKeyNotConfigured: "Support-Schl\u00fcssel nicht konfiguriert.",
@@ -374,7 +382,7 @@ export const de = {
       shareLogsSent: "Logs gesendet",
       shareLogsSending: "senden\u2026",
       shareLogsFailed: "senden fehlgeschlagen",
-      shareLogsLabel: "Share Info",
+      shareLogsLabel: "Infos teilen",
       loadedVersion: "Geladene App-Version: %{version}",
       switchPasskey: "Logout",
       switchingPasskey: "Abmelden…",

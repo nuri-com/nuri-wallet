@@ -10,9 +10,11 @@ import { nl } from "./nl";
 import { pl } from "./pl";
 import { ptPT } from "./pt-PT";
 import { ptBR } from "./pt-BR";
+import { tr } from "./tr";
+import { uk } from "./uk";
 import { resolveAppLocale, translate } from "./locale";
 
-const translations = { en, de, sw, es, fr, it, nl, pl, "pt-PT": ptPT, "pt-BR": ptBR };
+const translations = { en, de, sw, es, fr, it, nl, pl, "pt-PT": ptPT, "pt-BR": ptBR, tr, uk };
 
 /** Every language the app ships, in the order the language picker lists them. */
 export const SUPPORTED_LOCALES = Object.keys(translations) as AppLocale[];
