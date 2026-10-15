@@ -58,6 +58,7 @@ import {
   abortAppLock,
   addWalletUnlockedListener,
 } from "./lib/secureKeyStorage";
+import { isMissingPrfError } from "./lib/auth/passkeyErrorClassification";
 import { USERNAME_CLAIM_REQUIRED_KEY } from "./lib/auth/usernameClaimSentinel";
 import {
   parsePasskeyUsernamePath,
@@ -175,6 +176,7 @@ installAlertSuppression();
 const BIOMETRIC_SETUP_MESSAGE = () => t("screen.App.biometricSetupMessage");
 const LOCK_SCREEN_SETUP_MESSAGE = () => t("screen.App.lockScreenSetupMessage");
 const PASSCODE_AUTH_UNSUPPORTED_MESSAGE = () => t("screen.App.passcodeAuthUnsupportedMessage");
+const PASSKEY_PRF_UNSUPPORTED_MESSAGE = () => t("screen.App.passkeyPrfUnsupportedMessage");
 // Returning to the foreground re-locks only if the app was backgrounded for at
 // least this long. A quick hop out (e.g. copying an address) returns within the
 // grace window and skips the Face ID prompt; longer absences re-lock.
@@ -1265,6 +1267,22 @@ function WalletApp() {
       // Don't close the WebView for user cancellations - let them try again
       const lowerError = error.toLowerCase();
       setWelcomeFooterMessage(null);
+      // The provider created a credential but returned no PRF, so there is no
+      // wallet seed. Without this the generic passkey_native branch below
+      // resets to Welcome silently and the user just retries forever.
+      //
+      // isMissingPrfError matches exact tokens, never a bare "prf" substring:
+      // PasskeyLoginScreenWebView.tsx:152 stamps EVERY create-ceremony
+      // exception as `error:create_prf:<Name>:<msg>`, so a substring test
+      // swallows iOS cancellations and shows them a provider-capability
+      // message. Cancellations must keep falling through to the branch below —
+      // the user knows they cancelled; a PRF failure looked like success.
+      if (isMissingPrfError(lowerError)) {
+        console.log("[App:handleError] Provider returned no PRF - keeping welcome open");
+        setWelcomeFooterMessage(PASSKEY_PRF_UNSUPPORTED_MESSAGE());
+        resetToWelcome();
+        return;
+      }
       if (lowerError.includes("passkey_native")) {
         console.log("[App:handleError] Passkey native error - keeping welcome open");
         resetToWelcome();

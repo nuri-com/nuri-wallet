@@ -309,6 +309,8 @@ export const es = {
       previousWalletNotRemoved:
         "La cartera anterior aún no se pudo quitar de este dispositivo. Reinicia la app e inténtalo de nuevo.",
       biometricSetupMessage: "Activa la biometría e inténtalo de nuevo",
+      passkeyPrfUnsupportedMessage:
+        "Tu gestor de contraseñas no puede desbloquear una cartera con esta passkey. Inténtalo con otro proveedor de passkeys, como 1Password, el llavero integrado de tu dispositivo o Google Password Manager en Android 14 o superior.",
       lockScreenSetupMessage: "Configura un código de bloqueo del dispositivo e inténtalo de nuevo",
       passcodeAuthUnsupportedMessage:
         "Este dispositivo no puede guardar las claves de la cartera de forma segura. Añade una huella o usa un dispositivo con Android 11 o superior.",

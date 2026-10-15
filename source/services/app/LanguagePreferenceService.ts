@@ -15,7 +15,7 @@ export async function initializeLanguagePreference(): Promise<void> {
   try {
     stored = await AsyncStorage.getItem(LANGUAGE_STORAGE_KEY);
   } catch {}
-  const device = Localization.getLocales()[0]?.languageCode ?? null;
+  const device = Localization.getLocales()[0]?.languageTag ?? null;
   setAppLocale(pickStartupLocale(stored, device, SUPPORTED_LOCALES));
 }
 

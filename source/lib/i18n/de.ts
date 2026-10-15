@@ -311,6 +311,8 @@ export const de = {
       previousWalletNotRemoved:
         "Die vorherige Wallet konnte noch nicht von diesem Gerät entfernt werden. Starte die App neu und versuche es erneut.",
       biometricSetupMessage: "Bitte aktiviere Biometrie und versuche es erneut",
+      passkeyPrfUnsupportedMessage:
+        "Dein Passwortmanager kann mit diesem Passkey kein Wallet entsperren. Versuche es mit einem anderen Passkey-Anbieter, z. B. 1Password, dem Schlüsselbund deines Geräts oder Google Passwortmanager ab Android 14.",
       lockScreenSetupMessage:
         "Bitte richte einen Gerätecode (Displaysperre) ein und versuche es erneut",
       passcodeAuthUnsupportedMessage:

@@ -76,14 +76,6 @@ type DecodedLeaf = {
   leaf: unknown;
 };
 
-type ScureP2trResult = {
-  address?: string;
-  tapLeafScript?: unknown[];
-  tweakedPubkey?: Uint8Array;
-  script?: Uint8Array;
-  tapMerkleRoot?: Uint8Array;
-};
-
 function assertXOnlyPubkey(pubkey: Uint8Array, field: string): void {
   if (!(pubkey instanceof Uint8Array) || pubkey.length !== 32) {
     throw new Error(`${field} must be 32 bytes`);
@@ -149,27 +141,6 @@ function networkToScure(network: ArkadeServerDecayProofNetwork): typeof btc.NETW
   if (network === "testnet") return btc.TEST_NETWORK;
   if (network === "regtest") return REGTEST_NETWORK;
   return btc.NETWORK;
-}
-
-function taprootScriptPubKey(tweakedPubkey: Uint8Array): Uint8Array {
-  if (!(tweakedPubkey instanceof Uint8Array) || tweakedPubkey.length !== 32) {
-    throw new Error("invalid tweaked taproot pubkey");
-  }
-  const script = new Uint8Array(34);
-  script[0] = 0x51;
-  script[1] = 0x20;
-  script.set(tweakedPubkey, 2);
-  return script;
-}
-
-function normalizeTapLeafScriptBytes(script: unknown): Uint8Array | null {
-  const bytes =
-    script instanceof Uint8Array ? script : Array.isArray(script) ? Uint8Array.from(script) : null;
-  if (!bytes) return null;
-  if (bytes.length > 0 && bytes[bytes.length - 1] === 0xc0) {
-    return bytes.slice(0, -1);
-  }
-  return bytes;
 }
 
 function compareBytes(left: Uint8Array, right: Uint8Array): number {
@@ -278,52 +249,41 @@ export function buildArkadeServerDecayClientProof(
 ): ArkadeServerDecayClientRecoveryProof {
   const leaves = buildArkadeServerDecayLeaves(params);
   const proofNetwork = normalizeProofNetwork(params.network);
-  const p2tr = btc.p2tr(
-    params.aggregatePubKey,
-    [
-      { script: leaves.arkadePathScript, leafVersion: 0xc0 as const },
-      { script: leaves.aggregateRecoveryScript, leafVersion: 0xc0 as const },
-      { script: leaves.clientRecoveryScript, leafVersion: 0xc0 as const },
-    ],
-    networkToScure(proofNetwork),
-    true,
-  ) as ScureP2trResult;
-  const address = String(p2tr.address || "");
+  // Build the expected VTXO through the same SDK construction as the real
+  // contract. VtxoScript uses the unspendable internal key and the SDK tree;
+  // reconstructing it with the aggregate as a scure P2TR internal key produced
+  // a different output and made every verification fail (#1624).
+  const script = buildArkadeServerDecayVtxoScript(params);
+  const address = script.onchainAddress(networkToScure(proofNetwork));
   if (!address) throw new Error("failed to create arkade server-decay address");
 
-  const clientLeafHex = bytesToHex(leaves.clientRecoveryScript);
-  const tapLeafScriptEntries = Array.isArray(p2tr.tapLeafScript) ? p2tr.tapLeafScript : [];
-  const selectedTapLeaf = tapLeafScriptEntries.find((entry) => {
-    if (!Array.isArray(entry) || entry.length < 2) return false;
-    const normalized = normalizeTapLeafScriptBytes(entry[1]);
-    return normalized ? bytesToHex(normalized) === clientLeafHex : false;
-  });
+  const selectedTapLeaf = script.findLeaf(bytesToHex(leaves.clientRecoveryScript));
   if (!selectedTapLeaf) throw new Error("failed to locate client server-decay tap leaf");
 
-  const tweakedPubkey = p2tr.tweakedPubkey instanceof Uint8Array ? p2tr.tweakedPubkey : null;
-  if (!tweakedPubkey || tweakedPubkey.length !== 32) {
+  const tweakedPubkey = script.tweakedPublicKey;
+  if (!(tweakedPubkey instanceof Uint8Array) || tweakedPubkey.length !== 32) {
     throw new Error("failed to derive server-decay tweaked pubkey");
   }
-  const scriptPubKey =
-    p2tr.script instanceof Uint8Array ? p2tr.script : taprootScriptPubKey(tweakedPubkey);
-  const tapMerkleRoot = p2tr.tapMerkleRoot instanceof Uint8Array ? p2tr.tapMerkleRoot : undefined;
+  const tapMerkleRoot = tapMerkleRootFromLeafEntry(selectedTapLeaf, leaves.clientRecoveryScript);
+  if (!tapMerkleRoot) throw new Error("failed to derive server-decay tap merkle root");
   const csvSequence = bip68SequenceFromTimelock(leaves.clientRecoveryTimelock);
+  const tapInternalKey = new Uint8Array(btc.TAPROOT_UNSPENDABLE_KEY);
 
   return {
     address,
     csvSequence,
     csvTimelock: leaves.clientRecoveryTimelock,
     network: proofNetwork,
-    scriptPubKeyHex: bytesToHex(scriptPubKey),
+    scriptPubKeyHex: bytesToHex(script.pkScript),
     userXOnlyHex: bytesToHex(params.clientPubKey),
-    tapInternalKeyHex: bytesToHex(params.aggregatePubKey),
+    tapInternalKeyHex: bytesToHex(tapInternalKey),
     tweakedPubkeyHex: bytesToHex(tweakedPubkey),
-    tapMerkleRootHex: tapMerkleRoot ? bytesToHex(tapMerkleRoot) : "",
+    tapMerkleRootHex: bytesToHex(tapMerkleRoot),
     recoveryData: {
       tapLeafScript: [selectedTapLeaf],
       userXOnly: params.clientPubKey,
       csvSequence,
-      tapInternalKey: params.aggregatePubKey,
+      tapInternalKey,
       tapMerkleRoot,
       tweakedPubkey,
     },

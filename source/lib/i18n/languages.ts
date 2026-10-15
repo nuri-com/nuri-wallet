@@ -10,4 +10,10 @@ export const LANGUAGE_OPTIONS: Record<AppLocale, { label: string; flag: ImageSou
   de: { label: "Deutsch", flag: require("../../assets/flags/deu.png") },
   sw: { label: "Kiswahili", flag: require("../../assets/flags/tza.png") },
   es: { label: "Español", flag: require("../../assets/flags/esp.png") },
+  fr: { label: "Français", flag: require("../../assets/flags/fra.png") },
+  it: { label: "Italiano", flag: require("../../assets/flags/ita.png") },
+  nl: { label: "Nederlands", flag: require("../../assets/flags/nld.png") },
+  pl: { label: "Polski", flag: require("../../assets/flags/pol.png") },
+  "pt-PT": { label: "Português (Portugal)", flag: require("../../assets/flags/prt.png") },
+  "pt-BR": { label: "Português (Brasil)", flag: require("../../assets/flags/bra.png") },
 };

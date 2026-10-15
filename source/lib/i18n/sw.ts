@@ -312,6 +312,8 @@ export const sw = {
       previousWalletNotRemoved:
         "Pochi ya awali bado haijaondolewa kwenye kifaa hiki. Anzisha upya programu na ujaribu tena.",
       biometricSetupMessage: "Tafadhali washa bayometriki na ujaribu tena",
+      passkeyPrfUnsupportedMessage:
+        "Kidhibiti chako cha manenosiri hakiwezi kufungua pochi kwa passkey hii. Jaribu tena kwa mtoa passkey mwingine, kama 1Password, keychain iliyojengwa ndani ya kifaa chako, au Google Password Manager kwenye Android 14 au mpya zaidi.",
       lockScreenSetupMessage: "Tafadhali weka nenosiri la kifaa (kufunga skrini) na ujaribu tena",
       passcodeAuthUnsupportedMessage:
         "Kifaa hiki hakiwezi kuhifadhi funguo za pochi kwa usalama. Ongeza alama ya kidole, au tumia kifaa chenye Android 11 au mpya zaidi.",

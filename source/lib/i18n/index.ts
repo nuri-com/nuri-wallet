@@ -4,15 +4,21 @@ import { en } from "./en";
 import { de } from "./de";
 import { sw } from "./sw";
 import { es } from "./es";
+import { fr } from "./fr";
+import { it } from "./it";
+import { nl } from "./nl";
+import { pl } from "./pl";
+import { ptPT } from "./pt-PT";
+import { ptBR } from "./pt-BR";
 import { resolveAppLocale, translate } from "./locale";
 
-const translations = { en, de, sw, es };
+const translations = { en, de, sw, es, fr, it, nl, pl, "pt-PT": ptPT, "pt-BR": ptBR };
 
 /** Every language the app ships, in the order the language picker lists them. */
 export const SUPPORTED_LOCALES = Object.keys(translations) as AppLocale[];
 export type AppLocale = keyof typeof translations;
 
-const deviceLocale = Localization.getLocales()[0]?.languageCode ?? "en";
+const deviceLocale = Localization.getLocales()[0]?.languageTag ?? "en";
 let currentLocale: AppLocale = resolveAppLocale(deviceLocale, SUPPORTED_LOCALES);
 
 const listeners = new Set<() => void>();

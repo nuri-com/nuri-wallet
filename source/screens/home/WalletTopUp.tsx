@@ -146,13 +146,25 @@ const Flow: React.FC<Props> = ({ onClose, settle, payoutAddress, rail, label, fo
   );
 };
 
-/** Mount it to start the flow; it calls onClose when the user leaves it. */
+/**
+ * Mount it to start the flow; it calls onClose when the user leaves it.
+ *
+ * It mounts beside the home screen, and everything it shows (the sheet, the
+ * wallet picker) renders elsewhere. On web RainbowKit's wrapper is a flex
+ * child (index.html), so in the home's column it took half the screen until
+ * the flow ended; a zero-size layer keeps it out of the layout.
+ */
 const WalletTopUp: React.FC<Props> = (props) => (
-  <PayWalletProvider>
-    <Flow {...props} />
-  </PayWalletProvider>
+  <RNView style={styles.outOfLayout} pointerEvents="box-none">
+    <PayWalletProvider>
+      <Flow {...props} />
+    </PayWalletProvider>
+  </RNView>
 );
 
-const styles = StyleSheet.create({ fill: { flex: 1, minWidth: 0, alignSelf: "stretch" } });
+const styles = StyleSheet.create({
+  fill: { flex: 1, minWidth: 0, alignSelf: "stretch" },
+  outOfLayout: { position: "absolute", width: 0, height: 0 },
+});
 
 export default WalletTopUp;

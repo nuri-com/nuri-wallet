@@ -151,7 +151,11 @@ export const UsernamePicker: React.FC<Props> = ({
     [],
   );
 
-  const canSubmit = !busy && formatValid && status === "available";
+  // The lookup is advisory — the claim itself is authoritative and rejects a
+  // taken name with a visible error. Blocking Continue on a failed/unreachable
+  // lookup turned a flaky network into a permanently grey button with no way
+  // out (onboarding hides "checking", so the user saw no reason either).
+  const canSubmit = !busy && formatValid && (status === "available" || status === "network_error");
 
   const handleContinue = useCallback(() => {
     if (!canSubmit) return false;

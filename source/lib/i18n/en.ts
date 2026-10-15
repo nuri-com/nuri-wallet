@@ -308,6 +308,8 @@ export const en = {
       previousWalletNotRemoved:
         "The previous wallet could not be removed from this device yet. Restart the app and try again.",
       biometricSetupMessage: "Please enable biometrics and try again",
+      passkeyPrfUnsupportedMessage:
+        "Your password manager can't unlock a wallet with this passkey. Try again with a different passkey provider, such as 1Password, your device's built-in keychain, or Google Password Manager on Android 14+.",
       lockScreenSetupMessage: "Please set up a device passcode (screen lock) and try again",
       passcodeAuthUnsupportedMessage:
         "This device can't securely store wallet keys. Add a fingerprint, or use a device with Android 11 or newer.",

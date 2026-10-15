@@ -1,15 +1,29 @@
 // Pure locale rules, kept free of Expo/RN imports so they are unit-testable.
 
-/** A requested language, or English when the app does not ship it. */
+const normalizeTag = (value: string | null | undefined): string =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "-");
+
+/** The shipped locale spelled like `tag` (case and `_`/`-` ignored), if any. */
+const exactLocale = <L extends string>(tag: string, supported: readonly L[]): L | undefined =>
+  tag ? supported.find((locale) => normalizeTag(locale) === tag) : undefined;
+
+/**
+ * A requested language tag mapped to a shipped locale: the exact regional
+ * variant when the app ships one (`pt-BR`), else the first shipped locale of
+ * the same language (`pt-AO` -> `pt-PT`, `de-AT` -> `de`), else English.
+ */
 export function resolveAppLocale<L extends string>(
   requested: string | null | undefined,
   supported: readonly L[],
 ): L {
-  const code = String(requested ?? "")
-    .trim()
-    .toLowerCase()
-    .split(/[-_]/)[0];
-  const match = supported.find((locale) => locale === code);
+  const tag = normalizeTag(requested);
+  const language = tag.split("-")[0];
+  const match =
+    exactLocale(tag, supported) ??
+    supported.find((locale) => normalizeTag(locale).split("-")[0] === language);
   return match ?? (supported.includes("en" as L) ? ("en" as L) : supported[0]);
 }
 
@@ -23,11 +37,7 @@ export function pickStartupLocale<L extends string>(
   device: string | null | undefined,
   supported: readonly L[],
 ): L {
-  const storedCode = String(stored ?? "")
-    .trim()
-    .toLowerCase();
-  if (storedCode && supported.includes(storedCode as L)) return storedCode as L;
-  return resolveAppLocale(device, supported);
+  return exactLocale(normalizeTag(stored), supported) ?? resolveAppLocale(device, supported);
 }
 
 /**

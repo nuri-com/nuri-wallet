@@ -2,7 +2,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import { Button, ButtonText, NuriScope, Text, useNuriTheme, View as DsView } from "@ds";
+import {
+  Button,
+  ButtonText,
+  Footer,
+  NuriScope,
+  Screen,
+  Text,
+  useNuriTheme,
+  View as DsView,
+} from "@ds";
 import { WALLET_RP_ID } from "../config/passkey";
 import { normalizePrfOutput, zeroize } from "../lib/crypto";
 import { t } from "../lib/i18n";
@@ -342,7 +351,7 @@ function PasskeyLoginScreenWebViewInner({
   }
 
   return (
-    <>
+    <Screen safeAreaBottom={Boolean(footerMessage)}>
       <WebView
         ref={webViewRef}
         source={{ html, baseUrl: "https://nuri.com" }}
@@ -354,13 +363,13 @@ function PasskeyLoginScreenWebViewInner({
         containerStyle={styles.webviewContainer}
       />
       {footerMessage ? (
-        <View pointerEvents="none" style={styles.footerMessageWrap}>
+        <Footer paddingX="md" paddingBottom="xs" align="center">
           <Text size="sm" align="center">
             {footerMessage}
           </Text>
-        </View>
+        </Footer>
       ) : null}
-    </>
+    </Screen>
   );
 }
 
@@ -373,14 +382,7 @@ const styles = StyleSheet.create({
   webviewContainer: {
     backgroundColor: "transparent",
   },
-  footerMessageWrap: {
-    position: "absolute",
-    left: 16,
-    right: 16,
-    bottom: 8,
-    alignItems: "center",
-    zIndex: 4,
-  },
+
   unsupportedContainer: {
     marginHorizontal: 20,
     marginTop: 24,

@@ -4,6 +4,11 @@ import { arkadeServerConfigService } from "../../services/arkade/ArkadeServerCon
 
 export type UsernameAvailability = "available" | "taken" | "invalid" | "network_error";
 
+// A stalled lookup never settles: the picker stays on "checking" forever, so
+// Continue stays disabled with no status text (onboarding uses
+// statusMode="errors"). Bound it so a dead request becomes network_error.
+const LOOKUP_TIMEOUT_MS = 8000;
+
 /** Server-side regex (matches the LNURL register handler): /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/ */
 export const USERNAME_REGEX = /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/;
 
@@ -29,16 +34,26 @@ export async function checkUsernameAvailability(name: string): Promise<UsernameA
   const base = signer.replace(/\/v4$/, "");
   const url = `${base}/.well-known/lnurlp/${encodeURIComponent(normalized)}`;
 
+  // AbortController + setTimeout, NOT AbortSignal.timeout: React Native
+  // (setUpXHR.js) replaces the global AbortSignal with abort-controller@3,
+  // which has no static `timeout`. Calling it throws inside this try, the
+  // catch turns that into `network_error`, and the lookup dies silently on
+  // every native build — no request issued, `taken` unreachable. Node-env
+  // vitest and `tsc` (lib.dom) both miss it. This is the convention every
+  // other timeout in the repo uses (ArkadeApiService#fetchWithTimeout et al).
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { method: "GET" });
+    const res = await fetch(url, { method: "GET", signal: controller.signal });
     if (res.status === 404) return "available";
     if (res.ok) return "taken";
     // Anything else (5xx, captive portal, transient network failure) →
-    // network_error. The username step is mandatory and must not be skipped,
-    // so the picker keeps the Continue button disabled on this state — users
-    // retry by editing the name to trigger a fresh lookup.
+    // network_error. The claim itself is authoritative and rejects a taken
+    // name with a visible error, so Continue stays submittable on this state.
     return "network_error";
   } catch {
     return "network_error";
+  } finally {
+    clearTimeout(timer);
   }
 }
