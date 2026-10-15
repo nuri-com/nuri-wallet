@@ -62,11 +62,8 @@ export type ChoiceSheetProps<K extends string> = {
   onSelect: (key: K) => void;
   footerAction?: { key: K; label: string; icon?: IconName };
   /**
-   * `"full"` for a list that does not fit a bottom sheet. A DS sheet is
-   * content-height and the DS caps it at a fraction of the viewport, where it
-   * CLIPS: on web the rows past that cap are unreachable, because the panel
-   * itself grows past the cap and nothing inside it can scroll. A long list
-   * therefore belongs on a full page, not in a taller sheet.
+   * `"full"` to show the list as a full page. A sheet is content-height up to
+   * the DS cap and scrolls past it.
    */
   mode?: ModalMode;
 };

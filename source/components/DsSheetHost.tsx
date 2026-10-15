@@ -22,6 +22,9 @@ import { noteSurfaceOpened } from "../lib/ui/openSurfaces";
 import { Modal, ModalPanel } from "@ds";
 import type { ModalMode } from "@ds";
 
+/** Mirrors the DS Modal's sheet cap (CONTENT_MAX_FRACTION, not exported). */
+const SHEET_MAX_FRACTION = 0.82;
+
 export type DsSheetHostProps = {
   visible: boolean;
   onClose: () => void;
@@ -59,6 +62,11 @@ export default function DsSheetHost({
   // sheet mode is content-height by design, so both keep the plain panel.
   const { height: windowHeight } = useWindowDimensions();
   const isViewportBound = Platform.OS === "web" && mode === "full";
+  // Sheet mode: the DS caps the sheet surface at a share of the window, but the
+  // panel inside it does not shrink, so a list taller than the cap is clipped
+  // and the Scroll in it never gets a bounded height to scroll in. Capping the
+  // content at the same height lets the Scroll shrink and scroll instead.
+  const sheetMaxHeight = Math.round(windowHeight * SHEET_MAX_FRACTION);
 
   return (
     <Modal
@@ -71,6 +79,8 @@ export default function DsSheetHost({
       <ModalPanel>
         {isViewportBound ? (
           <RNView style={{ height: windowHeight, minHeight: 0 }}>{children}</RNView>
+        ) : mode === "sheet" ? (
+          <RNView style={{ maxHeight: sheetMaxHeight, minHeight: 0 }}>{children}</RNView>
         ) : (
           children
         )}
