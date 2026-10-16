@@ -1,4 +1,6 @@
 // Centralized types for bitcoin domain — extracted from screen files
+import type { ZapRemitDestination } from "../lib/remit/zapremitForm";
+
 export type BitcoinTransactionsProps = {
   visible: boolean;
   onClose: () => void;
@@ -52,6 +54,8 @@ export type AddressTx = {
 export type BitcoinSendProps = {
   visible: boolean;
   presetAddress?: string;
+  /** A payout destination picked elsewhere (a scanned TanQR merchant). */
+  presetPayout?: ZapRemitDestination;
   presetAmountSats?: string;
   allowAmountEdit?: boolean;
   /** Which wallet the sats leave from, chosen in BitcoinSendSourceModal. */

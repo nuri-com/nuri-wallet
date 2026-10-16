@@ -120,6 +120,7 @@ import { useWirexCard } from "../wirex/hooks/useWirexCard";
 import { useWalletSendFlow } from "../wallet/hooks/useWalletSendFlow";
 import WalletSendStablecoinModal from "../wallet/modals/WalletSendStablecoinModal";
 import QrScannerModal from "../../components/QrScannerModal";
+import { tanQrDestination, type ZapRemitDestination } from "../../lib/remit/zapremitForm";
 import { useWirexCardLifecycle } from "../wirex/hooks/useWirexCardLifecycle";
 import { useWirexSendFlow } from "../wirex/hooks/useWirexSendFlow";
 import { ADD_PAYOUT_CARD_KEY, useCardPayoutFlow } from "../wirex/hooks/useCardPayoutFlow";
@@ -451,6 +452,8 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // source picker and no send-choice sheet in between.
   const [btcSendSource, setBtcSendSource] = useState<"arkade" | "onchain" | null>(null);
   const [btcSendPrefill, setBtcSendPrefill] = useState<string | undefined>(undefined);
+  // A payout destination a scanned code named (a TanQR merchant).
+  const [btcSendPayout, setBtcSendPayout] = useState<ZapRemitDestination | undefined>(undefined);
   // A payment request's own amount, when the code carried one. Dropping it sent
   // the user to an empty keypad to guess what they owe.
   const [btcSendAmountSats, setBtcSendAmountSats] = useState<string | undefined>(undefined);
@@ -1399,6 +1402,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           setTopUp(null);
           setBtcSendSource(null);
           setBtcSendPrefill(undefined);
+          setBtcSendPayout(undefined);
           setSweepResult(null);
           setDetailsChoiceVisible(false);
           setScanChoice(null);
@@ -2401,6 +2405,25 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         visible={scanVisible || walletSend.showWalletScan}
         onClose={closeScanner}
         onResult={() => {}}
+        onUnknown={(raw) => {
+          // A TanQR merchant code: paid from the arkade balance through the
+          // payout rail, the same as picking that merchant by hand.
+          const payout = tanQrDestination(raw);
+          if (!payout) return "unrecognized";
+          if (walletSend.showWalletScan) {
+            // Opened from Cash Send: the balance picked there pays, never arkade.
+            const hasUsd = (usdcBalance ?? 0) > 0;
+            walletSend.handleWalletPayoutScan(
+              payout,
+              cashPick ?? (hasUsd && walletEur <= 0 ? "dollar" : "wallet"),
+            );
+            return undefined;
+          }
+          closeScanner();
+          setBtcSendPayout(payout);
+          setBtcSendSource("arkade");
+          return undefined;
+        }}
         onParsedResult={(result) => {
           switch (result.type) {
             // A BIP-21 code may carry an ark address alongside the on-chain one;
@@ -2581,6 +2604,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                 walletSend.setShowWalletScan(false);
                 walletSend.setSendToWalletRail(null);
                 walletSend.setSendToWalletAddress(null);
+                walletSend.setSendToWalletPayout(null);
                 walletSend.setIsSendToWalletVisible(true);
               }
             : undefined
@@ -2783,16 +2807,19 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         visible={btcSendSource !== null}
         sendSource={btcSendSource ?? undefined}
         presetAddress={btcSendPrefill}
+        presetPayout={btcSendPayout}
         presetAmountSats={btcSendAmountSats}
         onClose={() => {
           setBtcSendSource(null);
           setBtcSendPrefill(undefined);
+          setBtcSendPayout(undefined);
           setBtcSendAmountSats(undefined);
         }}
         onSendSuccess={() => {
           // The send's own status pill reports it.
           setBtcSendSource(null);
           setBtcSendPrefill(undefined);
+          setBtcSendPayout(undefined);
           setBtcSendAmountSats(undefined);
         }}
       />
@@ -2842,9 +2869,11 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         onClose={() => {
           walletSend.setIsSendToWalletVisible(false);
           walletSend.setSendToWalletRail(null);
+          walletSend.setSendToWalletPayout(null);
         }}
         prefilledAddress={walletSend.sendToWalletAddress}
         prefilledAmount={walletSend.sendToWalletAmount}
+        presetPayout={walletSend.sendToWalletPayout}
         maxStablecoinAvailable={sendTokenRail === "dollar" ? (usdcBalance ?? 0) : walletEur}
         toCard={walletSend.sendToWalletIsCard}
         token={
@@ -2864,6 +2893,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           walletSend.setSendToWalletAddress(null);
           walletSend.setSendToWalletAmount(null);
           walletSend.setSendToWalletRail(null);
+          walletSend.setSendToWalletPayout(null);
           // The euro has left the wallet as far as the user is concerned: the
           // transfer is broadcast and the sheet is closing, so the balance moves
           // now instead of at the next poll. Parked under its transaction so a

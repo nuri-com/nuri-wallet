@@ -14,6 +14,8 @@
 // unmount and on `ui:resetMainScreens` so a late firing cannot reopen a sheet
 // the user just closed.
 import { useCallback, useEffect, useRef, useState } from "react";
+
+import type { ZapRemitDestination } from "../../../lib/remit/zapremitForm";
 import { Platform } from "react-native";
 import { isValidEvmAddress } from "../../../lib/validation";
 import { EventBus } from "../../../services/events/AppEventBusService";
@@ -36,6 +38,9 @@ export function useWalletSendFlow(p?: Params) {
   // with it. Null = the screen the Send started from decides.
   const [sendToWalletRail, setSendToWalletRail] = useState<"wallet" | "dollar" | null>(null);
   const [showWalletScan, setShowWalletScan] = useState(false);
+  // A payout destination the scanner named (a TanQR merchant). Part of the
+  // same opening as the address: set only when the sheet opens, cleared with it.
+  const [sendToWalletPayout, setSendToWalletPayout] = useState<ZapRemitDestination | null>(null);
 
   const modalHandoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -83,6 +88,7 @@ export function useWalletSendFlow(p?: Params) {
       setSendToWalletAddress(addr.trim());
       setSendToWalletAmount(amount ?? null);
       setSendToWalletRail(rail ?? null);
+      setSendToWalletPayout(null);
       setSendToWalletIsCard(false);
       setShowWalletScan(false);
       // Let the scanner close before its replacement enters the shared overlay.
@@ -90,6 +96,21 @@ export function useWalletSendFlow(p?: Params) {
       // sheet on web, dropping the recipient and amount it was meant to show.
       scheduleModalHandoff(() => setIsSendToWalletVisible(true));
       return true;
+    },
+    [scheduleModalHandoff],
+  );
+
+  // A TanQR scanned from Cash: the send sheet opens on that merchant, paid from
+  // `rail`, after the same scanner hand-off as an address.
+  const handleWalletPayoutScan = useCallback(
+    (payout: ZapRemitDestination, rail: "wallet" | "dollar") => {
+      setSendToWalletAddress(null);
+      setSendToWalletAmount(null);
+      setSendToWalletRail(rail);
+      setSendToWalletPayout(payout);
+      setSendToWalletIsCard(false);
+      setShowWalletScan(false);
+      scheduleModalHandoff(() => setIsSendToWalletVisible(true));
     },
     [scheduleModalHandoff],
   );
@@ -106,6 +127,7 @@ export function useWalletSendFlow(p?: Params) {
     setSendToWalletAddress(null);
     setSendToWalletAmount(null);
     setSendToWalletRail(null);
+    setSendToWalletPayout(null);
     setSendToWalletIsCard(false);
     setShowWalletScan(false);
   }, [clearPendingModalHandoff]);
@@ -121,6 +143,9 @@ export function useWalletSendFlow(p?: Params) {
     sendToWalletIsCard,
     sendToWalletRail,
     setSendToWalletRail,
+    sendToWalletPayout,
+    setSendToWalletPayout,
+    handleWalletPayoutScan,
     showWalletScan,
     setShowWalletScan,
     startRecipientScan,

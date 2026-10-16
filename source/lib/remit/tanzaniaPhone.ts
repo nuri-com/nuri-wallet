@@ -22,7 +22,7 @@ const MOBILE_LEADING = /^[67]/;
 
 /** Everything a person might type between the digits, dropped before matching. */
 function stripSeparators(raw: string): string {
-  return String(raw || "").replace(/[\s()\-./]/g, "");
+  return String(raw || "").replace(/[\s()\-./\p{Cf}]/gu, "");
 }
 
 /**

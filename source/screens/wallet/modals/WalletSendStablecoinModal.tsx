@@ -47,6 +47,15 @@ import { recipientWithName, savedContactFor } from "../../../lib/addressBook/con
 import { acceptsWalletSend } from "../../addressBook/addressBookModel";
 import { startMovePill } from "../../../services/wallet/CardTransferPill";
 import { reportErrorToSupport } from "../../../lib/support/reportErrorToSupport";
+import PayoutAbroadSheet from "../../../components/PayoutAbroadSheet";
+import { flagForIso2 } from "../../../lib/countryFlags";
+import { TZ_METHODS, type ZapRemitDestination } from "../../../lib/remit/zapremitForm";
+import {
+  createTzOrder,
+  quoteTzPayout,
+  type TzStablePayment,
+  tzPaymentLapsed,
+} from "../../../services/remit/RemitService";
 
 type Props = WalletSendStablecoinProps;
 
@@ -55,6 +64,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   onClose,
   prefilledAddress,
   prefilledAmount,
+  presetPayout,
   maxStablecoinAvailable,
   toCard = false,
   token,
@@ -98,6 +108,24 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   const [recipientLookupFailed, setRecipientLookupFailed] = useState(false);
   const lookupGate = useRef(createRecipientLookupGate());
   const recipientFieldRef = useRef<React.ComponentRef<typeof TextField>>(null);
+  // A Tanzanian bank, Lipa Namba or TanQR paid from this balance: the amount
+  // is typed in shillings, the order then states the exact stable amount and
+  // the address, and a second press sends exactly that.
+  const [payout, setPayout] = useState<ZapRemitDestination | null>(null);
+  const [payoutOpen, setPayoutOpen] = useState(false);
+  const [tzsDigits, setTzsDigits] = useState("");
+  const [tzEstimate, setTzEstimate] = useState<number | null>(null);
+  const [tzPayment, setTzPayment] = useState<TzStablePayment | null>(null);
+  const stableCode = token?.code === "USD" ? "USDC" : "EURC";
+  const tzsAmount = Number(tzsDigits) || 0;
+  const tzMethod = payout ? TZ_METHODS.find((m) => m.code === payout.methodCode) : undefined;
+  const tzOutOfBand =
+    !!tzMethod && tzsAmount > 0 && (tzsAmount < tzMethod.min || tzsAmount > tzMethod.max);
+  const tzStableAmount = tzPayment ? Number(tzPayment.amount) : tzEstimate;
+  const tzOverBalance =
+    tzStableAmount != null &&
+    maxStablecoinAvailable != null &&
+    tzStableAmount > maxStablecoinAvailable;
   const typedRecipient = manualRecipient.trim();
   // What the field holds right now, for a lookup that lands long after it began.
   const typedRecipientRef = useRef(typedRecipient);
@@ -136,6 +164,12 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
     setResolvingRecipient(false);
     setRecipientUnresolvable(false);
     setRecipientLookupFailed(false);
+    // A scanned TanQR opens straight on the shilling amount for that merchant.
+    setPayout(presetPayout ?? null);
+    setPayoutOpen(false);
+    setTzsDigits("");
+    setTzEstimate(null);
+    setTzPayment(null);
     // A scanned amount is always kept, even above the balance (#1486): the
     // field shows what the QR asked for and the CTA stays blocked with the
     // "exceeds balance" hint, instead of silently emptying the field.
@@ -144,7 +178,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
     setAmount(prefill.display);
     // No balance dependency: the prefill no longer depends on it, and a balance
     // refresh must not reset the recipient or an amount the user edited.
-  }, [visible, prefilledAmount, setAmount]);
+  }, [visible, prefilledAmount, presetPayout, setAmount]);
 
   const validAddress = useMemo(() => isValidEvmAddress(recipient), [recipient]);
   const acceptsSavedDestination = useMemo(
@@ -158,46 +192,97 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
     [savedContacts, recipient, acceptsSavedDestination],
   );
 
+  // The shown price for the typed shillings; the order states the real one.
+  useEffect(() => {
+    if (!payout || tzsAmount <= 0 || tzOutOfBand) {
+      setTzEstimate(null);
+      return;
+    }
+    let live = true;
+    const handle = setTimeout(() => {
+      quoteTzPayout(tzsAmount)
+        .then((p) => live && setTzEstimate(stableCode === "USDC" ? p.usdc : p.eurc))
+        .catch(() => live && setTzEstimate(null));
+    }, 400);
+    return () => {
+      live = false;
+      clearTimeout(handle);
+    };
+  }, [payout, tzsAmount, tzOutOfBand, stableCode]);
+
+  // Any edit to the shillings drops an order already priced for the old amount.
+  const editTzs = (next: string) => {
+    if (isRequesting) return;
+    setTzPayment(null);
+    setSendFailed(false);
+    setTzsDigits(next.replace(/^0+/, "").slice(0, 9));
+  };
+
+  // First press: the order, which states the exact amount and address. Nothing
+  // moves; an unpaid order lapses on its own.
+  const handleTzOrder = async () => {
+    if (!payout || tzsAmount <= 0 || tzOutOfBand) return;
+    setIsRequesting(true);
+    setSendFailed(false);
+    try {
+      const order = await createTzOrder(tzsAmount, payout.recipient);
+      const offer = stableCode === "USDC" ? order.usdc : order.eurc;
+      if (!offer) throw new Error(`no ${stableCode} offer`);
+      setTzPayment(offer);
+    } catch (err) {
+      setSendFailed(true);
+      void reportErrorToSupport({ error: err, userMessage: "Tanzania payout order failed" }).catch(
+        () => {},
+      );
+    } finally {
+      setIsRequesting(false);
+    }
+  };
+
   // A manual keypad edit is its own intent — it drops the exact scan string.
   const handleDigit = (digit: string) => {
+    if (payout) return editTzs(tzsDigits + digit);
     if (!amountEditable) return;
     setExactScannedAmount(null);
     handleChangeText(amount + digit);
   };
   const handleDecimal = () => {
-    if (!amountEditable) return;
+    if (payout || !amountEditable) return;
     setExactScannedAmount(null);
     handleChangeText(`${amount}.`);
   };
   const handleDelete = () => {
+    if (payout) return editTzs(tzsDigits.slice(0, -1));
     if (!amountEditable) return;
     setExactScannedAmount(null);
     handleChangeText(amount.slice(0, -1));
   };
 
-  const handleSend = async () => {
-    const addr = recipient.trim();
-    if (!addr) {
+  const handleSend = async (exact?: TzStablePayment) => {
+    const addr = (exact?.payTo ?? recipient).trim();
+    if (exact) {
+      if (tzOverBalance) return;
+    } else if (!addr) {
       console.log("[WalletSendStablecoinModal] Address missing");
       return;
     }
-    if (!validAddress) {
+    if (!exact && !validAddress) {
       console.log("[WalletSendStablecoinModal] Invalid recipient address");
       return;
     }
-    if (parsedAmount <= 0) {
+    if (!exact && parsedAmount <= 0) {
       console.log("[WalletSendStablecoinModal] Invalid amount");
       return;
     }
-    if (isBelowMinimum) {
+    if (!exact && isBelowMinimum) {
       console.log("[WalletSendStablecoinModal] Amount below minimum");
       return;
     }
-    if (scannedExceedsBalance) {
+    if (!exact && scannedExceedsBalance) {
       console.log("[WalletSendStablecoinModal] Exact scanned amount exceeds balance");
       return;
     }
-    if (exceedsBalance) {
+    if (!exact && exceedsBalance) {
       console.log("[WalletSendStablecoinModal] Amount exceeds available balance");
       return;
     }
@@ -211,7 +296,9 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
       // The exact scan string (full precision) wins over the displayed,
       // 2-decimal-capped field; manual input is used as typed. parseUnits gets
       // the string untouched (trailing dot stripped).
-      const sendAmount = (exactScannedAmount ?? amount).replace(/\.$/, "");
+      // A payout order names its own amount, which must arrive exactly.
+      const sendAmount = exact?.amount ?? (exactScannedAmount ?? amount).replace(/\.$/, "");
+      const sentAmount = exact ? Number(exact.amount) : parsedAmount;
       // Euro → card is one move with one implementation, wherever it starts:
       // the service owns the transfer AND the events it raises, so this screen
       // only reports the outcome.
@@ -244,7 +331,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
             : startSendInFlight({
                 id: txHash,
                 rail: fiat === "USD" ? "dollar" : "wallet",
-                amount: parsedAmount,
+                amount: sentAmount,
               })
         ).catch(() => {});
       }
@@ -259,7 +346,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
         } else {
           try {
             EventBus.emit("wallet:pendingTransfer", {
-              amountFiat: parsedAmount,
+              amountFiat: sentAmount,
               // Which of the two balances at this address paid. Without it a
               // dollar send was listed on the euro rail, as euros.
               fiat: token?.code === "USD" ? "USD" : "EUR",
@@ -278,7 +365,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
       if (!toCard) startMovePill().settleByRows(confirmed ? null : txHash);
       try {
         onSuccess?.({
-          amount: parsedAmount,
+          amount: sentAmount,
           txHash,
           confirmed,
         });
@@ -363,9 +450,11 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   const recipientEntryUsable =
     validAddress || isEnsName(typedRecipient) || toNuriUsername(typedRecipient) !== null;
 
-  const isCtaDisabled = onRecipientStep
-    ? !recipientEntryUsable || resolvingRecipient
-    : isRequesting || !validAddress || parsedAmount <= 0 || overBalance || isBelowMinimum;
+  const isCtaDisabled = payout
+    ? isRequesting || tzsAmount <= 0 || tzOutOfBand || tzOverBalance
+    : onRecipientStep
+      ? !recipientEntryUsable || resolvingRecipient
+      : isRequesting || !validAddress || parsedAmount <= 0 || overBalance || isBelowMinimum;
 
   // The token decides the code: a USDC send must not render "EUR". No token is
   // the euro send (BASE_EURC), stated in the currency it moves — never the
@@ -392,6 +481,17 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
 
   // Amount-step only. The recipient step has its own hint (recipientHint) and
   // owns the address message — carrying it here too printed it twice.
+  const tzHint = !payout
+    ? null
+    : tzOverBalance
+      ? t("screen.WalletSendStablecoinModal.exceedsBalanceHint")
+      : tzOutOfBand && tzMethod
+        ? tzsAmount < tzMethod.min
+          ? t("screen.BitcoinSendScreen.remitMinimum", { amount: `${tzMethod.min} TZS` })
+          : t("screen.BitcoinSendScreen.remitMaximum", { amount: `${tzMethod.max} TZS` })
+        : tzStableAmount != null
+          ? `${tzPayment ? "" : "\u2248 "}${tzStableAmount.toFixed(2)} ${stableCode}`
+          : null;
   const amountHint = overBalance
     ? t("screen.WalletSendStablecoinModal.exceedsBalanceHint")
     : !onRecipientStep && recipient.length > 0 && !validAddress
@@ -400,20 +500,28 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
 
   // A failed attempt only relabels the CTA: still the same button, still the
   // same tap, so retrying costs the user nothing to figure out.
-  const ctaLabel = onRecipientStep
-    ? resolvingRecipient
+  const ctaLabel = payout
+    ? isRequesting
       ? t("screen.WalletSendStablecoinModal.loadingLabel")
-      : t("screen.WalletSendStablecoinModal.ctaNext")
-    : isRequesting
-      ? t("screen.WalletSendStablecoinModal.loadingLabel")
-      : isBelowMinimum && parsedAmount > 0
-        ? t("screen.WalletSendStablecoinModal.minimumLabel", {
-            symbol: currencySymbol,
-            amount: STABLECOIN_MIN_SEND_AMOUNT,
-          })
-        : sendFailed
-          ? t("screen.WalletSendStablecoinModal.tryAgainLabel")
-          : t("screen.WalletSendStablecoinModal.sendLabel");
+      : sendFailed
+        ? t("screen.WalletSendStablecoinModal.tryAgainLabel")
+        : tzPayment
+          ? t("screen.BitcoinSendScreen.remitConfirmTo", { name: payout.summary })
+          : t("component.PayoutAbroadSheet.continue")
+    : onRecipientStep
+      ? resolvingRecipient
+        ? t("screen.WalletSendStablecoinModal.loadingLabel")
+        : t("screen.WalletSendStablecoinModal.ctaNext")
+      : isRequesting
+        ? t("screen.WalletSendStablecoinModal.loadingLabel")
+        : isBelowMinimum && parsedAmount > 0
+          ? t("screen.WalletSendStablecoinModal.minimumLabel", {
+              symbol: currencySymbol,
+              amount: STABLECOIN_MIN_SEND_AMOUNT,
+            })
+          : sendFailed
+            ? t("screen.WalletSendStablecoinModal.tryAgainLabel")
+            : t("screen.WalletSendStablecoinModal.sendLabel");
 
   // The failure state is carried by the label alone, so the accessible name has
   // to carry it too — otherwise assistive tech announces "Send EUR" on a button
@@ -425,136 +533,181 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
       : t("screen.WalletSendStablecoinModal.sendA11yLabel", { symbol: token?.code ?? "EUR" });
 
   return (
-    <DsSheetHost visible={visible} onClose={onClose} mode="full">
-      <Header safeAreaTop chrome="canvas">
-        <Topbar surface="transparent" layout="fluid">
-          <TopbarTitle>{headerTitle}</TopbarTitle>
-          <TopbarTrailing>
-            <IconButton
-              icon="cross"
-              variant="soft"
-              accessibilityLabel={t("common.close")}
-              onPress={onClose}
-            />
-          </TopbarTrailing>
-        </Topbar>
-      </Header>
+    <>
+      <DsSheetHost visible={visible} onClose={onClose} mode="full">
+        <Header safeAreaTop chrome="canvas">
+          <Topbar surface="transparent" layout="fluid">
+            <TopbarTitle>{headerTitle}</TopbarTitle>
+            <TopbarTrailing>
+              <IconButton
+                icon="cross"
+                variant="soft"
+                accessibilityLabel={t("common.close")}
+                onPress={onClose}
+              />
+            </TopbarTrailing>
+          </Topbar>
+        </Header>
 
-      <Scroll onLayout={keypadFit.onViewportLayout}>
-        <View
-          onLayout={keypadFit.onContentLayout}
-          direction="column"
-          align="stretch"
-          justify="between"
-          gap="sm"
-          paddingX="lg"
-          paddingBottom={keypadFit.compact ? "sm" : "lg"}
-          fill="grow"
-        >
-          <View direction="column" align="stretch" justify="start" gap="sm">
-            {/* Card top-up hides the AA address — internal detail, not a recipient the
+        <Scroll onLayout={keypadFit.onViewportLayout}>
+          <View
+            onLayout={keypadFit.onContentLayout}
+            direction="column"
+            align="stretch"
+            justify="between"
+            gap="sm"
+            paddingX="lg"
+            paddingBottom={keypadFit.compact ? "sm" : "lg"}
+            fill="grow"
+          >
+            <View direction="column" align="stretch" justify="start" gap="sm">
+              {/* Card top-up hides the AA address — internal detail, not a recipient the
                 user picked. A scanned wallet address stays visible for verification. */}
-            {toCard ? null : onRecipientStep ? (
-              <TextField
-                ref={recipientFieldRef}
-                value={manualRecipient}
-                onChangeText={(next) => {
-                  setManualRecipient(next);
+              {toCard ? null : payout ? (
+                <View variant="soft" radius="md" paddingX="lg" paddingY="md" align="stretch">
+                  <Text size="sm" muted flow="truncate" lines={1}>
+                    {payout.summary}
+                  </Text>
+                </View>
+              ) : onRecipientStep ? (
+                <TextField
+                  ref={recipientFieldRef}
+                  value={manualRecipient}
+                  onChangeText={(next) => {
+                    setManualRecipient(next);
+                    resetRecipientLookup();
+                  }}
+                  autoCapitalize="none"
+                  accessibilityLabel={t("screen.WalletSendStablecoinModal.recipientLabel")}
+                >
+                  <TextFieldLabel>
+                    {t("screen.WalletSendStablecoinModal.recipientLabel")}
+                  </TextFieldLabel>
+                  <TextFieldButton
+                    accessibilityLabel={t("common.paste")}
+                    onPress={() => void handlePasteRecipient()}
+                  >
+                    {t("common.paste")}
+                  </TextFieldButton>
+                </TextField>
+              ) : (
+                <View variant="soft" radius="md" paddingX="lg" paddingY="md" align="stretch">
+                  <Text size="sm" mono muted flow="truncate" lines={1}>
+                    {savedRecipient
+                      ? recipientWithName(savedRecipient.label, recipient)
+                      : resolvedRecipient && typedRecipient
+                        ? `${typedRecipient} (${resolvedRecipient.slice(0, 6)}…${resolvedRecipient.slice(-4)})`
+                        : recipient}
+                  </Text>
+                </View>
+              )}
+              {/* Every payable contact while the field is empty, then the ones matching what is typed. */}
+              {/* Tanzanian banks, Lipa Namba and TanQR take this balance directly. */}
+              {onRecipientStep && !toCard && !payout && typedRecipient.length === 0 ? (
+                <Button
+                  size="lg"
+                  variant="soft"
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setPayoutOpen(true);
+                  }}
+                  accessibilityLabel={t("screen.BitcoinSendScreen.ctaPayAbroad")}
+                >
+                  <ButtonText>{t("screen.BitcoinSendScreen.ctaPayAbroad")}</ButtonText>
+                </Button>
+              ) : null}
+              <AddressBookSuggestions
+                active={visible && onRecipientStep && !toCard && !payout}
+                query={manualRecipient}
+                accepts={acceptsSavedDestination}
+                onPick={({ destination }) => {
+                  setManualRecipient(destination.raw);
                   resetRecipientLookup();
                 }}
-                autoCapitalize="none"
-                accessibilityLabel={t("screen.WalletSendStablecoinModal.recipientLabel")}
-              >
-                <TextFieldLabel>
-                  {t("screen.WalletSendStablecoinModal.recipientLabel")}
-                </TextFieldLabel>
-                <TextFieldButton
-                  accessibilityLabel={t("common.paste")}
-                  onPress={() => void handlePasteRecipient()}
-                >
-                  {t("common.paste")}
-                </TextFieldButton>
-              </TextField>
-            ) : (
-              <View variant="soft" radius="md" paddingX="lg" paddingY="md" align="stretch">
-                <Text size="sm" mono muted flow="truncate" lines={1}>
-                  {savedRecipient
-                    ? recipientWithName(savedRecipient.label, recipient)
-                    : resolvedRecipient && typedRecipient
-                      ? `${typedRecipient} (${resolvedRecipient.slice(0, 6)}…${resolvedRecipient.slice(-4)})`
-                      : recipient}
-                </Text>
-              </View>
-            )}
-            {/* Every payable contact while the field is empty, then the ones matching what is typed. */}
-            <AddressBookSuggestions
-              active={visible && onRecipientStep && !toCard}
-              query={manualRecipient}
-              accepts={acceptsSavedDestination}
-              onPick={({ destination }) => {
-                setManualRecipient(destination.raw);
-                resetRecipientLookup();
-              }}
-            />
-          </View>
-
-          {onRecipientStep ? (
-            <View direction="column" align="center" justify="center" gap="sm" fill="grow">
-              {recipientHint ? (
-                <Text size="md" muted align="center">
-                  {recipientHint}
-                </Text>
-              ) : null}
+              />
             </View>
-          ) : (
-            <AmountDisplay
-              primaryAmount={amount || "0"}
-              primaryImage={token?.code === "USD" ? USD_FLAG : EUR_FLAG}
-              primaryUnit={token?.code === "USD" ? "USDC" : "EURC"}
-              message={amountHint ? { text: amountHint, tone: "info" } : null}
-            />
-          )}
 
-          <View direction="column" align="stretch" justify="end" gap="lg">
-            {onRecipientStep ? null : (
-              <AmountKeypad
-                compact={keypadFit.compact}
-                onDigit={handleDigit}
-                onDecimal={handleDecimal}
-                onDelete={handleDelete}
+            {payout ? (
+              <AmountDisplay
+                primaryAmount={tzsDigits || "0"}
+                primaryImage={flagForIso2("TZ") ?? (token?.code === "USD" ? USD_FLAG : EUR_FLAG)}
+                primaryUnit="TZS"
+                message={tzHint ? { text: tzHint, tone: "info" } : null}
+              />
+            ) : onRecipientStep ? (
+              <View direction="column" align="center" justify="center" gap="sm" fill="grow">
+                {recipientHint ? (
+                  <Text size="md" muted align="center">
+                    {recipientHint}
+                  </Text>
+                ) : null}
+              </View>
+            ) : (
+              <AmountDisplay
+                primaryAmount={amount || "0"}
+                primaryImage={token?.code === "USD" ? USD_FLAG : EUR_FLAG}
+                primaryUnit={token?.code === "USD" ? "USDC" : "EURC"}
+                message={amountHint ? { text: amountHint, tone: "info" } : null}
               />
             )}
-          </View>
-        </View>
-      </Scroll>
 
-      <Footer
-        safeAreaBottom
-        direction="column"
-        align="stretch"
-        paddingBottom="sm"
-        paddingX="lg"
-        gap="sm"
-      >
-        <Button
-          size="lg"
-          variant="solid"
-          accent="lilac"
-          disabled={isCtaDisabled}
-          onPress={() => {
-            if (onRecipientStep) {
-              Keyboard.dismiss();
-              void confirmRecipient();
-              return;
-            }
-            void handleSend();
-          }}
-          accessibilityLabel={ctaA11yLabel}
+            <View direction="column" align="stretch" justify="end" gap="lg">
+              {onRecipientStep && !payout ? null : (
+                <AmountKeypad
+                  compact={keypadFit.compact}
+                  onDigit={handleDigit}
+                  onDecimal={handleDecimal}
+                  onDelete={handleDelete}
+                />
+              )}
+            </View>
+          </View>
+        </Scroll>
+
+        <Footer
+          safeAreaBottom
+          direction="column"
+          align="stretch"
+          paddingBottom="sm"
+          paddingX="lg"
+          gap="sm"
         >
-          <ButtonText>{ctaLabel}</ButtonText>
-        </Button>
-      </Footer>
-    </DsSheetHost>
+          <Button
+            size="lg"
+            variant="solid"
+            accent="lilac"
+            disabled={isCtaDisabled}
+            onPress={() => {
+              if (payout) {
+                // A lapsed order is never paid: a fresh one is fetched and its
+                // amount shown again before anything moves.
+                if (tzPayment && !tzPaymentLapsed(tzPayment.expiresAt)) void handleSend(tzPayment);
+                else void handleTzOrder();
+                return;
+              }
+              if (onRecipientStep) {
+                Keyboard.dismiss();
+                void confirmRecipient();
+                return;
+              }
+              void handleSend();
+            }}
+            accessibilityLabel={ctaA11yLabel}
+          >
+            <ButtonText>{ctaLabel}</ButtonText>
+          </Button>
+        </Footer>
+      </DsSheetHost>
+      <PayoutAbroadSheet
+        visible={visible && payoutOpen}
+        payWith={stableCode}
+        onClose={() => setPayoutOpen(false)}
+        onDone={(destination) => {
+          setPayout(destination);
+          setPayoutOpen(false);
+        }}
+      />
+    </>
   );
 };
 

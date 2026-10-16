@@ -10,12 +10,15 @@
  * the screen is on.
  */
 
+import type { ZapRemitDestination } from "./zapremitForm";
+
 const COUNTRY_CODE = "254";
 const SUBSCRIBER_DIGITS = 9;
 const MOBILE_LEADING = /^[71]/;
 
 function subscriberPart(raw: string): string | null {
-  const compact = String(raw || "").replace(/[\s()\-./]/g, "");
+  // \p{Cf}: the invisible direction marks iOS Contacts wraps a copied number in.
+  const compact = String(raw || "").replace(/[\s()\-./\p{Cf}]/gu, "");
   const withoutPlus = compact.startsWith("+") ? compact.slice(1) : compact;
   if (!/^\d+$/.test(withoutPlus) || !withoutPlus.startsWith(COUNTRY_CODE)) return null;
   const rest = withoutPlus.slice(COUNTRY_CODE.length);
@@ -37,4 +40,17 @@ export function formatKenyanMobileNumber(raw: string): string {
   if (subscriber === null) return String(raw || "").trim();
   const groups = [subscriber.slice(0, 3), subscriber.slice(3, 6), subscriber.slice(6)];
   return `+${COUNTRY_CODE} ${groups.join(" ")}`;
+}
+
+/** A typed Kenyan number and name as a ZapRemit M-Pesa destination. */
+export function kenyaMpesaDestination(phone: string, fullName: string): ZapRemitDestination {
+  const name = fullName.trim().replace(/\s+/g, " ");
+  return {
+    provider: "zapremit",
+    country: "KE",
+    methodCode: "KE_MOBILE_MONEY",
+    currency: "KES",
+    recipient: { fullName: name, institutionCode: "M_PESA", phoneNumber: phone },
+    summary: `${name} (${formatKenyanMobileNumber(phone)})`,
+  };
 }

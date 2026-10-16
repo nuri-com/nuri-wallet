@@ -90,6 +90,8 @@ export type V2BtcToStableQuote = {
   /** Hub USDC the route delivers to the EOA before the stable settle leg — the
    * approval cap for that leg. Null when the option carries no such leg. */
   expectedUsdc: number | null;
+  /** When the server stops honouring this option, epoch ms; null when unstated. */
+  validUntilMs: number | null;
 };
 
 export type V2BtcToStableUnavailable = { provider?: string; reason?: string };
@@ -140,6 +142,9 @@ function toV2Quote(option: SwapKitV2QuoteOption, rail: BtcRail): V2BtcToStableQu
     limits: option.limits ?? null,
     provider: option.optionId.split(":")[0] || null,
     expectedUsdc: deriveExpectedUsdc(option),
+    validUntilMs: Number.isFinite(Date.parse(String(option.validUntil ?? "")))
+      ? Date.parse(String(option.validUntil))
+      : null,
   };
 }
 
@@ -177,6 +182,11 @@ export async function quoteV2BtcToStable(args: {
   owner: string;
   settleTarget: string;
   refundAddress: string;
+  /**
+   * An exact stable amount the target must receive (a payout order's price).
+   * The server then prices the deposit for it instead of the other way round.
+   */
+  settleExact?: string;
 }): Promise<{ options: V2BtcToStableQuote[]; unavailable: V2BtcToStableUnavailable[] }> {
   const owner = args.owner.trim();
   if (!owner || !isValidEvmAddress(owner)) throw new Error("Base wallet address not available.");
@@ -187,8 +197,8 @@ export async function quoteV2BtcToStable(args: {
   const response: SwapKitV2QuoteResponse = await quoteSwapKitV2({
     from: args.rail,
     to,
-    amount: String(amountBtc),
-    side: "deposit",
+    amount: args.settleExact ?? String(amountBtc),
+    side: args.settleExact ? "settle" : "deposit",
     owner,
     settleTarget,
     refundAddress: args.refundAddress,
@@ -223,7 +233,10 @@ export type ExecuteV2BtcToStableArgs = {
   expectedUsdc?: number | null;
   owner: string;
   settleTarget: string;
-  destination: BtcToStableDestination;
+  /** "external": a payout's own address, neither this wallet nor its card. */
+  destination: BtcToStableDestination | "external";
+  /** The exact stable amount the quote was made for (settle side). */
+  settleExact?: string;
   /** BTC rail only: which local wallet pays the on-chain deposit. */
   sendSource?: BtcSendSource;
   onStatus?: (text: string) => void;
@@ -288,8 +301,8 @@ export async function executeV2BtcToStable(
       to,
       // The request the quote was made for, never the option's deposit: the
       // server only commits a quote for the same request it priced.
-      amount: String((args.requestedSats ?? args.sats) / 100_000_000),
-      side: "deposit",
+      amount: args.settleExact ?? String((args.requestedSats ?? args.sats) / 100_000_000),
+      side: args.settleExact ? "settle" : "deposit",
       settleTarget,
       refundAddress,
       acceptedDeposit: String(args.sats),
@@ -297,11 +310,11 @@ export async function executeV2BtcToStable(
       // BTC) to receive at least `quotedReceiveStable`. The server binds these
       // and never overwrites them with a later execution value.
       acceptedDepositAmount: String(amountBtc),
-      minimumSettleAmount: String(args.quotedReceiveStable),
+      minimumSettleAmount: args.settleExact ?? String(args.quotedReceiveStable),
       capabilities: BTC_TO_STABLE_CAPABILITIES,
       optionId: args.optionId,
       ...(args.quoteId ? { quoteId: args.quoteId } : {}),
-      destination: args.destination,
+      ...(args.destination === "external" ? {} : { destination: args.destination }),
       executorSpec: {
         flow: "btc_to_stable",
         rail: args.rail,

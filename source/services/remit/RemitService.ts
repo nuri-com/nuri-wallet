@@ -16,7 +16,12 @@
 import { isBolt11Invoice } from "../../lib/bitcoin/lightning";
 import { randomUUID } from "expo-crypto";
 
-import { REMIT_KES_MCP_URL, REMIT_MCP_URL } from "../../config/network";
+import { REMIT_MCP_URL, ZAPREMIT_MCP_URL } from "../../config/network";
+import {
+  parseZapRemitMethods,
+  type ZapRemitMethod,
+  type ZapRemitOption,
+} from "../../lib/remit/zapremitForm";
 import { log } from "../logging/LoggerService";
 
 const SATS_PER_BTC = 100_000_000;
@@ -347,95 +352,257 @@ export async function checkRemitPayment(sessionId: string): Promise<RemitPayment
   return readStatus(id, await callRemitTool("check_lightning_tzs_payment", { sessionId: id }));
 }
 
-// ── Kenya: Lightning → Kenyan shilling, M-Pesa through ZapRemit ──────────
+// ── ZapRemit: Lightning → bank or mobile money abroad ───────────────────
 // A different MCP endpoint, same transport. ZapRemit locks a quote for a
-// recipient, then hands out the BOLT11 that funds it and pays the phone out by
-// itself once that invoice settles: nothing to nudge afterwards.
+// recipient, then hands out the BOLT11 that funds it and pays out by itself
+// once that invoice settles: nothing to nudge afterwards. Countries, methods
+// and their recipient fields are read live (`lib/remit/zapremitForm.ts`).
 
-const KENYA = "KE";
-const KENYA_METHOD = "KE_MOBILE_MONEY";
-const KENYA_NETWORK = "M_PESA";
+export type ZapRemitCountry = { code: string; name: string; currency: string };
 
-export type KenyaRemitTerms = {
-  /** Kenyan shillings per bitcoin, ZapRemit's own reference rate. */
-  btcKes: number;
-  /** The method's band, in shillings. */
-  minKES: number;
-  maxKES: number;
+export type ZapRemitTerms = {
+  /** Units of the payout currency per bitcoin, ZapRemit's reference rate. */
+  btcRate: number;
+  /** The method's band, in the payout currency. */
+  min: number;
+  max: number;
 };
 
-function callKenyaTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-  return callRemitTool(name, args, REMIT_KES_MCP_URL);
+function callZapRemitTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  return callRemitTool(name, args, ZAPREMIT_MCP_URL);
 }
 
-export async function getKenyaRemitTerms(): Promise<KenyaRemitTerms> {
+export async function getZapRemitCountries(): Promise<ZapRemitCountry[]> {
+  // `{ data: [...] }` arrives already reduced to the list by the shared unwrap.
+  const data = await callZapRemitTool("zapremit_countries", {});
+  if (!Array.isArray(data)) throw new Error("zapremit unavailable");
+  return (data as Array<Record<string, unknown>>).flatMap((c) =>
+    typeof c?.code === "string" && typeof c?.currency === "string"
+      ? [{ code: c.code, name: typeof c.name === "string" ? c.name : c.code, currency: c.currency }]
+      : [],
+  );
+}
+
+/** The methods the app offers for a country: active, no sender KYC. */
+export async function getZapRemitMethods(country: string): Promise<ZapRemitMethod[]> {
+  return parseZapRemitMethods(await callZapRemitTool("zapremit_methods", { country }));
+}
+
+/** Allowed values for a picked field (banks, networks), by its field name. */
+export async function getZapRemitOptions(
+  country: string,
+  methodCode: string,
+  field: string,
+): Promise<ZapRemitOption[]> {
+  const data = (await callZapRemitTool("zapremit_options", { country, methodCode })) as Record<
+    string,
+    unknown
+  >;
+  const list = data?.[field];
+  if (!Array.isArray(list)) return [];
+  return (list as Array<Record<string, unknown>>).flatMap((o) =>
+    typeof o?.code === "string"
+      ? [{ code: o.code, name: typeof o.name === "string" ? o.name.trim() : o.code }]
+      : [],
+  );
+}
+
+export async function getZapRemitTerms(
+  country: string,
+  methodCode: string,
+  currency: string,
+): Promise<ZapRemitTerms> {
   const [rates, methods] = (await Promise.all([
-    callKenyaTool("zapremit_rates", {}),
-    callKenyaTool("zapremit_methods", { country: KENYA }),
-  ])) as [
-    { BTC?: Record<string, unknown> },
-    // The catalog arrives as `{ data: [...] }`, which the shared unwrap
-    // already reduces to the list itself.
-    Array<{ code?: string; min?: unknown; max?: unknown; active?: boolean }>,
-  ];
-  const btcKes = finiteNumber(rates?.BTC?.KES);
-  const method = Array.isArray(methods)
-    ? methods.find((entry) => entry?.code === KENYA_METHOD)
-    : undefined;
-  const minKES = finiteNumber(method?.min);
-  const maxKES = finiteNumber(method?.max);
-  if (btcKes === null || btcKes <= 0 || !method || method.active === false) {
-    throw new Error("kenya remit unavailable");
-  }
-  if (minKES === null || maxKES === null) throw new Error("kenya remit unavailable");
-  return { btcKes, minKES, maxKES };
+    callZapRemitTool("zapremit_rates", {}),
+    getZapRemitMethods(country),
+  ])) as [{ BTC?: Record<string, unknown> }, ZapRemitMethod[]];
+  const btcRate = finiteNumber(rates?.BTC?.[currency]);
+  const method = methods.find((entry) => entry.code === methodCode);
+  if (btcRate === null || btcRate <= 0 || !method) throw new Error("zapremit unavailable");
+  return { btcRate, min: method.min, max: method.max };
 }
 
-/** What this many shillings costs in sats at the reference rate. Shown, never paid. */
-export function kesToSats(amountKES: number, btcKes: number): number {
-  return Math.ceil((amountKES / btcKes) * SATS_PER_BTC);
+/** What this much payout currency costs in sats at the reference rate. Shown, never paid. */
+export function localToSats(amount: number, btcRate: number): number {
+  return Math.ceil((amount / btcRate) * SATS_PER_BTC);
 }
 
 /**
- * The invoice that delivers `amountKES` to `phoneNumber` (`254…`) over M-Pesa.
+ * The invoice that delivers `amount` of the method's currency to `recipient`.
  *
- * Quote, then invoice: neither moves money, and ZapRemit pays the phone only
- * once this invoice settles. Each press gets a fresh reference: a quote lives
- * a minute, and an unpaid one is simply left to expire.
+ * Quote, then invoice: neither moves money, and ZapRemit pays out only once
+ * this invoice settles. Each press gets a fresh reference: a quote lives a
+ * minute, and an unpaid one is simply left to expire.
  */
-export async function createKenyaRemitLightningInvoice(params: {
-  amountKES: number;
-  phoneNumber: string;
-  fullName: string;
+export async function createZapRemitLightningInvoice(params: {
+  country: string;
+  methodCode: string;
+  currency: string;
+  amount: number;
+  recipient: Record<string, unknown>;
 }): Promise<{ invoice: string; orderId: string }> {
-  const kes = Math.floor(Number(params.amountKES) || 0);
-  if (kes <= 0) throw new Error("amount required");
-  const phoneNumber = String(params.phoneNumber || "").trim();
-  const fullName = String(params.fullName || "").trim();
-  if (!phoneNumber || !fullName) throw new Error("recipient required");
+  const amount = Math.floor(Number(params.amount) || 0);
+  if (amount <= 0) throw new Error("amount required");
+  const fullName = params.recipient?.fullName;
+  if (typeof fullName === "string" && !fullName.trim()) throw new Error("recipient required");
 
-  const quote = (await callKenyaTool("zapremit_quote", {
-    country: KENYA,
-    methodCode: KENYA_METHOD,
-    amount: kes,
-    currency: "KES",
-    recipient: { fullName, institutionCode: KENYA_NETWORK, phoneNumber },
+  const quote = (await callZapRemitTool("zapremit_quote", {
+    country: params.country,
+    methodCode: params.methodCode,
+    amount,
+    currency: params.currency,
+    recipient: params.recipient,
     referenceId: randomUUID().toLowerCase(),
   })) as { orderId?: unknown };
   const orderId = typeof quote?.orderId === "string" ? quote.orderId : "";
-  if (!orderId) throw new Error("kenya remit returned no order");
+  if (!orderId) throw new Error("zapremit returned no order");
 
-  const payment = (await callKenyaTool("zapremit_payment", { orderId })) as Record<string, unknown>;
+  const payment = (await callZapRemitTool("zapremit_payment", { orderId })) as Record<
+    string,
+    unknown
+  >;
   const invoice =
     typeof payment?.invoice === "string" && isBolt11Invoice(payment.invoice.trim())
       ? payment.invoice.trim()
       : findInvoice(payment);
-  if (!invoice) throw new Error("kenya remit returned no invoice");
+  if (!invoice) throw new Error("zapremit returned no invoice");
 
   log(
-    `🔐 STEP Remit=1 step=remit_kes_invoice_created status=ok kes=${kes} sats=${
+    `🔐 STEP Remit=1 step=remit_zapremit_invoice_created status=ok country=${params.country} method=${params.methodCode} amount=${amount} currency=${params.currency} sats=${
       finiteNumber(payment?.amountSats) ?? "?"
-    } src=services/remit/RemitService.ts#createKenyaRemitLightningInvoice`,
+    } src=services/remit/RemitService.ts#createZapRemitLightningInvoice`,
   );
   return { invoice, orderId };
+}
+
+// ── Tanzania on the same host: bank, Lipa Namba, TanQR (`send_tzs`) ─────
+// An order names the destination and answers with the ways it can be paid.
+// Each offer carries `automaticDetection`; only those are used, so nothing
+// here ever needs a proof typed back. Bank payouts take USDC only.
+
+/** Exact amount and address for a stablecoin transfer on Base. */
+export type TzStablePayment = {
+  payTo: string;
+  amountAtomic: string;
+  amount: string;
+  /** When the order lapses, epoch ms; a payment after it may never pay out. */
+  expiresAt: number | null;
+};
+
+export type TzOrder = {
+  orderId: string;
+  /** When the order lapses, epoch ms; null when the service did not say. */
+  expiresAt: number | null;
+  /** The order's own BOLT11, when the service offers Lightning for it. */
+  invoice: string | null;
+  usdc: TzStablePayment | null;
+  eurc: TzStablePayment | null;
+};
+
+export type TzPrice = { sats: number; usdc: number; eurc: number };
+
+function tzStableOffer(
+  entry: Record<string, unknown>,
+  expiresAt: number | null,
+): TzStablePayment | null {
+  const payTo = typeof entry.payTo === "string" ? entry.payTo.trim() : "";
+  const amountAtomic = typeof entry.amount === "string" ? entry.amount : "";
+  const amount = typeof entry.amountLesbar === "string" ? entry.amountLesbar : "";
+  if (!/^0x[0-9a-fA-F]{40}$/.test(payTo) || !/^\d+$/.test(amountAtomic) || !amount) return null;
+  return { payTo, amountAtomic, amount, expiresAt };
+}
+
+/** The offers of a `send_tzs` order the wallet can pay without a proof. */
+export function parseTzOrder(data: unknown): TzOrder {
+  const record = (data ?? {}) as {
+    orderId?: unknown;
+    payWith?: unknown;
+    gueltigBis?: unknown;
+    validForSeconds?: unknown;
+  };
+  const orderId = typeof record.orderId === "string" ? record.orderId : "";
+  if (!orderId) throw new Error("remit returned no order");
+  const until = Date.parse(String(record.gueltigBis ?? ""));
+  const forSeconds = Number(record.validForSeconds);
+  const expiresAt = Number.isFinite(until)
+    ? until
+    : Number.isFinite(forSeconds) && forSeconds > 0
+      ? Date.now() + forSeconds * 1000
+      : null;
+  const offers = Array.isArray(record.payWith)
+    ? (record.payWith as Array<Record<string, unknown>>).filter(
+        (o) => o?.automaticDetection === true,
+      )
+    : [];
+  const lightning = offers.find((o) => o.protocol === "l402");
+  const invoice =
+    typeof lightning?.invoice === "string" && isBolt11Invoice(lightning.invoice.trim())
+      ? lightning.invoice.trim()
+      : null;
+  const usdc = offers.find((o) => o.protocol === "onchain-usdc");
+  const eurc = offers.find((o) => o.protocol === "onchain-eurc");
+  return {
+    orderId,
+    expiresAt,
+    invoice,
+    usdc: usdc ? tzStableOffer(usdc, expiresAt) : null,
+    eurc: eurc ? tzStableOffer(eurc, expiresAt) : null,
+  };
+}
+
+/** Time a payment needs to land before its order lapses. */
+const TZ_ORDER_SAFETY_MS = 120_000;
+
+/** Whether an order (or a quote paying it) is too close to lapsing to pay now. */
+export function tzPaymentLapsed(expiresAt: number | null, now = Date.now()): boolean {
+  return expiresAt !== null && now > expiresAt - TZ_ORDER_SAFETY_MS;
+}
+
+/** What `amountTZS` costs, per asset, before an order exists. Shown, never paid. */
+export async function quoteTzPayout(amountTZS: number): Promise<TzPrice> {
+  const tzs = Math.floor(Number(amountTZS) || 0);
+  if (tzs <= 0) throw new Error("amount required");
+  const data = (await callZapRemitTool("quote_tzs", { amountTZS: tzs })) as {
+    customerPays?: Record<string, unknown>;
+  };
+  const btc = finiteNumber(data?.customerPays?.BTC);
+  const usdc = finiteNumber(data?.customerPays?.USDC);
+  const eurc = finiteNumber(data?.customerPays?.EURC);
+  if (btc === null || usdc === null || eurc === null) throw new Error("remit quote unavailable");
+  return { sats: Math.ceil(btc * SATS_PER_BTC), usdc, eurc };
+}
+
+/** Banks and Lipa Namba providers, as `{ code, name }` for the form's pickers. */
+export async function listTzOptions(field: "bic" | "providerCode"): Promise<ZapRemitOption[]> {
+  const data = await callZapRemitTool(field === "bic" ? "list_banks" : "list_lipa_providers", {});
+  const record = (data ?? {}) as Record<string, unknown>;
+  const list = Array.isArray(data)
+    ? data
+    : ((record.banks ?? record.providers ?? record.data) as unknown);
+  if (!Array.isArray(list)) return [];
+  return (list as Array<Record<string, unknown>>).flatMap((o) => {
+    const code = o.bic ?? o.providerCode ?? o.code;
+    const name = o.name ?? o.bankName ?? o.providerName ?? code;
+    return typeof code === "string" ? [{ code, name: String(name).trim() }] : [];
+  });
+}
+
+/**
+ * The order that pays `amountTZS` to a Tanzanian bank account, Lipa Namba or
+ * TanQR. Creating it moves no money; the service pays out once one of its
+ * offers is paid, and an unpaid order lapses on its own.
+ */
+export async function createTzOrder(
+  amountTZS: number,
+  recipient: Record<string, unknown>,
+): Promise<TzOrder> {
+  const tzs = Math.floor(Number(amountTZS) || 0);
+  if (tzs <= 0) throw new Error("amount required");
+  const order = parseTzOrder(await callZapRemitTool("send_tzs", { amountTZS: tzs, ...recipient }));
+  log(
+    `🔐 STEP Remit=1 step=remit_tz_order_created status=ok tzs=${tzs} lightning=${
+      order.invoice ? 1 : 0
+    } usdc=${order.usdc ? 1 : 0} eurc=${order.eurc ? 1 : 0} src=services/remit/RemitService.ts#createTzOrder`,
+  );
+  return order;
 }

@@ -1,4 +1,5 @@
 // Centralized types for wallet domain — extracted from screen files
+import type { ZapRemitDestination } from "../lib/remit/zapremitForm";
 
 export type PendingWalletTransfer = {
   amount: number;
@@ -54,6 +55,8 @@ export type WalletSendStablecoinProps = {
   onClose: () => void;
   prefilledAddress?: string | null;
   prefilledAmount?: string | null;
+  /** A payout destination a scanned code named (a TanQR merchant). */
+  presetPayout?: ZapRemitDestination | null;
   maxStablecoinAvailable?: number | null;
   /** Card top-up: "Send Euro to Card" headline, recipient (the AA address) stays hidden. */
   toCard?: boolean;

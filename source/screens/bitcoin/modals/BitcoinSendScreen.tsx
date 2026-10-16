@@ -99,19 +99,28 @@ import {
   formatTanzanianMobileNumber,
   normalizeTanzanianMobileNumber,
 } from "../../../lib/remit/tanzaniaPhone";
-import {
-  formatKenyanMobileNumber,
-  normalizeKenyanMobileNumber,
-} from "../../../lib/remit/kenyaPhone";
+import { kenyaMpesaDestination, normalizeKenyanMobileNumber } from "../../../lib/remit/kenyaPhone";
+import type { ZapRemitDestination } from "../../../lib/remit/zapremitForm";
+import { flagForIso2 } from "../../../lib/countryFlags";
+import PayoutAbroadSheet from "../../../components/PayoutAbroadSheet";
 import {
   checkRemitPayment,
-  createKenyaRemitLightningInvoice,
   createRemitLightningInvoice,
-  getKenyaRemitTerms,
-  type KenyaRemitTerms,
-  kesToSats,
+  createTzOrder,
+  createZapRemitLightningInvoice,
+  getZapRemitTerms,
+  localToSats,
   quoteRemitSats,
+  quoteTzPayout,
+  tzPaymentLapsed,
+  type ZapRemitTerms,
 } from "../../../services/remit/RemitService";
+import {
+  btcRailRefundAddress,
+  executeV2BtcToStable,
+  quoteV2BtcToStable,
+} from "../../../services/swapkit/SwapKitV2BtcToStableService";
+import { paysBySwap, TZ_METHODS } from "../../../lib/remit/zapremitForm";
 import { resolveLightningBounds } from "../../../lib/bitcoin/lightningLimits";
 import { maxFundAmountSats } from "../../../services/swapkit/SwapKitArkadeIntentsCreate";
 import { sendArkadeToBitcoinViaLightning } from "../../../services/swapkit/SwapKitV2ArkadeToBtcService";
@@ -140,7 +149,6 @@ function acceptsPayableBitcoin(destination: Destination): boolean {
 }
 
 const TZS_FLAG = require("../../../assets/flags/tza.png");
-const KES_FLAG = require("../../../assets/flags/ken.png");
 
 // `availableAtMs` is 0 when the wait could not be derived from the wallet's
 // VTXO expiries — then the copy stays vague rather than naming a wrong time.
@@ -161,6 +169,7 @@ function formatOnchainTooFreshMessage(availableAtMs: number): string {
 export default function BitcoinSendScreen({
   visible,
   presetAddress,
+  presetPayout,
   presetAmountSats,
   allowAmountEdit = true,
   sendSource = "arkade",
@@ -255,10 +264,16 @@ export default function BitcoinSendScreen({
   // declared invalid — refusing it here beats a generic failure after the
   // pay-request round trip.
   const [lnurlMaxSats, setLnurlMaxSats] = useState<number | null>(null);
+  // A bank or mobile money account abroad, picked in the abroad sheet. It
+  // stands in for the typed recipient: the field is empty while it is set.
+  const [abroadDestination, setAbroadDestination] = useState<ZapRemitDestination | null>(null);
+  const [abroadOpen, setAbroadOpen] = useState(false);
   // Which wallet actually pays. A Lightning target has no on-chain rail, so it
   // moves the whole screen — balance, minimum, hold — onto arkade even when the
   // user opened this from the on-chain row.
   const recipientIsLightning = useMemo(() => {
+    // A payout abroad is paid with a BOLT11 minted at confirm time.
+    if (abroadDestination) return true;
     const normalized = normalizeLightningInput(toAddress.trim());
     if (isBolt11Invoice(normalized)) return true;
     if (isLnurlPaymentInput(normalized) && !isNuriLightningAddress(normalized)) return true;
@@ -269,7 +284,7 @@ export default function BitcoinSendScreen({
       normalizeTanzanianMobileNumber(toAddress) !== null ||
       normalizeKenyanMobileNumber(toAddress) !== null
     );
-  }, [toAddress]);
+  }, [toAddress, abroadDestination]);
   const effectiveSendSource: "arkade" | "onchain" = recipientIsLightning ? "arkade" : sendSource;
   // A bolt11 with no amount, or one this screen cannot decode: recognised as an
   // invoice, but not payable on a corridor that quotes against its figure.
@@ -291,13 +306,27 @@ export default function BitcoinSendScreen({
     sessionId: string | null;
     receiverName: string | null;
     feeTZS: number | null;
+    /**
+     * A destination that takes USDC only (a Tanzanian bank): no invoice, but
+     * an accepted swap of this many sats into the exact USDC the order asks,
+     * settled straight to the order's address.
+     */
+    swap?: {
+      optionId: string;
+      quoteId?: string;
+      settleExact: string;
+      payTo: string;
+      expectedUsdc: number | null;
+      /** The earlier of the order's lapse and the swap option's validity. */
+      expiresAt: number | null;
+    };
   } | null>(null);
   const [remitQuoteFailed, setRemitQuoteFailed] = useState(false);
-  // Kenya only: ZapRemit pays a named recipient, so the screen asks for the
-  // name, and prices the shillings from its rate and method band.
+  // Kenyan numbers: ZapRemit pays a named recipient, so the screen asks for
+  // the name. Every ZapRemit payout is priced from its rate and method band.
   const [remitName, setRemitName] = useState("");
   const [remitNameFocused, setRemitNameFocused] = useState(false);
-  const [kenyaTerms, setKenyaTerms] = useState<KenyaRemitTerms | null>(null);
+  const [zapTerms, setZapTerms] = useState<ZapRemitTerms | null>(null);
   // Whether the current amount lock came from an invoice, so replacing the
   // recipient releases only the lock this screen put on.
   const invoiceLockedAmountRef = useRef(false);
@@ -643,6 +672,14 @@ export default function BitcoinSendScreen({
     };
   }, [visible, fiatCode]);
 
+  // A payout destination named by a scanned code (a TanQR merchant) is the
+  // recipient: the sheet opens on the amount.
+  useEffect(() => {
+    if (!visible || !presetPayout) return;
+    setAbroadDestination(presetPayout);
+    setRecipientConfirmed(true);
+  }, [visible, presetPayout]);
+
   // If a preset amount (in sats) is provided, populate the sats field
   useEffect(() => {
     if (!visible) return;
@@ -667,28 +704,46 @@ export default function BitcoinSendScreen({
   const isRecipientArk = isArkAddress(trimmedToAddress);
   // The recipient as the corridor is asked for it, or null when this is not a
   // Tanzanian or Kenyan mobile number. Null is what every branch below reads,
-  // so a half-typed number never selects the rail.
-  const tzPhone = normalizeTanzanianMobileNumber(trimmedToAddress);
-  const kePhone = tzPhone ? null : normalizeKenyanMobileNumber(trimmedToAddress);
-  const remitCountry: "TZ" | "KE" | null = tzPhone ? "TZ" : kePhone ? "KE" : null;
+  // so a half-typed number never selects the rail. A destination picked in the
+  // abroad sheet takes the place of a typed one.
+  const tzPhone = abroadDestination ? null : normalizeTanzanianMobileNumber(trimmedToAddress);
+  const kePhone =
+    abroadDestination || tzPhone ? null : normalizeKenyanMobileNumber(trimmedToAddress);
+  // Every ZapRemit payout, Kenyan number or abroad sheet, as one destination.
+  const zapDestination = useMemo(
+    () => abroadDestination ?? (kePhone ? kenyaMpesaDestination(kePhone, remitName) : null),
+    [abroadDestination, kePhone, remitName],
+  );
+  const remitCountry: string | null = tzPhone ? "TZ" : (zapDestination?.country ?? null);
+  // Which corridor and method prices the amount: a change starts the figure over.
+  const remitRailKey = tzPhone
+    ? "TZ"
+    : zapDestination
+      ? `${zapDestination.country}:${zapDestination.methodCode}:${zapDestination.currency}`
+      : null;
   const isRecipientRemitPhone = remitCountry !== null;
-  const remitCurrency = remitCountry === "KE" ? "KES" : "TZS";
+  // A Tanzanian bank: paid by a swap into USDC, outside the Lightning band.
+  const isSwapPayout = paysBySwap(zapDestination);
+  const remitCurrency = zapDestination?.currency ?? "TZS";
+  const zapCountry = zapDestination?.country ?? null;
+  const zapMethod = zapDestination?.methodCode ?? null;
+  const zapProvider = zapDestination?.provider ?? null;
   const remitAmount = useMemo(() => {
     const parsed = Number(sanitizeDigits(remitDigits));
     return Number.isFinite(parsed) ? Math.floor(parsed) : 0;
   }, [remitDigits]);
   // ZapRemit's own band for the method. Out of it, the quote would be refused.
-  const kenyaBandLabel =
-    remitCountry === "KE" && kenyaTerms !== null && remitAmount > 0
-      ? remitAmount < kenyaTerms.minKES
+  const zapBandLabel =
+    zapDestination && zapTerms !== null && remitAmount > 0
+      ? remitAmount < zapTerms.min
         ? t("screen.BitcoinSendScreen.remitMinimum", {
-            amount: groupCount(kenyaTerms.minKES),
-            currency: "KES",
+            amount: groupCount(zapTerms.min),
+            currency: remitCurrency,
           })
-        : remitAmount > kenyaTerms.maxKES
+        : remitAmount > zapTerms.max
           ? t("screen.BitcoinSendScreen.remitMaximum", {
-              amount: groupCount(kenyaTerms.maxKES),
-              currency: "KES",
+              amount: groupCount(zapTerms.max),
+              currency: remitCurrency,
             })
           : null
       : null;
@@ -759,6 +814,8 @@ export default function BitcoinSendScreen({
   // Intents lockup adds its fee again. Without this, Max passed the check and
   // then failed after confirmation.
   const spendSats = useMemo(() => {
+    // A bank swap spends exactly the accepted option's sats, no Lightning reserve.
+    if (isSwapPayout) return currentSats;
     if (isRecipientBolt11 || isRecipientLnurl || isRecipientRemitPhone) {
       return maxFundAmountSats(currentSats);
     }
@@ -771,6 +828,7 @@ export default function BitcoinSendScreen({
     return currentSats;
   }, [
     currentSats,
+    isSwapPayout,
     isRecipientBolt11,
     isRecipientLnurl,
     isRecipientRemitPhone,
@@ -935,14 +993,17 @@ export default function BitcoinSendScreen({
         !isNuriLightningAddress(lightningRequest);
       // Read again here rather than from render state: this runs after an await
       // chain, and the rail that gets paid must be the one this string names.
-      const tzRecipient = isArk ? null : normalizeTanzanianMobileNumber(addr);
-      const keRecipient = isArk || tzRecipient ? null : normalizeKenyanMobileNumber(addr);
-      const remitRecipient = tzRecipient ?? keRecipient;
-      const isRemit = remitRecipient !== null;
+      // A destination from the abroad sheet has no string; it is the state.
+      const tzRecipient = isArk || abroadDestination ? null : normalizeTanzanianMobileNumber(addr);
+      const keRecipient =
+        isArk || tzRecipient || abroadDestination ? null : normalizeKenyanMobileNumber(addr);
+      const zapRecipient =
+        abroadDestination ?? (keRecipient ? kenyaMpesaDestination(keRecipient, remitName) : null);
+      const isRemit = tzRecipient !== null || zapRecipient !== null;
       log(
         `🔐 STEP Arkade_v4=1 step=wallet_send_confirm_pressed status=start sats=${currentSats} target=${isArk ? "ark_send" : isBolt11 ? "bolt11" : isLnurl ? "lnurl" : addr ? "bitcoin_onchain" : "missing"} amount_source=${isBolt11 ? "bolt11_invoice" : "ui_amount"} expected_next=validate_send_target src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
       );
-      if (!addr) {
+      if (!addr && !abroadDestination) {
         log(
           `🔐 STEP Arkade_v4=1 step=wallet_send_confirm_blocked status=blocked why=missing_target expected_next=user_enters_recipient src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
         );
@@ -974,7 +1035,8 @@ export default function BitcoinSendScreen({
       // The recipient's own ceiling, enforced where the send is actually
       // dispatched and not only on the button. A provider that advertises less
       // than the corridor has already declared a larger amount invalid.
-      if (isBolt11 || isLnurl || isRemit) {
+      // A Tanzanian bank is paid by a swap, not over Lightning: its quote is its limit.
+      if (isBolt11 || isLnurl || (isRemit && !paysBySwap(zapRecipient))) {
         const ceiling = Math.min(
           isLnurl
             ? (lnurlMaxSats ?? ARKADE_LIGHTNING_MAX_SEND_SATS)
@@ -1160,7 +1222,12 @@ export default function BitcoinSendScreen({
           // invoice turns out to cost. Deciding that by comparing the invoice
           // against the quote let an equal or cheaper invoice pay straight from
           // the quote button.
-          const pending = remitPendingInvoice;
+          // A bank swap whose order or quote has lapsed is never executed:
+          // this press fetches a fresh order and quote and shows them again.
+          const pending =
+            remitPendingInvoice?.swap && tzPaymentLapsed(remitPendingInvoice.swap.expiresAt)
+              ? null
+              : remitPendingInvoice;
           if (remitPressOutcome(pending !== null) === "show_price") {
             let created: {
               invoice: string;
@@ -1168,23 +1235,87 @@ export default function BitcoinSendScreen({
               receiverName: string | null;
               feeTZS: number | null;
             };
-            if (keRecipient) {
-              const fullName = remitName.trim();
-              if (!fullName) throw new Error(t("screen.BitcoinSendScreen.remitNameLabel"));
-              if (kenyaBandLabel) throw new Error(kenyaBandLabel);
-              const kenya = await createKenyaRemitLightningInvoice({
-                amountKES: remitAmount,
-                phoneNumber: keRecipient,
-                fullName,
-              });
-              // ZapRemit's price is the invoice itself; it states no separate fee.
+            if (zapRecipient) {
+              if (keRecipient && !remitName.trim()) {
+                throw new Error(t("screen.BitcoinSendScreen.remitNameLabel"));
+              }
+              if (zapBandLabel) throw new Error(zapBandLabel);
+              let invoice: string;
+              if (zapRecipient.provider === "tz") {
+                const order = await createTzOrder(remitAmount, zapRecipient.recipient);
+                if (order.invoice) {
+                  invoice = order.invoice;
+                } else if (order.usdc) {
+                  // USDC only (a bank): swap the sats into the order's exact
+                  // USDC, settled straight to its address. The server prices
+                  // the deposit for that exact amount; nothing moves yet.
+                  const owner = await getEthereumAddress();
+                  const refundAddress = await btcRailRefundAddress("BTC_ARKADE", "arkade");
+                  if (!owner || !refundAddress) {
+                    throw new Error(t("screen.BitcoinSendScreen.errorSendFailed"));
+                  }
+                  const { options } = await quoteV2BtcToStable({
+                    rail: "BTC_ARKADE",
+                    toStable: "USDC_BASE",
+                    sats: 0,
+                    owner,
+                    settleTarget: order.usdc.payTo,
+                    refundAddress,
+                    settleExact: order.usdc.amount,
+                  });
+                  const option = options[0];
+                  if (!option || !(option.sats > 0)) {
+                    throw new Error(t("screen.BitcoinSendScreen.errorRemitRateUnavailable"));
+                  }
+                  if (maxSpendableSats !== null && option.sats > maxSpendableSats) {
+                    throw new Error(t("screen.BitcoinSendScreen.errorExceedsBalance"));
+                  }
+                  setRemitPendingInvoice({
+                    invoice: "",
+                    sats: option.sats,
+                    sessionId: null,
+                    receiverName: zapRecipient.summary,
+                    feeTZS: null,
+                    swap: {
+                      optionId: option.optionId,
+                      ...(option.quoteId ? { quoteId: option.quoteId } : {}),
+                      settleExact: order.usdc.amount,
+                      payTo: order.usdc.payTo,
+                      expectedUsdc: option.expectedUsdc,
+                      expiresAt:
+                        [order.expiresAt, option.validUntilMs]
+                          .filter((v): v is number => v !== null)
+                          .sort((a, b) => a - b)[0] ?? null,
+                    },
+                  });
+                  setSubmittedAmountLocked(false);
+                  setInputMode("sats");
+                  setSatsDigits(String(option.sats));
+                  setInfoMessage(
+                    t("screen.BitcoinSendScreen.remitConfirmTo", { name: zapRecipient.summary }),
+                  );
+                  return;
+                } else {
+                  throw new Error(t("screen.BitcoinSendScreen.errorRemitRateUnavailable"));
+                }
+              } else {
+                const zap = await createZapRemitLightningInvoice({
+                  country: zapRecipient.country,
+                  methodCode: zapRecipient.methodCode,
+                  currency: zapRecipient.currency,
+                  amount: remitAmount,
+                  recipient: zapRecipient.recipient,
+                });
+                invoice = zap.invoice;
+              }
+              // The service's price is the invoice itself; it states no separate fee.
               created = {
-                invoice: kenya.invoice,
+                invoice,
                 sessionId: null,
-                receiverName: fullName,
+                receiverName: zapRecipient.summary,
                 feeTZS: null,
               };
-            } else {
+            } else if (tzRecipient) {
               if (!remitSessionSeedRef.current) {
                 remitSessionSeedRef.current = `${Date.now().toString(36)}${Math.random()
                   .toString(36)
@@ -1192,16 +1323,18 @@ export default function BitcoinSendScreen({
               }
               created = await createRemitLightningInvoice({
                 amountTZS: remitAmount,
-                phoneNumber: remitRecipient,
+                phoneNumber: tzRecipient,
                 // The recipient is part of the identity of this request. Without
                 // it a failed press, an edited phone number and the same shilling
                 // amount reuse one key, and the corridor may answer the second
                 // recipient with the first one's invoice.
-                clientReference: `nuri-${remitSessionSeedRef.current}-${remitRecipient.replace(
+                clientReference: `nuri-${remitSessionSeedRef.current}-${tzRecipient.replace(
                   /\D/g,
                   "",
                 )}-${remitAmount}`,
               });
+            } else {
+              throw new Error(t("screen.BitcoinSendScreen.errorInvalidAddress"));
             }
             // The invoice's own figure, never the corridor's `amountSats`: what
             // leaves the wallet is what is written inside the invoice.
@@ -1226,8 +1359,8 @@ export default function BitcoinSendScreen({
             setInputMode("sats");
             setSatsDigits(String(mintedSats));
             setInfoMessage(
-              keRecipient
-                ? t("screen.BitcoinSendScreen.remitConfirmMpesa", {
+              zapRecipient
+                ? t("screen.BitcoinSendScreen.remitConfirmTo", {
                     name: created.receiverName ?? "",
                   })
                 : created.receiverName
@@ -1243,6 +1376,39 @@ export default function BitcoinSendScreen({
           }
           // Second press: pay the invoice already shown, at the price it was
           // shown at. Re-minting would fetch a new one at a new price.
+          if (pending.swap) {
+            // The accepted swap into the order's exact USDC. A tracked order:
+            // its own pill and rows carry it from here, like any swap.
+            if (maxSpendableSats !== null && pending.sats > maxSpendableSats) {
+              throw new Error(t("screen.BitcoinSendScreen.errorExceedsBalance"));
+            }
+            const owner = await getEthereumAddress();
+            if (!owner) throw new Error(t("screen.BitcoinSendScreen.errorSendFailed"));
+            handOffToPill();
+            // A refused commit (an expired option, a moved price) drops the
+            // shown quote, so Try again quotes afresh instead of resubmitting it.
+            await executeV2BtcToStable({
+              rail: "BTC_ARKADE",
+              toStable: "USDC_BASE",
+              sats: pending.sats,
+              optionId: pending.swap.optionId,
+              ...(pending.swap.quoteId ? { quoteId: pending.swap.quoteId } : {}),
+              quotedReceiveStable: Number(pending.swap.settleExact),
+              expectedUsdc: pending.swap.expectedUsdc,
+              owner,
+              settleTarget: pending.swap.payTo,
+              destination: "external",
+              settleExact: pending.swap.settleExact,
+            }).catch((err) => {
+              setRemitPendingInvoice(null);
+              throw err;
+            });
+            movePillRef.current?.handedOff();
+            movePillRef.current = null;
+            setBusy(false);
+            await closeAndNotifyRefresh();
+            return;
+          }
           const payRefusal = checkRemitInvoice({
             invoiceSats: pending.sats,
             acceptedSats: pending.sats,
@@ -1459,7 +1625,8 @@ export default function BitcoinSendScreen({
     // would close over the amount as it stood when the recipient was entered.
     remitAmount,
     remitName,
-    kenyaBandLabel,
+    zapBandLabel,
+    abroadDestination,
     remitPendingInvoice,
     setInfoMessage,
     describeRemitRefusal,
@@ -1499,7 +1666,9 @@ export default function BitcoinSendScreen({
       setRemitPendingInvoice(null);
       setRemitName("");
       setRemitNameFocused(false);
-      setKenyaTerms(null);
+      setZapTerms(null);
+      setAbroadDestination(null);
+      setAbroadOpen(false);
       remitSessionSeedRef.current = "";
     }
   }, [visible, setSatsDigits, setFiatDigits]);
@@ -1507,13 +1676,14 @@ export default function BitcoinSendScreen({
   // The shilling amount belongs to the phone number it was typed against.
   // Leaving it in place when the recipient changes carried one recipient's
   // figure onto the next, and the sats it had already priced with it. The
-  // same holds across countries: a TZS figure is not a KES one.
+  // same holds across countries and methods: a TZS figure is not a KES one.
   useEffect(() => {
     setRemitDigits("");
     setRemitPendingInvoice(null);
     setRemitQuoting(false);
     setRemitQuoteFailed(false);
-  }, [remitCountry]);
+    setZapTerms(null);
+  }, [remitRailKey]);
 
   // The name belongs to the Kenyan number it was typed for.
   useEffect(() => {
@@ -1551,13 +1721,20 @@ export default function BitcoinSendScreen({
     const handle = setTimeout(async () => {
       try {
         let sats: number;
-        if (remitCountry === "KE") {
-          // Kenya has no quote without a recipient, so the shown figure comes
-          // from ZapRemit's reference rate; the invoice states the real price.
-          const terms = await getKenyaRemitTerms();
+        if (zapProvider === "tz") {
+          // Tanzanian orders: the service's own price for the amount; the
+          // order's invoice (or the swap quote, for a bank) states the real one.
+          const method = TZ_METHODS.find((m) => m.code === zapMethod);
+          if (method) setZapTerms({ btcRate: 0, min: method.min, max: method.max });
+          sats = (await quoteTzPayout(remitAmount)).sats;
           if (cancelled) return;
-          setKenyaTerms(terms);
-          sats = kesToSats(remitAmount, terms.btcKes);
+        } else if (zapCountry && zapMethod) {
+          // ZapRemit has no quote without a recipient, so the shown figure
+          // comes from its reference rate; the invoice states the real price.
+          const terms = await getZapRemitTerms(zapCountry, zapMethod, remitCurrency);
+          if (cancelled) return;
+          setZapTerms(terms);
+          sats = localToSats(remitAmount, terms.btcRate);
         } else {
           sats = await quoteRemitSats(remitAmount);
         }
@@ -1578,7 +1755,17 @@ export default function BitcoinSendScreen({
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [visible, isRecipientRemitPhone, remitCountry, remitAmount, setSatsDigits, setInputMode]);
+  }, [
+    visible,
+    isRecipientRemitPhone,
+    zapProvider,
+    zapCountry,
+    zapMethod,
+    remitCurrency,
+    remitAmount,
+    setSatsDigits,
+    setInputMode,
+  ]);
 
   // Preview approval removed; approval starts immediately after building
   // The recipient field is free text, so a typed or pasted invoice reaches here
@@ -1725,14 +1912,13 @@ export default function BitcoinSendScreen({
   // below-minimum amount reached minting and came back as a downstream refusal
   // instead of naming the minimum, and an over-maximum one was caught only at
   // confirm.
-  const lnurlMinFloorSats =
-    isRecipientLnurl || isRecipientBolt11 || isRecipientRemitPhone ? lightningBounds.minSats : null;
+  const onLightningBand =
+    isRecipientLnurl || isRecipientBolt11 || (isRecipientRemitPhone && !isSwapPayout);
+  const lnurlMinFloorSats = onLightningBand ? lightningBounds.minSats : null;
   const isBelowLnurlMinimum =
     lnurlMinFloorSats != null && currentSats > 0 && currentSats < lnurlMinFloorSats;
   const lightningMaxCeilingSats = lightningBounds.maxSats;
-  const isAboveLightningMaximum =
-    (isRecipientBolt11 || isRecipientLnurl || isRecipientRemitPhone) &&
-    currentSats > lightningMaxCeilingSats;
+  const isAboveLightningMaximum = onLightningBand && currentSats > lightningMaxCeilingSats;
 
   // A locked scanned amount that exceeds spendable funds would strand the
   // user on a disabled confirm with a non-editable field. Release the lock
@@ -1785,8 +1971,8 @@ export default function BitcoinSendScreen({
           // with no words is the user staring at a screen that will not move.
           invoiceUnpayable
           ? t("screen.BitcoinSendScreen.errorInvoiceAmountMissing")
-          : kenyaBandLabel
-            ? kenyaBandLabel
+          : zapBandLabel
+            ? zapBandLabel
             : isBelowArkadeOnchainMinimum
               ? t("screen.BitcoinSendScreen.minimumSatsLabel", {
                   amount: String(onchainMinSats),
@@ -1825,8 +2011,8 @@ export default function BitcoinSendScreen({
       : fiatDigits || "0";
   const fiatImage = fiatImageFor(fiatCode);
   const primaryImage = isRecipientRemitPhone
-    ? remitCountry === "KE"
-      ? KES_FLAG
+    ? zapCountry
+      ? (flagForIso2(zapCountry) ?? BTC_LOGO)
       : TZS_FLAG
     : isSatsMode
       ? BTC_LOGO
@@ -1848,9 +2034,11 @@ export default function BitcoinSendScreen({
   // destination picked here.
   const recipientNuriUsername = recipientLooksValid ? null : toNuriUsername(trimmedToAddress);
   // Kenya pays a named recipient: the recipient stage stays up until a name is in.
-  const needsRemitName = remitCountry === "KE";
+  const needsRemitName = kePhone !== null;
   const remitNameMissing = needsRemitName && !remitName.trim();
+  // A destination from the abroad sheet is a finished recipient.
   const manualEntryActive =
+    !abroadDestination &&
     (presetRecipientEmpty || needsRemitName) &&
     (!recipientConfirmed || recipientFocused || remitNameFocused || remitNameMissing);
   // One suggestion per contact: the destination this wallet pays cheapest.
@@ -1907,193 +2095,229 @@ export default function BitcoinSendScreen({
   };
 
   return (
-    <DsSheetHost
-      visible={visible && !handedOff}
-      onClose={() => void closeAndNotifyRefresh()}
-      mode="full"
-      onOpenComplete={() => {
-        if (presetRecipientEmpty) recipientFieldRef.current?.focus();
-      }}
-    >
-      <Header safeAreaTop chrome="canvas">
-        <Topbar surface="transparent" layout="fluid">
-          <TopbarTitle>{headerTitle}</TopbarTitle>
-          <TopbarTrailing>
-            <IconButton
-              icon="cross"
-              variant="soft"
-              accessibilityLabel={t("common.close")}
-              onPress={() => void closeAndNotifyRefresh()}
-            />
-          </TopbarTrailing>
-        </Topbar>
-      </Header>
+    <>
+      <DsSheetHost
+        visible={visible && !handedOff}
+        onClose={() => void closeAndNotifyRefresh()}
+        mode="full"
+        onOpenComplete={() => {
+          if (presetRecipientEmpty) recipientFieldRef.current?.focus();
+        }}
+      >
+        <Header safeAreaTop chrome="canvas">
+          <Topbar surface="transparent" layout="fluid">
+            <TopbarTitle>{headerTitle}</TopbarTitle>
+            <TopbarTrailing>
+              <IconButton
+                icon="cross"
+                variant="soft"
+                accessibilityLabel={t("common.close")}
+                onPress={() => void closeAndNotifyRefresh()}
+              />
+            </TopbarTrailing>
+          </Topbar>
+        </Header>
 
-      <Scroll onLayout={keypadFit.onViewportLayout}>
-        <View
-          onLayout={keypadFit.onContentLayout}
-          direction="column"
-          align="stretch"
-          justify="between"
-          gap="sm"
-          paddingX="lg"
-          paddingTop="lg"
-          paddingBottom={keypadFit.compact ? "sm" : "lg"}
-          fill="grow"
-        >
-          <View direction="column" align="stretch" justify="start" gap="sm">
-            {manualEntryActive ? (
-              <TextField
-                ref={recipientFieldRef}
-                value={toAddress}
-                onChangeText={setToAddress}
-                autoCapitalize="none"
-                disabled={busy}
-                onFocus={() => setRecipientFocused(true)}
-                onBlur={() => setRecipientFocused(false)}
-                accessibilityLabel={recipientFieldLabel}
-              >
-                <TextFieldButton
-                  accessibilityLabel={t("common.paste")}
-                  onPress={() => void handlePasteRecipient()}
+        <Scroll onLayout={keypadFit.onViewportLayout}>
+          <View
+            onLayout={keypadFit.onContentLayout}
+            direction="column"
+            align="stretch"
+            justify="between"
+            gap="sm"
+            paddingX="lg"
+            paddingTop="lg"
+            paddingBottom={keypadFit.compact ? "sm" : "lg"}
+            fill="grow"
+          >
+            <View direction="column" align="stretch" justify="start" gap="sm">
+              {manualEntryActive ? (
+                <TextField
+                  ref={recipientFieldRef}
+                  value={toAddress}
+                  onChangeText={setToAddress}
+                  autoCapitalize="none"
+                  disabled={busy}
+                  onFocus={() => setRecipientFocused(true)}
+                  onBlur={() => setRecipientFocused(false)}
+                  accessibilityLabel={recipientFieldLabel}
                 >
-                  {t("common.paste")}
-                </TextFieldButton>
-              </TextField>
-            ) : (
-              <View variant="soft" radius="md" paddingX="lg" paddingY="md" align="stretch">
-                <Text size="sm" mono muted flow="truncate" lines={1}>
-                  {remitCountry === "KE"
-                    ? `${remitName.trim()} (${formatKenyanMobileNumber(trimmedToAddress)})`
-                    : isRecipientRemitPhone
-                      ? formatTanzanianMobileNumber(trimmedToAddress)
-                      : savedRecipient
-                        ? recipientWithName(savedRecipient.label, trimmedToAddress)
-                        : trimmedToAddress}
-                </Text>
-              </View>
-            )}
-            {manualEntryActive && needsRemitName ? (
-              <TextField
-                value={remitName}
-                onChangeText={(name) => {
-                  setRemitName(name);
-                  // An invoice minted for one name is not one for the next.
-                  setRemitPendingInvoice(null);
-                  setInfoMessage(null);
-                }}
-                placeholder={t("screen.BitcoinSendScreen.remitNameLabel")}
-                autoCapitalize="words"
-                disabled={busy}
-                onFocus={() => setRemitNameFocused(true)}
-                onBlur={() => setRemitNameFocused(false)}
-                accessibilityLabel={t("screen.BitcoinSendScreen.remitNameLabel")}
-              />
-            ) : null}
-            {/* Every payable contact while the field is empty, then the ones matching what is typed. */}
-            <AddressBookSuggestions
-              active={visible && manualEntryActive}
-              query={toAddress}
-              accepts={acceptsPayableBitcoin}
-              cost={suggestionCost}
-              onPick={({ destination }) => {
-                setToAddress(destination.raw);
-                setErrorMessage(null);
-              }}
-            />
-          </View>
-
-          {manualEntryActive ? (
-            <View direction="column" align="stretch" justify="start" gap="sm" fill="grow">
-              {errorMessage ? (
-                <Text size="md" emphasis align="center">
-                  {errorMessage}
-                </Text>
-              ) : null}
-            </View>
-          ) : (
-            <>
-              <AmountDisplay
-                primaryAmount={primaryAmount}
-                primaryImage={primaryImage}
-                primaryUnit={primaryUnit}
-                secondary={{ amount: secondaryAmount, image: secondaryImage, unit: secondaryUnit }}
-                onToggle={toggleInputMode}
-                // A BOLT11's amount is protocol-fixed and lives in the sats
-                // field alone. Switching to fiat left the screen and the CTA
-                // reading zero while the service still paid the invoice's
-                // real amount — two numbers on one screen, the true one
-                // invisible. Nothing to switch between, so nothing to press.
-                // A failed send holds its amount and reason until Try again.
-                toggleDisabled={
-                  invoiceLockedAmountRef.current || isRecipientRemitPhone || sendFailed
-                }
-                message={
-                  errorMessage
-                    ? { text: errorMessage, tone: "alert" }
-                    : exceedsBalance
-                      ? { text: overBalanceMessage, tone: "alert" }
-                      : infoMessage
-                        ? { text: infoMessage, tone: "info" }
-                        : null
-                }
-              />
-
-              {amountEditable ? (
-                <AmountKeypad
-                  compact={keypadFit.compact}
-                  onDigit={handleDigit}
-                  onDecimal={isSatsMode ? undefined : handleDecimal}
-                  onDelete={handleDelete}
+                  <TextFieldButton
+                    accessibilityLabel={t("common.paste")}
+                    onPress={() => void handlePasteRecipient()}
+                  >
+                    {t("common.paste")}
+                  </TextFieldButton>
+                </TextField>
+              ) : (
+                <View variant="soft" radius="md" paddingX="lg" paddingY="md" align="stretch">
+                  <Text size="sm" mono muted flow="truncate" lines={1}>
+                    {zapDestination
+                      ? zapDestination.summary
+                      : isRecipientRemitPhone
+                        ? formatTanzanianMobileNumber(trimmedToAddress)
+                        : savedRecipient
+                          ? recipientWithName(savedRecipient.label, trimmedToAddress)
+                          : trimmedToAddress}
+                  </Text>
+                </View>
+              )}
+              {manualEntryActive && needsRemitName ? (
+                <TextField
+                  value={remitName}
+                  onChangeText={(name) => {
+                    setRemitName(name);
+                    // An invoice minted for one name is not one for the next.
+                    setRemitPendingInvoice(null);
+                    setInfoMessage(null);
+                  }}
+                  placeholder={t("screen.BitcoinSendScreen.remitNameLabel")}
+                  autoCapitalize="words"
+                  disabled={busy}
+                  onFocus={() => setRemitNameFocused(true)}
+                  onBlur={() => setRemitNameFocused(false)}
+                  accessibilityLabel={t("screen.BitcoinSendScreen.remitNameLabel")}
                 />
               ) : null}
-            </>
-          )}
-        </View>
-      </Scroll>
+              {/* Every payable contact while the field is empty, then the ones matching what is typed. */}
+              <AddressBookSuggestions
+                active={visible && manualEntryActive}
+                query={toAddress}
+                accepts={acceptsPayableBitcoin}
+                cost={suggestionCost}
+                onPick={({ destination }) => {
+                  setToAddress(destination.raw);
+                  setErrorMessage(null);
+                }}
+              />
+              {manualEntryActive && !trimmedToAddress ? (
+                <Button
+                  size="lg"
+                  variant="soft"
+                  disabled={busy}
+                  onPress={() => {
+                    try {
+                      recipientFieldRef.current?.blur();
+                      Keyboard.dismiss();
+                    } catch {}
+                    setAbroadOpen(true);
+                  }}
+                >
+                  <ButtonText>{t("screen.BitcoinSendScreen.ctaPayAbroad")}</ButtonText>
+                </Button>
+              ) : null}
+            </View>
 
-      <Footer safeAreaBottom direction="column" align="stretch" paddingBottom="sm" paddingX="lg">
-        {manualEntryActive ? (
-          <Button
-            size="lg"
-            variant="solid"
-            accent="lilac"
-            onPress={() => void handleRecipientNext()}
-            disabled={
-              busy ||
-              resolvingUsername ||
-              remitNameMissing ||
-              (!recipientLooksValid && !recipientNuriUsername)
-            }
-          >
-            <ButtonText>{t("screen.BitcoinSendScreen.ctaNext")}</ButtonText>
-          </Button>
-        ) : (
-          <Button
-            size="lg"
-            variant="solid"
-            accent="lilac"
-            onPress={sendFailed ? clearSendFailure : handleConfirm}
-            disabled={
-              busy ||
-              (!sendFailed &&
-                (exceedsBalance ||
-                  exceedsSettleableForOffboard ||
-                  isBelowArkadeOnchainMinimum ||
-                  isBelowArkSendMinimum ||
-                  isBelowLnurlMinimum ||
-                  isAboveLightningMaximum ||
-                  invoiceUnpayable ||
-                  kenyaBandLabel !== null ||
-                  remitQuoting ||
-                  remitQuoteFailed ||
-                  (currentSats <= 0 && !isRecipientBolt11)))
-            }
-          >
-            <ButtonText>{sendFailed ? t("common.tryAgain") : ctaLabel}</ButtonText>
-          </Button>
-        )}
-      </Footer>
-    </DsSheetHost>
+            {manualEntryActive ? (
+              <View direction="column" align="stretch" justify="start" gap="sm" fill="grow">
+                {errorMessage ? (
+                  <Text size="md" emphasis align="center">
+                    {errorMessage}
+                  </Text>
+                ) : null}
+              </View>
+            ) : (
+              <>
+                <AmountDisplay
+                  primaryAmount={primaryAmount}
+                  primaryImage={primaryImage}
+                  primaryUnit={primaryUnit}
+                  secondary={{
+                    amount: secondaryAmount,
+                    image: secondaryImage,
+                    unit: secondaryUnit,
+                  }}
+                  onToggle={toggleInputMode}
+                  // A BOLT11's amount is protocol-fixed and lives in the sats
+                  // field alone. Switching to fiat left the screen and the CTA
+                  // reading zero while the service still paid the invoice's
+                  // real amount — two numbers on one screen, the true one
+                  // invisible. Nothing to switch between, so nothing to press.
+                  // A failed send holds its amount and reason until Try again.
+                  toggleDisabled={
+                    invoiceLockedAmountRef.current || isRecipientRemitPhone || sendFailed
+                  }
+                  message={
+                    errorMessage
+                      ? { text: errorMessage, tone: "alert" }
+                      : exceedsBalance
+                        ? { text: overBalanceMessage, tone: "alert" }
+                        : infoMessage
+                          ? { text: infoMessage, tone: "info" }
+                          : null
+                  }
+                />
+
+                {amountEditable ? (
+                  <AmountKeypad
+                    compact={keypadFit.compact}
+                    onDigit={handleDigit}
+                    onDecimal={isSatsMode ? undefined : handleDecimal}
+                    onDelete={handleDelete}
+                  />
+                ) : null}
+              </>
+            )}
+          </View>
+        </Scroll>
+
+        <Footer safeAreaBottom direction="column" align="stretch" paddingBottom="sm" paddingX="lg">
+          {manualEntryActive ? (
+            <Button
+              size="lg"
+              variant="solid"
+              accent="lilac"
+              onPress={() => void handleRecipientNext()}
+              disabled={
+                busy ||
+                resolvingUsername ||
+                remitNameMissing ||
+                (!recipientLooksValid && !recipientNuriUsername)
+              }
+            >
+              <ButtonText>{t("screen.BitcoinSendScreen.ctaNext")}</ButtonText>
+            </Button>
+          ) : (
+            <Button
+              size="lg"
+              variant="solid"
+              accent="lilac"
+              onPress={sendFailed ? clearSendFailure : handleConfirm}
+              disabled={
+                busy ||
+                (!sendFailed &&
+                  (exceedsBalance ||
+                    exceedsSettleableForOffboard ||
+                    isBelowArkadeOnchainMinimum ||
+                    isBelowArkSendMinimum ||
+                    isBelowLnurlMinimum ||
+                    isAboveLightningMaximum ||
+                    invoiceUnpayable ||
+                    zapBandLabel !== null ||
+                    remitQuoting ||
+                    remitQuoteFailed ||
+                    (currentSats <= 0 && !isRecipientBolt11)))
+              }
+            >
+              <ButtonText>{sendFailed ? t("common.tryAgain") : ctaLabel}</ButtonText>
+            </Button>
+          )}
+        </Footer>
+      </DsSheetHost>
+      <PayoutAbroadSheet
+        visible={visible && !handedOff && abroadOpen}
+        payWith="bitcoin"
+        onClose={() => setAbroadOpen(false)}
+        onDone={(destination) => {
+          setAbroadDestination(destination);
+          setAbroadOpen(false);
+          setToAddress("");
+          setRemitName("");
+          setRecipientConfirmed(true);
+          setErrorMessage(null);
+          setInfoMessage(null);
+        }}
+      />
+    </>
   );
 }
