@@ -486,7 +486,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
                 </Text>
               </View>
             )}
-            {/* Saved recipients matching what is typed; nothing when none match. */}
+            {/* Every payable contact while the field is empty, then the ones matching what is typed. */}
             <AddressBookSuggestions
               active={visible && onRecipientStep && !toCard}
               query={manualRecipient}

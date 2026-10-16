@@ -46,9 +46,9 @@ JavaScript, connect a wallet, sign transactions or deploy anything.
 For this snapshot, success prints:
 
 ```text
-PASS: 274 live files match release 7f7171ad1c6246abc415c66287d37420d43c6650
-WAICT manifest: /waict/EGK6E71A7ZjuBe90x1f-Be
-Release manifest SHA-256: 6e9d461f51ac410bf0e7084ecd005fdd854d58304159455cb143487cd6c90c8e
+PASS: 274 live files match release 03fbc53ca6be0ef1fa947d2a1f0f7a5407391db2
+WAICT manifest: /waict/8aSEQvxo8Ma2e3WvFLaM-S
+Release manifest SHA-256: 263b15d9c5a3cc4c9ac50097a63be8dfda0595a07dca8e0d0995fd0ef5b4ec6c
 ```
 
 A failed request or mismatch produces a nonzero exit status. It is not proof of an
@@ -70,7 +70,7 @@ freshly downloaded from the same server. First identify the intended release.
 
 The release contains **217 Expo JavaScript chunks**, 2 other JavaScript files
 (nuri-service-worker.js, jsQR.js), HTML, CSS, assets, 3 JSON files and the WAICT integrity manifest.
-The full inventory is **274 files / 26,322,946 bytes**. Checking only the main
+The full inventory is **274 files / 26,323,411 bytes**. Checking only the main
 JavaScript file would leave other executable code and resources unchecked.
 
 The source subset was selected from Metro's emitted module graph, not by guessing
@@ -94,7 +94,7 @@ There are three distinct identifiers:
 **Release manifest SHA-256:**
 
 ```text
-6e9d461f51ac410bf0e7084ecd005fdd854d58304159455cb143487cd6c90c8e
+263b15d9c5a3cc4c9ac50097a63be8dfda0595a07dca8e0d0995fd0ef5b4ec6c
 ```
 
 Compute it independently with Node.js:
@@ -104,17 +104,17 @@ node -e 'const fs=require("node:fs"),crypto=require("node:crypto"); console.log(
 ```
 
 The main application bundle is
-[`index-c215a0b37ff3a3f10d3d67e2f605600b.js`](web/_expo/static/js/web/index-c215a0b37ff3a3f10d3d67e2f605600b.js).
+[`index-388bb27cab91d16ebd6cc70e6fe6b662.js`](web/_expo/static/js/web/index-388bb27cab91d16ebd6cc70e6fe6b662.js).
 Its SHA-256 is:
 
 ```text
-32b764294e5bc17e0c70ea5410105012159d2afe713784271e691b5f8e788002
+5e449542ce4c8924d636b460508a2ec9cb7aa133b08db76e8bd372c66037bdc9
 ```
 
 To compare it with the live site without cloning anything:
 
 ```sh
-curl -s https://app.nuri.com/_expo/static/js/web/index-c215a0b37ff3a3f10d3d67e2f605600b.js | shasum -a 256
+curl -s https://app.nuri.com/_expo/static/js/web/index-388bb27cab91d16ebd6cc70e6fe6b662.js | shasum -a 256
 ```
 
 This checks one file. `node verify.mjs` checks all of them.
@@ -179,7 +179,7 @@ flowchart LR
 ### Why 272 rebuilt files but 274 release files?
 
 `web/deployment.json` records deployment-time information, including the source SHA,
-release ID and timestamp. `web/waict/EGK6E71A7ZjuBe90x1f-Be` is the WAICT integrity manifest written
+release ID and timestamp. `web/waict/8aSEQvxo8Ma2e3WvFLaM-S` is the WAICT integrity manifest written
 at deploy time. Expo produces neither file. Rebuild mode excludes **only those two
 files** from the expected build output; it does not silently ignore arbitrary
 differences. The WAICT manifest is then recomputed from the rebuilt files and must match
@@ -193,9 +193,9 @@ the resulting application bytes were then checked, not assumed to be unchanged.
 | Recorded evidence | Value |
 | --- | --- |
 | Application version | `0.106.0` |
-| Deployment ID | `pwa-7f7171ad1c62` |
-| Original deployment source | `7f7171ad1c6246abc415c66287d37420d43c6650` |
-| Deployment timestamp | `2026-10-16T11:37:23Z` |
+| Deployment ID | `pwa-03fbc53ca6be` |
+| Original deployment source | `03fbc53ca6be0ef1fa947d2a1f0f7a5407391db2` |
+| Deployment timestamp | `2026-10-16T14:46:02Z` |
 | Last complete live comparison for this snapshot | `2026-10-16` |
 | Rebuild environment | GitHub Actions, Node `22.23.3`, npm `10.9.9`, clean directory |
 | Original production CI | nuri-expo Deploy PWA, Node 22 |

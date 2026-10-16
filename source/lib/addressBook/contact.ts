@@ -330,21 +330,14 @@ export function suggestDestinations(
       hit(contact.label) ||
       hit(contact.note ?? "") ||
       (contact.nuriUsername ? hit(`@${contact.nuriUsername}`) : false);
-    const matches: DestinationSuggestion[] = [];
-    contact.destinations.forEach((destination, index) => {
-      if (!accepts(destination)) return;
-      if (cost && !Number.isFinite(cost(destination))) return;
-      if (byName || Object.values(destination).some((v) => hit(String(v)))) {
-        matches.push({ contact, destination, index });
-      }
-    });
-    if (cost && matches.length > 1) {
-      out.push(
-        matches.reduce((best, m) => (cost(m.destination) < cost(best.destination) ? m : best)),
-      );
-    } else {
-      out.push(...matches);
-    }
+    out.push(
+      ...cheapestPerContact(
+        payableDestinations(contact, accepts, cost).filter(
+          (m) => byName || Object.values(m.destination).some((v) => hit(String(v))),
+        ),
+        cost,
+      ),
+    );
   }
   // The field already holds exactly a saved destination: the pick is done.
   if (
@@ -358,6 +351,49 @@ export function suggestDestinations(
     return [];
   }
   return out.slice(0, max);
+}
+
+/** A contact's destinations this screen accepts and can pay. */
+function payableDestinations(
+  contact: Contact,
+  accepts: (destination: Destination) => boolean,
+  cost?: (destination: Destination) => number,
+): DestinationSuggestion[] {
+  const out: DestinationSuggestion[] = [];
+  contact.destinations.forEach((destination, index) => {
+    if (!accepts(destination)) return;
+    if (cost && !Number.isFinite(cost(destination))) return;
+    out.push({ contact, destination, index });
+  });
+  return out;
+}
+
+/** With a cost, a person is one row: their cheapest destination. */
+function cheapestPerContact(
+  matches: DestinationSuggestion[],
+  cost?: (destination: Destination) => number,
+): DestinationSuggestion[] {
+  if (!cost || matches.length <= 1) return matches;
+  return [matches.reduce((best, m) => (cost(m.destination) < cost(best.destination) ? m : best))];
+}
+
+/**
+ * Every saved contact this screen can pay, by name, for a recipient field that
+ * is still empty: one row per person, at the cheapest destination when the
+ * screen has a cost, else the first one it can pay.
+ */
+export function payableContacts(
+  contacts: Contact[],
+  accepts: (destination: Destination) => boolean,
+  cost?: (destination: Destination) => number,
+): DestinationSuggestion[] {
+  return contacts
+    .filter((contact) => !contact.deleted)
+    .flatMap((contact) => {
+      const payable = payableDestinations(contact, accepts, cost);
+      return cost ? cheapestPerContact(payable, cost) : payable.slice(0, 1);
+    })
+    .sort((a, b) => a.contact.label.localeCompare(b.contact.label));
 }
 
 /** Two typed addresses are the same (bech32/hex/Lightning ignore case; base58 doesn't). */

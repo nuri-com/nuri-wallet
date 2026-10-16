@@ -2,8 +2,9 @@
 //
 // While the user types, saved destinations that match (by contact name, note or
 // a fragment of the address/IBAN) show as a list right below the field; a tap
-// fills the field. Nothing matching (or an empty field, or a field that already
-// holds exactly a saved destination) renders nothing — no empty dropdown.
+// fills the field. An empty field lists every contact the screen can pay, for a
+// quick pick. Nothing matching (or a field that already holds exactly a saved
+// destination) renders nothing, no empty dropdown.
 //
 // Contacts are read from the local, already-decrypted cache on open; this never
 // waits for relays.
@@ -19,6 +20,7 @@ import {
   type Contact,
   type Destination,
   type DestinationSuggestion,
+  payableContacts,
   suggestDestinations,
 } from "../lib/addressBook/contact";
 import { contactAvatar } from "../lib/addressBook/petAvatar";
@@ -87,10 +89,11 @@ type Props = {
 
 export default function AddressBookSuggestions({ active, query, accepts, cost, onPick }: Props) {
   const contacts = useAddressBookContacts(active);
-  const suggestions = useMemo(
-    () => (active ? suggestDestinations(contacts, query, accepts, 5, cost) : []),
-    [active, contacts, query, accepts, cost],
-  );
+  const suggestions = useMemo(() => {
+    if (!active) return [];
+    if (!query.trim()) return payableContacts(contacts, accepts, cost);
+    return suggestDestinations(contacts, query, accepts, 5, cost);
+  }, [active, contacts, query, accepts, cost]);
   if (suggestions.length === 0) return null;
   return (
     <List>

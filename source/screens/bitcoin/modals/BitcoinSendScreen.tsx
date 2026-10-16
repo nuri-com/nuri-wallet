@@ -23,7 +23,11 @@ import type { TextFieldHandle } from "@ds";
 import AddressBookSuggestions, {
   useAddressBookContacts,
 } from "../../../components/AddressBookSuggestions";
-import { recipientWithName, savedContactFor } from "../../../lib/addressBook/contact";
+import {
+  type Destination,
+  recipientWithName,
+  savedContactFor,
+} from "../../../lib/addressBook/contact";
 import AmountKeypad from "../../../components/AmountKeypad";
 import AmountDisplay, {
   BTC_LOGO,
@@ -126,6 +130,14 @@ import type { BitcoinSendProps } from "../../../types/bitcoin";
 import { groupCount } from "../../../lib/formatting";
 
 type Props = BitcoinSendProps;
+
+// A saved Bitcoin destination the recipient field would accept: the contacts
+// list never offers one that leaves Next disabled.
+function acceptsPayableBitcoin(destination: Destination): boolean {
+  if (!acceptsBitcoinSend(destination)) return false;
+  const raw = destination.raw.trim();
+  return isValidBitcoinAddressMainnet(raw) || isArkAddress(raw) || isLnurlPaymentInput(raw);
+}
 
 const TZS_FLAG = require("../../../assets/flags/tza.png");
 const KES_FLAG = require("../../../assets/flags/ken.png");
@@ -1978,11 +1990,11 @@ export default function BitcoinSendScreen({
                 accessibilityLabel={t("screen.BitcoinSendScreen.remitNameLabel")}
               />
             ) : null}
-            {/* Saved recipients matching what is typed; nothing when none match. */}
+            {/* Every payable contact while the field is empty, then the ones matching what is typed. */}
             <AddressBookSuggestions
               active={visible && manualEntryActive}
               query={toAddress}
-              accepts={acceptsBitcoinSend}
+              accepts={acceptsPayableBitcoin}
               cost={suggestionCost}
               onPick={({ destination }) => {
                 setToAddress(destination.raw);
