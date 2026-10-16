@@ -138,6 +138,7 @@ export const sw = {
       headlineWithBalance: "Tuma Bitcoin (%{amount} sats)",
       recipientLabel: "Mpokeaji wa Bitcoin",
       phoneRecipientLabel: "Mpokeaji wa Bitcoin au namba ya simu ya Tanzania",
+      phoneRecipientLabelKenya: "Mpokeaji wa Bitcoin au namba ya simu ya Kenya",
       lightningInvoiceRecipientLabel: "Ombi la malipo ya Bitcoin",
       lnurlRecipientLabel: "Bitcoin LNURL",
       ctaPreparing: "Inaandaa\u2026",
@@ -157,6 +158,10 @@ export const sw = {
       errorRemitRateUnavailable: "Kiwango hakipatikani kwa sasa",
       remitConfirmWithName: "Kwa %{name} \u00b7 ada TZS %{fee}",
       remitConfirmFee: "Ada TZS %{fee}",
+      remitConfirmMpesa: "Kwa %{name} kupitia M-Pesa",
+      remitNameLabel: "Jina kamili la mpokeaji",
+      remitMinimum: "Kiwango cha chini %{amount} %{currency}",
+      remitMaximum: "Kiwango cha juu %{amount} %{currency}",
     },
     BitcoinSendSourceModal: {
       title: "Tuma kutoka",

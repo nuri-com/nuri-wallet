@@ -141,6 +141,7 @@ export const uk = {
       headlineWithBalance: "Надіслати Bitcoin (%{amount} sats)",
       recipientLabel: "Отримувач Bitcoin",
       phoneRecipientLabel: "Отримувач Bitcoin або танзанійський номер телефону",
+      phoneRecipientLabelKenya: "Отримувач Bitcoin або кенійський номер телефону",
       lightningInvoiceRecipientLabel: "Bitcoin-запит на оплату",
       lnurlRecipientLabel: "Bitcoin LNURL",
       ctaPreparing: "Готуємо…",
@@ -156,6 +157,10 @@ export const uk = {
       errorRemitRateUnavailable: "Курс зараз недоступний",
       remitConfirmWithName: "Для %{name} · комісія %{fee} TZS",
       remitConfirmFee: "Комісія %{fee} TZS",
+      remitConfirmMpesa: "Для %{name} через M-Pesa",
+      remitNameLabel: "Повне ім'я отримувача",
+      remitMinimum: "Мінімум %{amount} %{currency}",
+      remitMaximum: "Максимум %{amount} %{currency}",
     },
     BitcoinSendSourceModal: {
       title: "Надіслати з",

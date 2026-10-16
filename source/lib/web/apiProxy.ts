@@ -24,6 +24,8 @@ const REWRITES: Array<[string, string]> = [
   ["https://update.nuri.com", "/api/update"],
   // nadanada.me (eSIM shop) serves no browser CORS.
   ["https://nadanada.me", "/api/nadanada"],
+  // remit.paymentrequired.com (Kenya remit, ZapRemit) serves no browser CORS.
+  ["https://remit.paymentrequired.com", "/api/remitkes"],
 ];
 
 // Exported so non-fetch web callers (e.g. EventSource, which the fetch/XHR

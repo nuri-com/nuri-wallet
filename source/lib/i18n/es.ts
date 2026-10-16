@@ -141,6 +141,7 @@ export const es = {
       headlineWithBalance: "Enviar Bitcoin (%{amount} sats)",
       recipientLabel: "Destinatario Bitcoin",
       phoneRecipientLabel: "Destinatario Bitcoin o número de teléfono de Tanzania",
+      phoneRecipientLabelKenya: "Destinatario de Bitcoin o número de teléfono de Kenia",
       lightningInvoiceRecipientLabel: "Solicitud de pago Bitcoin",
       lnurlRecipientLabel: "LNURL Bitcoin",
       ctaPreparing: "Preparando…",
@@ -156,6 +157,10 @@ export const es = {
       errorRemitRateUnavailable: "Tipo de cambio no disponible ahora mismo",
       remitConfirmWithName: "Para %{name} · comisión %{fee} TZS",
       remitConfirmFee: "Comisión %{fee} TZS",
+      remitConfirmMpesa: "A %{name} por M-Pesa",
+      remitNameLabel: "Nombre completo del destinatario",
+      remitMinimum: "Mínimo %{amount} %{currency}",
+      remitMaximum: "Máximo %{amount} %{currency}",
     },
     BitcoinSendSourceModal: {
       title: "Enviar desde",

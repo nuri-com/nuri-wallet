@@ -120,6 +120,8 @@ export const WIREX_PROXY_BASE_URL = IS_MAINNET
 // The MCP endpoint the send screen quotes and mints its BOLT11 against. A public
 // hostname, pinned here for the same reason as WIREX_PROXY_BASE_URL.
 export const REMIT_MCP_URL = "https://remit.nuri.com/mcp";
+// Lightning → Kenyan shilling (M-Pesa, through ZapRemit) lives on its own host.
+export const REMIT_KES_MCP_URL = "https://remit.paymentrequired.com/mcp";
 
 // ── Notification server ───────────────────────────────────────────────
 // Owns the device-token registry and does the actual sending (Expo Push for

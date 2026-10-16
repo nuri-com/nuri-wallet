@@ -142,6 +142,7 @@ export const tr = {
       headlineWithBalance: "Bitcoin gönder (%{amount} sats)",
       recipientLabel: "Bitcoin alıcısı",
       phoneRecipientLabel: "Bitcoin alıcısı veya Tanzanya telefon numarası",
+      phoneRecipientLabelKenya: "Bitcoin alıcısı veya Kenya telefon numarası",
       lightningInvoiceRecipientLabel: "Bitcoin ödeme talebi",
       lnurlRecipientLabel: "Bitcoin LNURL",
       ctaPreparing: "Hazırlanıyor…",
@@ -157,6 +158,10 @@ export const tr = {
       errorRemitRateUnavailable: "Kur şu anda kullanılamıyor",
       remitConfirmWithName: "%{name} kişisine · %{fee} TZS ücret",
       remitConfirmFee: "%{fee} TZS ücret",
+      remitConfirmMpesa: "M-Pesa ile %{name} kişisine",
+      remitNameLabel: "Alıcının tam adı",
+      remitMinimum: "En az %{amount} %{currency}",
+      remitMaximum: "En fazla %{amount} %{currency}",
     },
     BitcoinSendSourceModal: {
       title: "Şuradan gönder",

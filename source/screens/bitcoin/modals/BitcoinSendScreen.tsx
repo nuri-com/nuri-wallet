@@ -96,8 +96,16 @@ import {
   normalizeTanzanianMobileNumber,
 } from "../../../lib/remit/tanzaniaPhone";
 import {
+  formatKenyanMobileNumber,
+  normalizeKenyanMobileNumber,
+} from "../../../lib/remit/kenyaPhone";
+import {
   checkRemitPayment,
+  createKenyaRemitLightningInvoice,
   createRemitLightningInvoice,
+  getKenyaRemitTerms,
+  type KenyaRemitTerms,
+  kesToSats,
   quoteRemitSats,
 } from "../../../services/remit/RemitService";
 import { resolveLightningBounds } from "../../../lib/bitcoin/lightningLimits";
@@ -120,6 +128,7 @@ import { groupCount } from "../../../lib/formatting";
 type Props = BitcoinSendProps;
 
 const TZS_FLAG = require("../../../assets/flags/tza.png");
+const KES_FLAG = require("../../../assets/flags/ken.png");
 
 // `availableAtMs` is 0 when the wait could not be derived from the wallet's
 // VTXO expiries — then the copy stays vague rather than naming a wrong time.
@@ -244,7 +253,10 @@ export default function BitcoinSendScreen({
     // A phone number is paid by minting a BOLT11 for it at confirm time, so it
     // is a Lightning recipient for every purpose this flag governs — which
     // balance the screen reads, holds and spends from.
-    return normalizeTanzanianMobileNumber(toAddress) !== null;
+    return (
+      normalizeTanzanianMobileNumber(toAddress) !== null ||
+      normalizeKenyanMobileNumber(toAddress) !== null
+    );
   }, [toAddress]);
   const effectiveSendSource: "arkade" | "onchain" = recipientIsLightning ? "arkade" : sendSource;
   // A bolt11 with no amount, or one this screen cannot decode: recognised as an
@@ -254,7 +266,7 @@ export default function BitcoinSendScreen({
   // It is entry only: what the screen prices, checks and finally spends is the
   // sats the corridor quotes back for it, written into the sats field below so
   // every existing balance and corridor guard applies unchanged.
-  const [tzsDigits, setTzsDigits] = useState("");
+  const [remitDigits, setRemitDigits] = useState("");
   const [remitQuoting, setRemitQuoting] = useState(false);
   // An invoice already minted and shown to the user at ITS price, waiting for
   // the second press. The corridor adds its fee on top of what `quote_tzs`
@@ -269,6 +281,11 @@ export default function BitcoinSendScreen({
     feeTZS: number | null;
   } | null>(null);
   const [remitQuoteFailed, setRemitQuoteFailed] = useState(false);
+  // Kenya only: ZapRemit pays a named recipient, so the screen asks for the
+  // name, and prices the shillings from its rate and method band.
+  const [remitName, setRemitName] = useState("");
+  const [remitNameFocused, setRemitNameFocused] = useState(false);
+  const [kenyaTerms, setKenyaTerms] = useState<KenyaRemitTerms | null>(null);
   // Whether the current amount lock came from an invoice, so replacing the
   // recipient releases only the lock this screen put on.
   const invoiceLockedAmountRef = useRef(false);
@@ -636,15 +653,33 @@ export default function BitcoinSendScreen({
     isLnurlPaymentInput(normalizedRecipient) && !isNuriLightningAddress(normalizedRecipient);
   const isRecipientBitcoinAddress = isValidBitcoinAddressMainnet(trimmedToAddress);
   const isRecipientArk = isArkAddress(trimmedToAddress);
-  // The recipient as the corridor is asked for it: E.164, or null when this is
-  // not a Tanzanian mobile number. Null is what every branch below reads, so a
-  // half-typed number never selects the rail.
-  const remitPhone = normalizeTanzanianMobileNumber(trimmedToAddress);
-  const isRecipientTzPhone = remitPhone !== null;
-  const tzsAmount = useMemo(() => {
-    const parsed = Number(sanitizeDigits(tzsDigits));
+  // The recipient as the corridor is asked for it, or null when this is not a
+  // Tanzanian or Kenyan mobile number. Null is what every branch below reads,
+  // so a half-typed number never selects the rail.
+  const tzPhone = normalizeTanzanianMobileNumber(trimmedToAddress);
+  const kePhone = tzPhone ? null : normalizeKenyanMobileNumber(trimmedToAddress);
+  const remitCountry: "TZ" | "KE" | null = tzPhone ? "TZ" : kePhone ? "KE" : null;
+  const isRecipientRemitPhone = remitCountry !== null;
+  const remitCurrency = remitCountry === "KE" ? "KES" : "TZS";
+  const remitAmount = useMemo(() => {
+    const parsed = Number(sanitizeDigits(remitDigits));
     return Number.isFinite(parsed) ? Math.floor(parsed) : 0;
-  }, [tzsDigits]);
+  }, [remitDigits]);
+  // ZapRemit's own band for the method. Out of it, the quote would be refused.
+  const kenyaBandLabel =
+    remitCountry === "KE" && kenyaTerms !== null && remitAmount > 0
+      ? remitAmount < kenyaTerms.minKES
+        ? t("screen.BitcoinSendScreen.remitMinimum", {
+            amount: groupCount(kenyaTerms.minKES),
+            currency: "KES",
+          })
+        : remitAmount > kenyaTerms.maxKES
+          ? t("screen.BitcoinSendScreen.remitMaximum", {
+              amount: groupCount(kenyaTerms.maxKES),
+              currency: "KES",
+            })
+          : null
+      : null;
 
   // A scanned or pasted invoice already fixes the amount and the payee, so the
   // corridor quote can be fetched while the user reviews it instead of after
@@ -712,7 +747,7 @@ export default function BitcoinSendScreen({
   // Intents lockup adds its fee again. Without this, Max passed the check and
   // then failed after confirmation.
   const spendSats = useMemo(() => {
-    if (isRecipientBolt11 || isRecipientLnurl || isRecipientTzPhone) {
+    if (isRecipientBolt11 || isRecipientLnurl || isRecipientRemitPhone) {
       return maxFundAmountSats(currentSats);
     }
     if (isRecipientBitcoinAddress && sendsOverCorridor) {
@@ -726,7 +761,7 @@ export default function BitcoinSendScreen({
     currentSats,
     isRecipientBolt11,
     isRecipientLnurl,
-    isRecipientTzPhone,
+    isRecipientRemitPhone,
     isRecipientBitcoinAddress,
     sendsOverCorridor,
   ]);
@@ -746,12 +781,12 @@ export default function BitcoinSendScreen({
   // The two amount rows flip together: number and the same currency image used
   // on the home cards. Text codes beside the number are redundant here.
   const secondaryAmount = useMemo(() => {
-    if (isRecipientTzPhone) {
+    if (isRecipientRemitPhone) {
       // Nothing quoted yet is not "0 sats" — a zero here reads as a free send.
       return currentSats > 0 ? groupCount(currentSats) : "\u2014";
     }
     return bitcoinSecondaryAmount(isSatsMode, currentSats, fiatPerBtc);
-  }, [isSatsMode, currentSats, fiatPerBtc, isRecipientTzPhone]);
+  }, [isSatsMode, currentSats, fiatPerBtc, isRecipientRemitPhone]);
 
   useLiveBtcPrice(visible, fiatCode, satsDigits, fiatDigits, setFiatPerBtc);
 
@@ -811,8 +846,8 @@ export default function BitcoinSendScreen({
     } catch {}
   }, [setInputMode, setSatsDigits]);
 
-  const handleTzsChange = useCallback((raw: string) => {
-    setTzsDigits(sanitizeDigits(raw));
+  const handleRemitDigitsChange = useCallback((raw: string) => {
+    setRemitDigits(sanitizeDigits(raw));
     setErrorMessage(null);
   }, []);
   const handleSatsChange = useCallback(
@@ -841,10 +876,10 @@ export default function BitcoinSendScreen({
   const { handleDigit, handleDecimal, handleDelete } = useKeypadEntry({
     // On the phone rail the keypad types shillings, never sats: the sats field
     // is written by the quote and is not the user's to edit.
-    isModeA: isRecipientTzPhone ? true : isSatsMode,
-    digitsA: isRecipientTzPhone ? tzsDigits : satsDigits,
+    isModeA: isRecipientRemitPhone ? true : isSatsMode,
+    digitsA: isRecipientRemitPhone ? remitDigits : satsDigits,
     digitsB: fiatDigits,
-    onChangeA: isRecipientTzPhone ? handleTzsChange : handleSatsChange,
+    onChangeA: isRecipientRemitPhone ? handleRemitDigitsChange : handleSatsChange,
     onChangeB: handleFiatChange,
   });
 
@@ -888,7 +923,9 @@ export default function BitcoinSendScreen({
         !isNuriLightningAddress(lightningRequest);
       // Read again here rather than from render state: this runs after an await
       // chain, and the rail that gets paid must be the one this string names.
-      const remitRecipient = isArk ? null : normalizeTanzanianMobileNumber(addr);
+      const tzRecipient = isArk ? null : normalizeTanzanianMobileNumber(addr);
+      const keRecipient = isArk || tzRecipient ? null : normalizeKenyanMobileNumber(addr);
+      const remitRecipient = tzRecipient ?? keRecipient;
       const isRemit = remitRecipient !== null;
       log(
         `🔐 STEP Arkade_v4=1 step=wallet_send_confirm_pressed status=start sats=${currentSats} target=${isArk ? "ark_send" : isBolt11 ? "bolt11" : isLnurl ? "lnurl" : addr ? "bitcoin_onchain" : "missing"} amount_source=${isBolt11 ? "bolt11_invoice" : "ui_amount"} expected_next=validate_send_target src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
@@ -1113,23 +1150,47 @@ export default function BitcoinSendScreen({
           // the quote button.
           const pending = remitPendingInvoice;
           if (remitPressOutcome(pending !== null) === "show_price") {
-            if (!remitSessionSeedRef.current) {
-              remitSessionSeedRef.current = `${Date.now().toString(36)}${Math.random()
-                .toString(36)
-                .slice(2, 8)}`;
+            let created: {
+              invoice: string;
+              sessionId: string | null;
+              receiverName: string | null;
+              feeTZS: number | null;
+            };
+            if (keRecipient) {
+              const fullName = remitName.trim();
+              if (!fullName) throw new Error(t("screen.BitcoinSendScreen.remitNameLabel"));
+              if (kenyaBandLabel) throw new Error(kenyaBandLabel);
+              const kenya = await createKenyaRemitLightningInvoice({
+                amountKES: remitAmount,
+                phoneNumber: keRecipient,
+                fullName,
+              });
+              // ZapRemit's price is the invoice itself; it states no separate fee.
+              created = {
+                invoice: kenya.invoice,
+                sessionId: null,
+                receiverName: fullName,
+                feeTZS: null,
+              };
+            } else {
+              if (!remitSessionSeedRef.current) {
+                remitSessionSeedRef.current = `${Date.now().toString(36)}${Math.random()
+                  .toString(36)
+                  .slice(2, 8)}`;
+              }
+              created = await createRemitLightningInvoice({
+                amountTZS: remitAmount,
+                phoneNumber: remitRecipient,
+                // The recipient is part of the identity of this request. Without
+                // it a failed press, an edited phone number and the same shilling
+                // amount reuse one key, and the corridor may answer the second
+                // recipient with the first one's invoice.
+                clientReference: `nuri-${remitSessionSeedRef.current}-${remitRecipient.replace(
+                  /\D/g,
+                  "",
+                )}-${remitAmount}`,
+              });
             }
-            const created = await createRemitLightningInvoice({
-              amountTZS: tzsAmount,
-              phoneNumber: remitRecipient,
-              // The recipient is part of the identity of this request. Without
-              // it a failed press, an edited phone number and the same shilling
-              // amount reuse one key, and the corridor may answer the second
-              // recipient with the first one's invoice.
-              clientReference: `nuri-${remitSessionSeedRef.current}-${remitRecipient.replace(
-                /\D/g,
-                "",
-              )}-${tzsAmount}`,
-            });
             // The invoice's own figure, never the corridor's `amountSats`: what
             // leaves the wallet is what is written inside the invoice.
             const mintedSats = decodeBolt11Facts(created.invoice).amountSats;
@@ -1153,14 +1214,18 @@ export default function BitcoinSendScreen({
             setInputMode("sats");
             setSatsDigits(String(mintedSats));
             setInfoMessage(
-              created.receiverName
-                ? t("screen.BitcoinSendScreen.remitConfirmWithName", {
-                    name: created.receiverName,
-                    fee: created.feeTZS === null ? "\u2014" : groupCount(created.feeTZS),
+              keRecipient
+                ? t("screen.BitcoinSendScreen.remitConfirmMpesa", {
+                    name: created.receiverName ?? "",
                   })
-                : t("screen.BitcoinSendScreen.remitConfirmFee", {
-                    fee: created.feeTZS === null ? "\u2014" : groupCount(created.feeTZS),
-                  }),
+                : created.receiverName
+                  ? t("screen.BitcoinSendScreen.remitConfirmWithName", {
+                      name: created.receiverName,
+                      fee: created.feeTZS === null ? "\u2014" : groupCount(created.feeTZS),
+                    })
+                  : t("screen.BitcoinSendScreen.remitConfirmFee", {
+                      fee: created.feeTZS === null ? "\u2014" : groupCount(created.feeTZS),
+                    }),
             );
             return;
           }
@@ -1380,7 +1445,9 @@ export default function BitcoinSendScreen({
     lnurlMaxSats,
     // The shilling figure the invoice is minted for. Without it here, confirm
     // would close over the amount as it stood when the recipient was entered.
-    tzsAmount,
+    remitAmount,
+    remitName,
+    kenyaBandLabel,
     remitPendingInvoice,
     setInfoMessage,
     describeRemitRefusal,
@@ -1414,24 +1481,32 @@ export default function BitcoinSendScreen({
       setOverBalanceUnlock(false);
       setRecipientConfirmed(false);
       setRecipientFocused(false);
-      setTzsDigits("");
+      setRemitDigits("");
       setRemitQuoting(false);
       setRemitQuoteFailed(false);
       setRemitPendingInvoice(null);
+      setRemitName("");
+      setRemitNameFocused(false);
+      setKenyaTerms(null);
       remitSessionSeedRef.current = "";
     }
   }, [visible, setSatsDigits, setFiatDigits]);
 
   // The shilling amount belongs to the phone number it was typed against.
   // Leaving it in place when the recipient changes carried one recipient's
-  // figure onto the next, and the sats it had already priced with it.
+  // figure onto the next, and the sats it had already priced with it. The
+  // same holds across countries: a TZS figure is not a KES one.
   useEffect(() => {
-    if (isRecipientTzPhone) return;
-    setTzsDigits("");
+    setRemitDigits("");
     setRemitPendingInvoice(null);
     setRemitQuoting(false);
     setRemitQuoteFailed(false);
-  }, [isRecipientTzPhone]);
+  }, [remitCountry]);
+
+  // The name belongs to the Kenyan number it was typed for.
+  useEffect(() => {
+    setRemitName("");
+  }, [kePhone]);
 
   // A shilling figure is not a sats figure, and only the corridor knows the rate
   // it will actually mint at. The quote is debounced against the typing and its
@@ -1442,13 +1517,13 @@ export default function BitcoinSendScreen({
   // This figure is what the screen SHOWS. What gets paid is the amount inside
   // the invoice minted at confirm, which is re-checked against the balance there.
   useEffect(() => {
-    if (!visible || !isRecipientTzPhone) return;
+    if (!visible || !isRecipientRemitPhone) return;
     // A new shilling figure invalidates an invoice minted for the previous one —
     // and the line naming its payee and fee with it. Left up, that text reads as
     // though it priced the amount now on screen.
     setRemitPendingInvoice(null);
     setInfoMessage(null);
-    if (tzsAmount <= 0) {
+    if (remitAmount <= 0) {
       setSatsDigits("");
       setRemitQuoting(false);
       setRemitQuoteFailed(false);
@@ -1463,7 +1538,17 @@ export default function BitcoinSendScreen({
     setRemitQuoteFailed(false);
     const handle = setTimeout(async () => {
       try {
-        const sats = await quoteRemitSats(tzsAmount);
+        let sats: number;
+        if (remitCountry === "KE") {
+          // Kenya has no quote without a recipient, so the shown figure comes
+          // from ZapRemit's reference rate; the invoice states the real price.
+          const terms = await getKenyaRemitTerms();
+          if (cancelled) return;
+          setKenyaTerms(terms);
+          sats = kesToSats(remitAmount, terms.btcKes);
+        } else {
+          sats = await quoteRemitSats(remitAmount);
+        }
         if (cancelled) return;
         setSatsDigits(String(Math.max(0, Math.floor(sats))));
         setRemitQuoteFailed(false);
@@ -1481,7 +1566,7 @@ export default function BitcoinSendScreen({
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [visible, isRecipientTzPhone, tzsAmount, setSatsDigits, setInputMode]);
+  }, [visible, isRecipientRemitPhone, remitCountry, remitAmount, setSatsDigits, setInputMode]);
 
   // Preview approval removed; approval starts immediately after building
   // The recipient field is free text, so a typed or pasted invoice reaches here
@@ -1492,8 +1577,12 @@ export default function BitcoinSendScreen({
     ? t("screen.BitcoinSendScreen.lightningInvoiceRecipientLabel")
     : isRecipientLnurl
       ? t("screen.BitcoinSendScreen.lnurlRecipientLabel")
-      : isRecipientTzPhone
-        ? t("screen.BitcoinSendScreen.phoneRecipientLabel")
+      : isRecipientRemitPhone
+        ? t(
+            remitCountry === "KE"
+              ? "screen.BitcoinSendScreen.phoneRecipientLabelKenya"
+              : "screen.BitcoinSendScreen.phoneRecipientLabel",
+          )
         : t("screen.BitcoinSendScreen.recipientLabel");
   const isBelowArkadeOnchainMinimum =
     isRecipientBitcoinAddress &&
@@ -1625,12 +1714,12 @@ export default function BitcoinSendScreen({
   // instead of naming the minimum, and an over-maximum one was caught only at
   // confirm.
   const lnurlMinFloorSats =
-    isRecipientLnurl || isRecipientBolt11 || isRecipientTzPhone ? lightningBounds.minSats : null;
+    isRecipientLnurl || isRecipientBolt11 || isRecipientRemitPhone ? lightningBounds.minSats : null;
   const isBelowLnurlMinimum =
     lnurlMinFloorSats != null && currentSats > 0 && currentSats < lnurlMinFloorSats;
   const lightningMaxCeilingSats = lightningBounds.maxSats;
   const isAboveLightningMaximum =
-    (isRecipientBolt11 || isRecipientLnurl || isRecipientTzPhone) &&
+    (isRecipientBolt11 || isRecipientLnurl || isRecipientRemitPhone) &&
     currentSats > lightningMaxCeilingSats;
 
   // A locked scanned amount that exceeds spendable funds would strand the
@@ -1684,61 +1773,74 @@ export default function BitcoinSendScreen({
           // with no words is the user staring at a screen that will not move.
           invoiceUnpayable
           ? t("screen.BitcoinSendScreen.errorInvoiceAmountMissing")
-          : isBelowArkadeOnchainMinimum
-            ? t("screen.BitcoinSendScreen.minimumSatsLabel", {
-                amount: String(onchainMinSats),
-              })
-            : isBelowArkSendMinimum && arkMinSats !== null
+          : kenyaBandLabel
+            ? kenyaBandLabel
+            : isBelowArkadeOnchainMinimum
               ? t("screen.BitcoinSendScreen.minimumSatsLabel", {
-                  amount: String(arkMinSats),
+                  amount: String(onchainMinSats),
                 })
-              : isBelowLnurlMinimum && lnurlMinFloorSats != null
+              : isBelowArkSendMinimum && arkMinSats !== null
                 ? t("screen.BitcoinSendScreen.minimumSatsLabel", {
-                    amount: String(lnurlMinFloorSats),
+                    amount: String(arkMinSats),
                   })
-                : isAboveLightningMaximum
-                  ? t("screen.BitcoinSendScreen.maximumSatsLabel", {
-                      amount: groupCount(lightningMaxCeilingSats),
+                : isBelowLnurlMinimum && lnurlMinFloorSats != null
+                  ? t("screen.BitcoinSendScreen.minimumSatsLabel", {
+                      amount: String(lnurlMinFloorSats),
                     })
-                  : // On the phone rail the first press only fetches the corridor's
-                    // real price: the quote under it excludes the corridor fee, so
-                    // nothing payable has been named yet. The button says that
-                    // rather than offering a "Confirm" for a figure about to change.
-                    isRecipientTzPhone && !remitPendingInvoice && currentSats > 0
-                    ? t("screen.BitcoinSendScreen.ctaGetQuote")
-                    : currentSats > 0
-                      ? t("screen.BitcoinSendScreen.ctaConfirmWithFee", {
-                          total: groupCount(currentSats + estimatedFeeSats),
-                        })
-                      : t("screen.BitcoinSendScreen.ctaConfirm");
+                  : isAboveLightningMaximum
+                    ? t("screen.BitcoinSendScreen.maximumSatsLabel", {
+                        amount: groupCount(lightningMaxCeilingSats),
+                      })
+                    : // On the phone rail the first press only fetches the corridor's
+                      // real price: the quote under it excludes the corridor fee, so
+                      // nothing payable has been named yet. The button says that
+                      // rather than offering a "Confirm" for a figure about to change.
+                      isRecipientRemitPhone && !remitPendingInvoice && currentSats > 0
+                      ? t("screen.BitcoinSendScreen.ctaGetQuote")
+                      : currentSats > 0
+                        ? t("screen.BitcoinSendScreen.ctaConfirmWithFee", {
+                            total: groupCount(currentSats + estimatedFeeSats),
+                          })
+                        : t("screen.BitcoinSendScreen.ctaConfirm");
 
   // The phone rail reads the other way round from every other one: the figure
   // the user chose is the shilling amount, and the sats underneath are what the
   // corridor quoted for it.
-  const primaryAmount = isRecipientTzPhone
-    ? groupCount(tzsAmount)
+  const primaryAmount = isRecipientRemitPhone
+    ? groupCount(remitAmount)
     : isSatsMode
       ? groupCount(currentSats)
       : fiatDigits || "0";
   const fiatImage = fiatImageFor(fiatCode);
-  const primaryImage = isRecipientTzPhone ? TZS_FLAG : isSatsMode ? BTC_LOGO : fiatImage;
-  const secondaryImage = isRecipientTzPhone ? BTC_LOGO : isSatsMode ? fiatImage : BTC_LOGO;
+  const primaryImage = isRecipientRemitPhone
+    ? remitCountry === "KE"
+      ? KES_FLAG
+      : TZS_FLAG
+    : isSatsMode
+      ? BTC_LOGO
+      : fiatImage;
+  const secondaryImage = isRecipientRemitPhone ? BTC_LOGO : isSatsMode ? fiatImage : BTC_LOGO;
   // What a screen reader says after each figure: the images carry the unit visually.
-  const primaryUnit = isRecipientTzPhone ? "TZS" : isSatsMode ? SATS_UNIT : fiatCode;
-  const secondaryUnit = isRecipientTzPhone ? SATS_UNIT : isSatsMode ? fiatCode : SATS_UNIT;
+  const primaryUnit = isRecipientRemitPhone ? remitCurrency : isSatsMode ? SATS_UNIT : fiatCode;
+  const secondaryUnit = isRecipientRemitPhone ? SATS_UNIT : isSatsMode ? fiatCode : SATS_UNIT;
 
   const recipientLooksValid =
     isRecipientBolt11 ||
     isRecipientLnurl ||
     isRecipientBitcoinAddress ||
     isRecipientArk ||
-    isRecipientTzPhone;
+    isRecipientRemitPhone;
   // `lennard` or `lennard.nuri.eth`: a Nuri user, paid at the address the Nuri
   // directory lists for the rail this sheet pays from (on-chain or Arkade).
   // Their `@nuri.com` Lightning address cannot receive yet, so it is never the
   // destination picked here.
   const recipientNuriUsername = recipientLooksValid ? null : toNuriUsername(trimmedToAddress);
-  const manualEntryActive = presetRecipientEmpty && (!recipientConfirmed || recipientFocused);
+  // Kenya pays a named recipient: the recipient stage stays up until a name is in.
+  const needsRemitName = remitCountry === "KE";
+  const remitNameMissing = needsRemitName && !remitName.trim();
+  const manualEntryActive =
+    (presetRecipientEmpty || needsRemitName) &&
+    (!recipientConfirmed || recipientFocused || remitNameFocused || remitNameMissing);
   // One suggestion per contact: the destination this wallet pays cheapest.
   const suggestionCost = useMemo(() => bitcoinSendCost(effectiveSendSource), [effectiveSendSource]);
   // A recipient that is a saved contact shows by name (picked, scanned or pasted).
@@ -1849,14 +1951,33 @@ export default function BitcoinSendScreen({
             ) : (
               <View variant="soft" radius="md" paddingX="lg" paddingY="md" align="stretch">
                 <Text size="sm" mono muted flow="truncate" lines={1}>
-                  {isRecipientTzPhone
-                    ? formatTanzanianMobileNumber(trimmedToAddress)
-                    : savedRecipient
-                      ? recipientWithName(savedRecipient.label, trimmedToAddress)
-                      : trimmedToAddress}
+                  {remitCountry === "KE"
+                    ? `${remitName.trim()} (${formatKenyanMobileNumber(trimmedToAddress)})`
+                    : isRecipientRemitPhone
+                      ? formatTanzanianMobileNumber(trimmedToAddress)
+                      : savedRecipient
+                        ? recipientWithName(savedRecipient.label, trimmedToAddress)
+                        : trimmedToAddress}
                 </Text>
               </View>
             )}
+            {manualEntryActive && needsRemitName ? (
+              <TextField
+                value={remitName}
+                onChangeText={(name) => {
+                  setRemitName(name);
+                  // An invoice minted for one name is not one for the next.
+                  setRemitPendingInvoice(null);
+                  setInfoMessage(null);
+                }}
+                placeholder={t("screen.BitcoinSendScreen.remitNameLabel")}
+                autoCapitalize="words"
+                disabled={busy}
+                onFocus={() => setRemitNameFocused(true)}
+                onBlur={() => setRemitNameFocused(false)}
+                accessibilityLabel={t("screen.BitcoinSendScreen.remitNameLabel")}
+              />
+            ) : null}
             {/* Saved recipients matching what is typed; nothing when none match. */}
             <AddressBookSuggestions
               active={visible && manualEntryActive}
@@ -1892,7 +2013,9 @@ export default function BitcoinSendScreen({
                 // real amount — two numbers on one screen, the true one
                 // invisible. Nothing to switch between, so nothing to press.
                 // A failed send holds its amount and reason until Try again.
-                toggleDisabled={invoiceLockedAmountRef.current || isRecipientTzPhone || sendFailed}
+                toggleDisabled={
+                  invoiceLockedAmountRef.current || isRecipientRemitPhone || sendFailed
+                }
                 message={
                   errorMessage
                     ? { text: errorMessage, tone: "alert" }
@@ -1924,7 +2047,12 @@ export default function BitcoinSendScreen({
             variant="solid"
             accent="lilac"
             onPress={() => void handleRecipientNext()}
-            disabled={busy || resolvingUsername || (!recipientLooksValid && !recipientNuriUsername)}
+            disabled={
+              busy ||
+              resolvingUsername ||
+              remitNameMissing ||
+              (!recipientLooksValid && !recipientNuriUsername)
+            }
           >
             <ButtonText>{t("screen.BitcoinSendScreen.ctaNext")}</ButtonText>
           </Button>
@@ -1944,6 +2072,7 @@ export default function BitcoinSendScreen({
                   isBelowLnurlMinimum ||
                   isAboveLightningMaximum ||
                   invoiceUnpayable ||
+                  kenyaBandLabel !== null ||
                   remitQuoting ||
                   remitQuoteFailed ||
                   (currentSats <= 0 && !isRecipientBolt11)))

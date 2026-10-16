@@ -143,6 +143,7 @@ export const nl = {
       headlineWithBalance: "Bitcoin versturen (%{amount} sats)",
       recipientLabel: "Bitcoin-ontvanger",
       phoneRecipientLabel: "Bitcoin-ontvanger of Tanzaniaans telefoonnummer",
+      phoneRecipientLabelKenya: "Bitcoin-ontvanger of Keniaans telefoonnummer",
       lightningInvoiceRecipientLabel: "Bitcoin-betaalverzoek",
       lnurlRecipientLabel: "Bitcoin LNURL",
       ctaPreparing: "Voorbereiden…",
@@ -158,6 +159,10 @@ export const nl = {
       errorRemitRateUnavailable: "Koers nu niet beschikbaar",
       remitConfirmWithName: "Aan %{name} · %{fee} TZS kosten",
       remitConfirmFee: "%{fee} TZS kosten",
+      remitConfirmMpesa: "Aan %{name} via M-Pesa",
+      remitNameLabel: "Volledige naam van de ontvanger",
+      remitMinimum: "Minimaal %{amount} %{currency}",
+      remitMaximum: "Maximaal %{amount} %{currency}",
     },
     BitcoinSendSourceModal: {
       title: "Versturen vanaf",

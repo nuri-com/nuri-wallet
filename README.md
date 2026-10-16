@@ -3,8 +3,8 @@
 This repository contains a **specific web release and the source needed to rebuild it**.
 It is not the development repository, a demo, or a copy of the native applications.
 
-**Result for this snapshot:** all **273 release files** matched the live site when
-checked on **2026-10-16**. Building the reduced web source reproduced all **271
+**Result for this snapshot:** all **274 release files** matched the live site when
+checked on **2026-10-16**. Building the reduced web source reproduced all **272
 application files byte for byte**. The remaining two files are deployment metadata and
 the WAICT integrity manifest.
 
@@ -46,9 +46,9 @@ JavaScript, connect a wallet, sign transactions or deploy anything.
 For this snapshot, success prints:
 
 ```text
-PASS: 273 live files match release c123cf526c781f229358e5481453ea3df9faf312
-WAICT manifest: /waict/nnNPxKkO-a8bH3QtPoVTNP
-Release manifest SHA-256: b8fcf89b80566f99bdeb5a43ca9a622c4bcec5ad40597d7d75734c71732381cb
+PASS: 274 live files match release 7f7171ad1c6246abc415c66287d37420d43c6650
+WAICT manifest: /waict/EGK6E71A7ZjuBe90x1f-Be
+Release manifest SHA-256: 6e9d461f51ac410bf0e7084ecd005fdd854d58304159455cb143487cd6c90c8e
 ```
 
 A failed request or mismatch produces a nonzero exit status. It is not proof of an
@@ -70,11 +70,11 @@ freshly downloaded from the same server. First identify the intended release.
 
 The release contains **217 Expo JavaScript chunks**, 2 other JavaScript files
 (nuri-service-worker.js, jsQR.js), HTML, CSS, assets, 3 JSON files and the WAICT integrity manifest.
-The full inventory is **273 files / 26,290,678 bytes**. Checking only the main
+The full inventory is **274 files / 26,322,946 bytes**. Checking only the main
 JavaScript file would leave other executable code and resources unchecked.
 
 The source subset was selected from Metro's emitted module graph, not by guessing
-which filenames looked unused. Its **668 emitted project source/asset files** were
+which filenames looked unused. Its **670 emitted project source/asset files** were
 preserved byte for byte; necessary build inputs are included as well. Shared code
 or a runtime debug helper can remain if it is part of that graph. Operational tools,
 plan archives, native projects and deployment workflows are not in the current tree.
@@ -94,7 +94,7 @@ There are three distinct identifiers:
 **Release manifest SHA-256:**
 
 ```text
-b8fcf89b80566f99bdeb5a43ca9a622c4bcec5ad40597d7d75734c71732381cb
+6e9d461f51ac410bf0e7084ecd005fdd854d58304159455cb143487cd6c90c8e
 ```
 
 Compute it independently with Node.js:
@@ -104,17 +104,17 @@ node -e 'const fs=require("node:fs"),crypto=require("node:crypto"); console.log(
 ```
 
 The main application bundle is
-[`index-0efa933d650786ccbe0a39fda4e122fd.js`](web/_expo/static/js/web/index-0efa933d650786ccbe0a39fda4e122fd.js).
+[`index-c215a0b37ff3a3f10d3d67e2f605600b.js`](web/_expo/static/js/web/index-c215a0b37ff3a3f10d3d67e2f605600b.js).
 Its SHA-256 is:
 
 ```text
-bc6da03465459e44935b708c001ec79f7ed471f30959795cc862c04779747e1a
+32b764294e5bc17e0c70ea5410105012159d2afe713784271e691b5f8e788002
 ```
 
 To compare it with the live site without cloning anything:
 
 ```sh
-curl -s https://app.nuri.com/_expo/static/js/web/index-0efa933d650786ccbe0a39fda4e122fd.js | shasum -a 256
+curl -s https://app.nuri.com/_expo/static/js/web/index-c215a0b37ff3a3f10d3d67e2f605600b.js | shasum -a 256
 ```
 
 This checks one file. `node verify.mjs` checks all of them.
@@ -167,7 +167,7 @@ rejecting missing, extra or changed files.
 ```mermaid
 flowchart LR
     S["Published web source and build inputs"] --> B["Clean Expo web build"]
-    B --> R["271 rebuilt application files"]
+    B --> R["272 rebuilt application files"]
     W["Recorded web release"] --> M["release.json: path, size, SHA-256"]
     R --> C["Compare complete file sets and bytes"]
     M --> C
@@ -176,10 +176,10 @@ flowchart LR
     C --> P["Pass only when every application file matches"]
 ```
 
-### Why 271 rebuilt files but 273 release files?
+### Why 272 rebuilt files but 274 release files?
 
 `web/deployment.json` records deployment-time information, including the source SHA,
-release ID and timestamp. `web/waict/nnNPxKkO-a8bH3QtPoVTNP` is the WAICT integrity manifest written
+release ID and timestamp. `web/waict/EGK6E71A7ZjuBe90x1f-Be` is the WAICT integrity manifest written
 at deploy time. Expo produces neither file. Rebuild mode excludes **only those two
 files** from the expected build output; it does not silently ignore arbitrary
 differences. The WAICT manifest is then recomputed from the rebuilt files and must match
@@ -193,13 +193,13 @@ the resulting application bytes were then checked, not assumed to be unchanged.
 | Recorded evidence | Value |
 | --- | --- |
 | Application version | `0.106.0` |
-| Deployment ID | `pwa-c123cf526c78` |
-| Original deployment source | `c123cf526c781f229358e5481453ea3df9faf312` |
-| Deployment timestamp | `2026-10-16T09:51:33Z` |
+| Deployment ID | `pwa-7f7171ad1c62` |
+| Original deployment source | `7f7171ad1c6246abc415c66287d37420d43c6650` |
+| Deployment timestamp | `2026-10-16T11:37:23Z` |
 | Last complete live comparison for this snapshot | `2026-10-16` |
 | Rebuild environment | GitHub Actions, Node `22.23.3`, npm `10.9.9`, clean directory |
 | Original production CI | nuri-expo Deploy PWA, Node 22 |
-| Rebuild result | All 271 application files byte-identical |
+| Rebuild result | All 272 application files byte-identical |
 
 This is observed reproduction for these inputs/environments, not a claim that every
 future operating system, toolchain or environment override will produce identical

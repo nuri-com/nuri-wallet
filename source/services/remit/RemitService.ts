@@ -14,7 +14,9 @@
  */
 
 import { isBolt11Invoice } from "../../lib/bitcoin/lightning";
-import { REMIT_MCP_URL } from "../../config/network";
+import { randomUUID } from "expo-crypto";
+
+import { REMIT_KES_MCP_URL, REMIT_MCP_URL } from "../../config/network";
 import { log } from "../logging/LoggerService";
 
 const SATS_PER_BTC = 100_000_000;
@@ -53,12 +55,16 @@ let requestId = 0;
  * prior `initialize` as long as the protocol version is stated in the header —
  * so there is no session to hold open across a send.
  */
-async function callRemitTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+async function callRemitTool(
+  name: string,
+  args: Record<string, unknown>,
+  endpoint: string = REMIT_MCP_URL,
+): Promise<unknown> {
   requestId += 1;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(REMIT_MCP_URL, {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -339,4 +345,97 @@ export async function checkRemitPayment(sessionId: string): Promise<RemitPayment
   const id = String(sessionId || "").trim();
   if (!id) throw new Error("session required");
   return readStatus(id, await callRemitTool("check_lightning_tzs_payment", { sessionId: id }));
+}
+
+// ── Kenya: Lightning → Kenyan shilling, M-Pesa through ZapRemit ──────────
+// A different MCP endpoint, same transport. ZapRemit locks a quote for a
+// recipient, then hands out the BOLT11 that funds it and pays the phone out by
+// itself once that invoice settles: nothing to nudge afterwards.
+
+const KENYA = "KE";
+const KENYA_METHOD = "KE_MOBILE_MONEY";
+const KENYA_NETWORK = "M_PESA";
+
+export type KenyaRemitTerms = {
+  /** Kenyan shillings per bitcoin, ZapRemit's own reference rate. */
+  btcKes: number;
+  /** The method's band, in shillings. */
+  minKES: number;
+  maxKES: number;
+};
+
+function callKenyaTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  return callRemitTool(name, args, REMIT_KES_MCP_URL);
+}
+
+export async function getKenyaRemitTerms(): Promise<KenyaRemitTerms> {
+  const [rates, methods] = (await Promise.all([
+    callKenyaTool("zapremit_rates", {}),
+    callKenyaTool("zapremit_methods", { country: KENYA }),
+  ])) as [
+    { BTC?: Record<string, unknown> },
+    // The catalog arrives as `{ data: [...] }`, which the shared unwrap
+    // already reduces to the list itself.
+    Array<{ code?: string; min?: unknown; max?: unknown; active?: boolean }>,
+  ];
+  const btcKes = finiteNumber(rates?.BTC?.KES);
+  const method = Array.isArray(methods)
+    ? methods.find((entry) => entry?.code === KENYA_METHOD)
+    : undefined;
+  const minKES = finiteNumber(method?.min);
+  const maxKES = finiteNumber(method?.max);
+  if (btcKes === null || btcKes <= 0 || !method || method.active === false) {
+    throw new Error("kenya remit unavailable");
+  }
+  if (minKES === null || maxKES === null) throw new Error("kenya remit unavailable");
+  return { btcKes, minKES, maxKES };
+}
+
+/** What this many shillings costs in sats at the reference rate. Shown, never paid. */
+export function kesToSats(amountKES: number, btcKes: number): number {
+  return Math.ceil((amountKES / btcKes) * SATS_PER_BTC);
+}
+
+/**
+ * The invoice that delivers `amountKES` to `phoneNumber` (`254…`) over M-Pesa.
+ *
+ * Quote, then invoice: neither moves money, and ZapRemit pays the phone only
+ * once this invoice settles. Each press gets a fresh reference: a quote lives
+ * a minute, and an unpaid one is simply left to expire.
+ */
+export async function createKenyaRemitLightningInvoice(params: {
+  amountKES: number;
+  phoneNumber: string;
+  fullName: string;
+}): Promise<{ invoice: string; orderId: string }> {
+  const kes = Math.floor(Number(params.amountKES) || 0);
+  if (kes <= 0) throw new Error("amount required");
+  const phoneNumber = String(params.phoneNumber || "").trim();
+  const fullName = String(params.fullName || "").trim();
+  if (!phoneNumber || !fullName) throw new Error("recipient required");
+
+  const quote = (await callKenyaTool("zapremit_quote", {
+    country: KENYA,
+    methodCode: KENYA_METHOD,
+    amount: kes,
+    currency: "KES",
+    recipient: { fullName, institutionCode: KENYA_NETWORK, phoneNumber },
+    referenceId: randomUUID().toLowerCase(),
+  })) as { orderId?: unknown };
+  const orderId = typeof quote?.orderId === "string" ? quote.orderId : "";
+  if (!orderId) throw new Error("kenya remit returned no order");
+
+  const payment = (await callKenyaTool("zapremit_payment", { orderId })) as Record<string, unknown>;
+  const invoice =
+    typeof payment?.invoice === "string" && isBolt11Invoice(payment.invoice.trim())
+      ? payment.invoice.trim()
+      : findInvoice(payment);
+  if (!invoice) throw new Error("kenya remit returned no invoice");
+
+  log(
+    `🔐 STEP Remit=1 step=remit_kes_invoice_created status=ok kes=${kes} sats=${
+      finiteNumber(payment?.amountSats) ?? "?"
+    } src=services/remit/RemitService.ts#createKenyaRemitLightningInvoice`,
+  );
+  return { invoice, orderId };
 }
