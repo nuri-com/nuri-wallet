@@ -62,6 +62,7 @@ const WalletTransactionsModal: React.FC<Props> = ({
   secondaryAddress,
   explorerAddress,
   pendingTransfers,
+  onSendAgain,
 }) => {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -310,16 +311,25 @@ const WalletTransactionsModal: React.FC<Props> = ({
         Linking.openURL(withCacheBuster(basescanTokenUrl(BASE_EURC.address, acct))).catch(() => {});
       };
 
-      const handlePress = () => {
-        // A pending swap row opens the live "where is my money?" detail sheet.
-        if (kind === "swapkit_swap_pending") {
-          const orderId = String(o?.meta?.orderId || "");
-          if (orderId) setDetailOrderId(orderId);
-          return;
-        }
-        if (isPendingBalance || isPendingLocal) return;
-        onOpenExplorer();
-      };
+      // A pending swap row opens the live "where is my money?" detail sheet.
+      const swapOrderId = kind === "swapkit_swap_pending" ? String(o?.meta?.orderId || "") : "";
+      const hasExplorer = !isPendingBalance && !isPendingLocal;
+
+      // A send to someone else's address can be saved. Every outgoing
+      // onchain transfer is a "wallet_transfer_out"; one to this wallet or
+      // the card's own deposit address is the user's own move, never a card
+      // row, a swap or a pending one.
+      const recipient =
+        !isIncoming &&
+        !own &&
+        chainAddr &&
+        !isCard &&
+        !isPendingLocal &&
+        !isPendingBalance &&
+        isValidEvmAddress(chainAddr) &&
+        chainAddr.toLowerCase() !== cardAddress
+          ? chainAddr
+          : "";
 
       return {
         key: o?.id ?? `${kind}-${dateIso ?? ""}`,
@@ -333,37 +343,30 @@ const WalletTransactionsModal: React.FC<Props> = ({
         sublabel: subtitle,
         label: title,
         ...(image ? { image } : {}),
-        onPress: handlePress,
-        onPressLabel:
-          kind === "swapkit_swap_pending"
-            ? undefined
-            : t("component.ActivityRowActions.viewInExplorer"),
+        ...(swapOrderId ? { onOpen: () => setDetailOrderId(swapOrderId) } : {}),
+        ...(hasExplorer
+          ? {
+              onPress: onOpenExplorer,
+              onPressLabel: t("component.ActivityRowActions.viewOnBasescan"),
+            }
+          : {}),
         incoming: isIncoming,
         // Money in names its sender the way money out names its recipient.
         ...(isIncoming && chainAddr && isValidEvmAddress(chainAddr)
           ? { counterpartyAddress: chainAddr }
           : {}),
-        // A send to someone else's address can be saved. Every outgoing
-        // on-chain transfer is a "wallet_transfer_out"; only the one to the
-        // card's own deposit address is the user's own move, never a card
-        // row, a swap or a pending one.
-        saveOffer:
-          !isIncoming &&
-          chainAddr &&
-          !isCard &&
-          !isPendingLocal &&
-          !isPendingBalance &&
-          isValidEvmAddress(chainAddr) &&
-          chainAddr.toLowerCase() !== (wirexAccountService.depositAddress() ?? "").toLowerCase()
-            ? {
-                destination: {
-                  type: "crypto",
-                  raw: chainAddr,
-                  network: "base",
-                  asset: /usd/i.test(String(o?.currency ?? "")) ? "USDC" : "EURC",
-                },
-              }
-            : null,
+        saveOffer: recipient
+          ? {
+              destination: {
+                type: "crypto",
+                raw: recipient,
+                network: "base",
+                asset: /usd/i.test(String(o?.currency ?? "")) ? "USDC" : "EURC",
+              },
+            }
+          : null,
+        // Paying someone again: never your own wallet or a swap's counterparty.
+        ...(recipient && !swap && onSendAgain ? { onSendAgain: () => onSendAgain(recipient) } : {}),
         amount: amountText,
         pending: (isPendingBalance || isPendingLocal || isPending) && !isRejected,
         createdAt: dateIso || undefined,
@@ -377,6 +380,7 @@ const WalletTransactionsModal: React.FC<Props> = ({
     explorerAddress,
     primaryAddress,
     swapLegs,
+    onSendAgain,
   ]);
 
   const exportCsv = useCallback(async () => {

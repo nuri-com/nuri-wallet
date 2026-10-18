@@ -702,6 +702,16 @@ export default function BitcoinSendScreen({
     isLnurlPaymentInput(normalizedRecipient) && !isNuriLightningAddress(normalizedRecipient);
   const isRecipientBitcoinAddress = isValidBitcoinAddressMainnet(trimmedToAddress);
   const isRecipientArk = isArkAddress(trimmedToAddress);
+  // Arkade to a Bitcoin address always runs over the Lightning corridor (the
+  // offboard is never used), so the corridor's floor is the real minimum.
+  const isArkadeToBitcoinAddress =
+    isRecipientBitcoinAddress &&
+    !isRecipientBolt11 &&
+    !isRecipientLnurl &&
+    effectiveSendSource !== "onchain";
+  const bitcoinAddressMinSats = isArkadeToBitcoinAddress
+    ? Math.max(onchainMinSats, LIGHTNING_TO_BITCOIN_MIN_SATS)
+    : onchainMinSats;
   // The recipient as the corridor is asked for it, or null when this is not a
   // Tanzanian or Kenyan mobile number. Null is what every branch below reads,
   // so a half-typed number never selects the rail. A destination picked in the
@@ -1036,7 +1046,17 @@ export default function BitcoinSendScreen({
       // dispatched and not only on the button. A provider that advertises less
       // than the corridor has already declared a larger amount invalid.
       // A Tanzanian bank is paid by a swap, not over Lightning: its quote is its limit.
-      if (isBolt11 || isLnurl || (isRemit && !paysBySwap(zapRecipient))) {
+      // An Arkade-funded send to a Bitcoin address pays a Lightning invoice of
+      // exactly this figure, so the same ceiling holds. Without it the order
+      // was committed and the funding refused after the sheet had closed.
+      const arkadeToBitcoinAddress =
+        !isArk &&
+        !isBolt11 &&
+        !isLnurl &&
+        !isRemit &&
+        effectiveSendSource !== "onchain" &&
+        isValidBitcoinAddressMainnet(addr);
+      if (isBolt11 || isLnurl || arkadeToBitcoinAddress || (isRemit && !paysBySwap(zapRecipient))) {
         const ceiling = Math.min(
           isLnurl
             ? (lnurlMaxSats ?? ARKADE_LIGHTNING_MAX_SEND_SATS)
@@ -1091,14 +1111,14 @@ export default function BitcoinSendScreen({
         // The same live figure the label states. Comparing against the constant
         // here refused a send the screen had just called valid, and quoted the
         // server's number back while enforcing the old one.
-        currentSats < onchainMinSats
+        currentSats < bitcoinAddressMinSats
       ) {
         log(
-          `🔐 STEP Arkade_v4=1 step=wallet_send_confirm_blocked status=blocked why=below_onchain_minimum sats=${currentSats} min_sats=${onchainMinSats} target=bitcoin_onchain expected_next=user_enters_minimum_amount src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
+          `🔐 STEP Arkade_v4=1 step=wallet_send_confirm_blocked status=blocked why=below_onchain_minimum sats=${currentSats} min_sats=${bitcoinAddressMinSats} target=bitcoin_onchain expected_next=user_enters_minimum_amount src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
         );
         setErrorMessage(
           t("screen.BitcoinSendScreen.minimumSatsLabel", {
-            amount: String(onchainMinSats),
+            amount: String(bitcoinAddressMinSats),
           }),
         );
         return;
@@ -1619,6 +1639,7 @@ export default function BitcoinSendScreen({
     balanceSats,
     isRecipientBitcoinAddress,
     onchainMinSats,
+    bitcoinAddressMinSats,
     arkMinSats,
     lnurlMaxSats,
     // The shilling figure the invoice is minted for. Without it here, confirm
@@ -1788,7 +1809,7 @@ export default function BitcoinSendScreen({
     !isRecipientBolt11 &&
     !isRecipientLnurl &&
     currentSats > 0 &&
-    currentSats < onchainMinSats;
+    currentSats < bitcoinAddressMinSats;
   const isBelowArkSendMinimum = isRecipientArk && isBelowVtxoMinimum(currentSats, arkMinSats);
 
   // Pull the LNURL pay request when the recipient is a lightning address /
@@ -1912,8 +1933,14 @@ export default function BitcoinSendScreen({
   // below-minimum amount reached minting and came back as a downstream refusal
   // instead of naming the minimum, and an over-maximum one was caught only at
   // confirm.
+  // An Arkade-funded send to a Bitcoin address pays a Lightning invoice of the
+  // entered figure, so the Lightning ceiling governs it too; its floor is the
+  // corridor's (bitcoinAddressMinSats).
   const onLightningBand =
-    isRecipientLnurl || isRecipientBolt11 || (isRecipientRemitPhone && !isSwapPayout);
+    isRecipientLnurl ||
+    isRecipientBolt11 ||
+    (isRecipientRemitPhone && !isSwapPayout) ||
+    isArkadeToBitcoinAddress;
   const lnurlMinFloorSats = onLightningBand ? lightningBounds.minSats : null;
   const isBelowLnurlMinimum =
     lnurlMinFloorSats != null && currentSats > 0 && currentSats < lnurlMinFloorSats;
@@ -1975,7 +2002,7 @@ export default function BitcoinSendScreen({
             ? zapBandLabel
             : isBelowArkadeOnchainMinimum
               ? t("screen.BitcoinSendScreen.minimumSatsLabel", {
-                  amount: String(onchainMinSats),
+                  amount: String(bitcoinAddressMinSats),
                 })
               : isBelowArkSendMinimum && arkMinSats !== null
                 ? t("screen.BitcoinSendScreen.minimumSatsLabel", {

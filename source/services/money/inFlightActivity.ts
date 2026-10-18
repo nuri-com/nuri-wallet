@@ -29,7 +29,7 @@ export function inFlightActivityItem(
     sublabel: opts.statusText || t("common.pending"),
     amount: figure,
     amountSecondary: "",
-    ...(isOrder && opts.onOpenOrder ? { onPress: () => opts.onOpenOrder?.(row.record.id) } : {}),
+    ...(isOrder && opts.onOpenOrder ? { onOpen: () => opts.onOpenOrder?.(row.record.id) } : {}),
     pending: true,
     createdAt: row.record.createdAt,
   };

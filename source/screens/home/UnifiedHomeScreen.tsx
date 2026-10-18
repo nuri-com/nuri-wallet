@@ -199,7 +199,7 @@ import {
   type WirexWithdrawAsset,
   wirexService,
 } from "../../services/wirex/WirexService";
-import { autoSwapAmount, cardSwapStep } from "../../lib/wirex/cardAutoSwap";
+import { autoSwapAmount, cardSwapStep, foundMoneyAmount } from "../../lib/wirex/cardAutoSwap";
 import { errorWithId } from "../../lib/OperationLogUtils";
 import { reportErrorToSupport } from "../../lib/support/reportErrorToSupport";
 import { isUserCancelledAuth } from "../../lib/support/isUserCancelledAuth";
@@ -1065,9 +1065,10 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   }, [openRail, onchainSats, arkadeSats, walletEur, usdcBalance, listSatsStr, heldList]);
 
   // Money on the card in the currency it does not settle in. It cannot be
-  // spent through the card's one currency, so it is swapped into the home
-  // currency on its own (Wirex FX: the same two silent approvals as a
-  // withdrawal, then the home currency lands on the card).
+  // spent through the card's one currency, so from Wirex's minimum of 10 it is
+  // swapped into the home currency on its own (Wirex FX: the same two silent
+  // approvals as a withdrawal, then the home currency lands on the card). Less
+  // than that is offered back as found money, below.
   const cardOtherFiat: FiatCode = home === "USD" ? "EUR" : "USD";
   const cardOtherReading = cardActive ? wirex.balancesByFiat?.[cardOtherFiat] : undefined;
   const cardSwapAmount = autoSwapAmount(cardOtherReading);
@@ -1143,6 +1144,37 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           });
       });
   }, [cardSwapAmount, cardSwapKey, cardOtherReading, home, cardSwapEnded]);
+
+  // Under Wirex's swap minimum of 10 the money cannot be swapped, so it is
+  // offered back as found money: withdrawn to the wallet holding that currency.
+  const cardOtherHeld = foundMoneyAmount(cardOtherReading) ?? 0;
+  const [cardFoundVisible, setCardFoundVisible] = useState(false);
+  // Offered unprompted for each amount found in a currency; the row on the
+  // Visa & Banking card reopens it for as long as the money is there.
+  const cardFoundOfferedRef = useRef<string | null>(null);
+  // The amount a withdrawal already ran for (or may have run for, when its
+  // outcome is unconfirmed): not offered again until the balance reads differently,
+  // so the same money is never withdrawn twice.
+  const cardFoundKey = `${cardOtherFiat}:${cardOtherHeld}`;
+  const [cardFoundClaimed, setCardFoundClaimed] = useState<string | null>(null);
+  // A withdrawal still running holds the claim whatever the balance reads, so a
+  // balance change mid-approval cannot start a second one.
+  const [cardFoundRunning, setCardFoundRunning] = useState(false);
+  const cardFoundClaimable =
+    cardOtherHeld > 0 && !cardFoundRunning && cardFoundClaimed !== cardFoundKey;
+  // Once the card reads zero in that currency the money has left: the same
+  // amount arriving later is new money, offered and claimable again.
+  useEffect(() => {
+    if (cardOtherReading !== 0) return;
+    setCardFoundClaimed(null);
+    cardFoundOfferedRef.current = null;
+  }, [cardOtherReading]);
+  useEffect(() => {
+    const found = cardFoundKey;
+    if (!cardFoundClaimable || cardFoundOfferedRef.current === found || sweepResult != null) return;
+    cardFoundOfferedRef.current = found;
+    setCardFoundVisible(true);
+  }, [cardFoundClaimable, cardFoundKey, sweepResult]);
 
   // The Move sheet lists the card ONCE, as "Visa", in its settlement currency:
   // the user's main currency. Anything sent to it is a swap into that currency
@@ -1260,6 +1292,21 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // yet. The sweep is client-only and runs from the unlock modal alone, so a
   // modal that was dismissed (or never opened) leaves nothing on screen saying
   // sats are waiting. This row is that surface, and tapping it reopens the modal.
+  const cardFoundExtra =
+    openRail === "visa" && cardFoundClaimable ? (
+      <List>
+        <ListAction
+          accessibilityLabel={t("screen.SweepClaimSheet.title")}
+          onPress={() => setCardFoundVisible(true)}
+        >
+          <ListActionLeadingAvatar source={cardOtherFiat === "USD" ? USD_FLAG : EUR_FLAG} />
+          <ListActionText>{t("screen.SweepClaimSheet.title")}</ListActionText>
+          <ListActionTextMuted>{heldList(cardOtherHeld, cardOtherFiat)}</ListActionTextMuted>
+          <ListActionTrailIcon name="chevron-right" />
+        </ListAction>
+      </List>
+    ) : null;
+
   const pendingSweepExtra =
     openRail === "onchain" && unlockState.boardingSweepReadyCount > 0 ? (
       <List>
@@ -1404,6 +1451,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           setBtcSendPrefill(undefined);
           setBtcSendPayout(undefined);
           setSweepResult(null);
+          setCardFoundVisible(false);
           setDetailsChoiceVisible(false);
           setScanChoice(null);
           // A link parked for a home that never opened it must not fire after the
@@ -1488,6 +1536,17 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       });
     },
     [wirexSend.startSepaTo],
+  );
+
+  // Send again on a Cash activity row: the send opens on that address, paid
+  // from the currency of the list it was in. Nothing is sent until confirmed.
+  const sendAgainFromCash = useCallback(
+    (address: string) => {
+      const rail = historyRail === "dollar" ? "dollar" : "wallet";
+      setHistoryRail(null);
+      walletSend.handleWalletScanResult(address, null, rail);
+    },
+    [historyRail, walletSend.handleWalletScanResult],
   );
 
   // Paying a saved contact: close Address book and Settings, then hand the
@@ -2087,7 +2146,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                           : cashRail,
                     )
                   }
-                  extra={pendingSweepExtra}
+                  extra={pendingSweepExtra ?? cardFoundExtra}
                 />
               ) : (
                 <List>
@@ -2138,7 +2197,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         onReceive={() => receiveFromRail(openRail)}
         onSend={() => onCardButton("send")}
         onHistory={() => setHistoryRail(openRail)}
-        extra={pendingSweepExtra}
+        extra={pendingSweepExtra ?? cardFoundExtra}
       />
 
       <SettingsScreen
@@ -2852,6 +2911,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         )}
         address={evmAddress}
         primaryAddress={evmAddress}
+        onSendAgain={sendAgainFromCash}
       />
 
       {/* The IBAN row is a bank statement: card payments and on-chain deposits
@@ -2987,6 +3047,32 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         visible={buyFlow.visible}
         onClose={buyFlow.close}
         bitcoinAddress={buyFlow.bitcoinAddress}
+      />
+
+      {/* The card's other-currency money under the swap minimum: withdrawn to the wallet holding it. */}
+      <SweepClaimSheet
+        visible={cardFoundVisible && sweepResult == null}
+        result={null}
+        amountText={heldList(cardOtherHeld, cardOtherFiat)}
+        onClaim={async () => {
+          const amount = cardOtherHeld;
+          // Taken before the withdrawal starts, so the row cannot start a second
+          // one while this runs. A definite failure gives it back; an
+          // unconfirmed one may have moved the money and keeps it taken.
+          setCardFoundClaimed(`${cardOtherFiat}:${amount}`);
+          setCardFoundRunning(true);
+          try {
+            await runCardToWallet(amount, cardOtherFiat === "USD" ? "USDC" : "EURC");
+          } catch (error) {
+            if (!(error as { unresolved?: boolean } | null)?.unresolved) {
+              setCardFoundClaimed(null);
+            }
+            throw error;
+          } finally {
+            setCardFoundRunning(false);
+          }
+        }}
+        onClose={() => setCardFoundVisible(false)}
       />
 
       <SweepClaimSheet

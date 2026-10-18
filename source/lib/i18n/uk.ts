@@ -815,7 +815,14 @@ export const uk = {
   component: {
     ActivityRowActions: {
       open: "Відкрити",
-      viewInExplorer: "Переглянути в експлорері",
+      viewOnBasescan: "Переглянути в Basescan",
+      viewOnMempool: "Переглянути в mempool.space",
+      to: "Кому",
+      from: "Від",
+      date: "Дата",
+      status: "Статус",
+      statusCompleted: "Завершено",
+      statusFailed: "Не вдалося",
       sendAgain: "Надіслати знову",
       addToAddressBook: "Додати в адресну книгу",
       contactReceived: "%{name} отримав(-ла)",

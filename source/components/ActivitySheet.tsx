@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { type ImageSourcePropType, StyleSheet } from "react-native";
 
 import {
@@ -21,14 +21,17 @@ import {
 import type { IconName } from "@ds";
 
 import DsSheetHost from "./DsSheetHost";
-import ChoiceSheet from "./ChoiceSheet";
+import ActivityDetailSheet from "./ActivityDetailSheet";
 import { useAddressBookContacts } from "./AddressBookSuggestions";
 import { type Contact, isRecipientSaved, savedContactFor } from "../lib/addressBook/contact";
 import { contactRowLabelKey } from "../lib/addressBook/activityContact";
+import type { ActivityPerson } from "../lib/activityDetail";
 import { arkAddressScript } from "../services/arkade/arkadeCounterparty";
+import { useNuriNames } from "../services/arkade/nuriNames";
 import { contactAvatar } from "../lib/addressBook/petAvatar";
+import { isValidEvmAddress } from "../lib/validation";
 import { EventBus } from "../services/events/AppEventBusService";
-import { destinationHint, type SaveOffer } from "../screens/addressBook/addressBookModel";
+import type { SaveOffer } from "../screens/addressBook/addressBookModel";
 import { getAppLocale, t } from "../lib/i18n";
 import PullToRefresh from "./PullToRefresh";
 
@@ -39,11 +42,13 @@ import PullToRefresh from "./PullToRefresh";
  * done here. Icon convention: arrow-up = outgoing, plus = incoming,
  * transfer-horizontal = conversion/migration, cross = failed/rejected.
  *
- * TODO: add a per-transaction detail sheet as the uniform tap target later.
- * Today row taps differ per rail (bitcoin onchain → mempool.space in the
- * browser, bank rows → send-again prefill, card/arkade rows → nothing) with
- * no visual affordance difference; a detail sheet would host explorer /
- * send-again / details as explicit actions instead.
+ * Tapping a row opens its details (ActivityDetailSheet): the other side,
+ * the amount, date and state, and the row's actions (Send again, the explorer,
+ * Add to address book). A row with a live screen of its own (`onOpen`, a swap
+ * in progress) opens that instead.
+ *
+ * The other side reads as a person when it is a saved contact, or a Nuri user
+ * the server names for that address (#1708): "@emin received".
  */
 
 export type ActivityItem = {
@@ -55,9 +60,14 @@ export type ActivityItem = {
   amount?: string;
   /** Trailing secondary line (e.g. the sats or ≈-EUR value). */
   amountSecondary?: string;
+  /** The row's own action (the explorer, Send again), listed in its details. */
   onPress?: () => void;
-  /** What `onPress` does, named in the row's action list ("View in explorer"). */
+  /** What `onPress` does, as its details list it ("View on Basescan"). */
   onPressLabel?: string;
+  /** Pay the same recipient again: opens the send prefilled, never sends. */
+  onSendAgain?: () => void;
+  /** A live screen of the row's own (a swap in progress), opened instead of the details. */
+  onOpen?: () => void;
   /**
    * The recipient of an outgoing row. When it is not in the address book yet,
    * tapping the row lists "Add to address book" next to its own action.
@@ -135,6 +145,12 @@ function buildSections(items: ActivityItem[]): Section[] {
   return sections.filter((section) => section.items.length > 0);
 }
 
+/** The other side's EVM address, the one the Nuri directory can name. */
+function evmOf(item: ActivityItem): string | undefined {
+  const address = item.saveOffer?.destination.raw ?? item.counterpartyAddress;
+  return address && isValidEvmAddress(address) ? address : undefined;
+}
+
 const ActivitySheet: React.FC<Props> = ({
   visible,
   onClose,
@@ -149,8 +165,8 @@ const ActivitySheet: React.FC<Props> = ({
   emptyText,
 }) => {
   const sections = useMemo(() => buildSections(items), [items]);
-  // The row whose actions are open (only rows with an unsaved recipient).
-  const [actionsFor, setActionsFor] = useState<ActivityItem | null>(null);
+  // The row whose details are open.
+  const [detailFor, setDetailFor] = useState<ActivityItem | null>(null);
   const contacts = useAddressBookContacts(visible);
   const canSave = useCallback(
     (item: ActivityItem) =>
@@ -183,13 +199,46 @@ const ActivitySheet: React.FC<Props> = ({
     },
     [contacts, contactByScript],
   );
-  const pressRow = useCallback(
-    (item: ActivityItem) => {
-      if (canSave(item)) setActionsFor(item);
-      else item.onPress?.();
-    },
-    [canSave],
+  // EVM addresses of the other sides nobody saved: the server may know them.
+  const unsavedAddresses = useMemo(
+    () =>
+      items.flatMap((item) => {
+        const address = evmOf(item);
+        return address && !contactOf(item) ? [address.toLowerCase()] : [];
+      }),
+    [items, contactOf],
   );
+  const nameOf = useNuriNames(unsavedAddresses, visible);
+  // Who the other side is: a saved contact first, else the Nuri user the
+  // server names for the address.
+  const personOf = useCallback(
+    (item: ActivityItem): { person: ActivityPerson; avatar: ImageSourcePropType } | null => {
+      const contact = contactOf(item);
+      if (contact) {
+        return {
+          person: { name: contact.label, username: contact.nuriUsername },
+          avatar: contactAvatar(contact),
+        };
+      }
+      const username = nameOf(evmOf(item));
+      return username
+        ? {
+            person: { name: `@${username}`, username },
+            avatar: contactAvatar({ label: username, nuriUsername: username }),
+          }
+        : null;
+    },
+    [contactOf, nameOf],
+  );
+  const pressRow = useCallback((item: ActivityItem) => {
+    if (item.onOpen) item.onOpen();
+    else setDetailFor(item);
+  }, []);
+  const detailPerson = detailFor ? personOf(detailFor) : null;
+  // The details belong to this list: closing it closes them too.
+  useEffect(() => {
+    if (!visible) setDetailFor(null);
+  }, [visible]);
 
   return (
     <DsSheetHost visible={visible} onClose={onClose} mode="full">
@@ -270,18 +319,15 @@ const ActivitySheet: React.FC<Props> = ({
               <List>
                 {section.items.map((item, index) => {
                   const labelKey = contactRowLabelKey(item.incoming);
-                  const contact = labelKey ? contactOf(item) : null;
+                  const who = labelKey ? personOf(item) : null;
                   const label =
-                    contact && labelKey ? t(labelKey, { name: contact.label }) : item.label;
+                    who && labelKey ? t(labelKey, { name: who.person.name }) : item.label;
                   return (
                     <React.Fragment key={item.key}>
                       {index > 0 ? <ListSeparator /> : null}
-                      <ListAction
-                        accessibilityLabel={label}
-                        onPress={item.onPress || canSave(item) ? () => pressRow(item) : undefined}
-                      >
-                        {contact && !item.pending ? (
-                          <ListActionLeadingAvatar source={contactAvatar(contact)} />
+                      <ListAction accessibilityLabel={label} onPress={() => pressRow(item)}>
+                        {who && !item.pending ? (
+                          <ListActionLeadingAvatar source={who.avatar} />
                         ) : item.image && !item.pending ? (
                           <ListActionLeadingAvatar source={item.image} />
                         ) : (
@@ -312,36 +358,32 @@ const ActivitySheet: React.FC<Props> = ({
         </View>
       </PullToRefresh>
 
-      <ChoiceSheet<"open" | "save">
-        visible={actionsFor !== null}
-        onClose={() => setActionsFor(null)}
-        title={actionsFor?.label ?? ""}
-        subtitle={
-          actionsFor?.saveOffer ? destinationHint(actionsFor.saveOffer.destination) : undefined
+      <ActivityDetailSheet
+        item={visible ? detailFor : null}
+        person={detailPerson?.person ?? null}
+        avatar={
+          detailPerson?.avatar ?? (detailFor?.image && !detailFor.pending ? detailFor.image : null)
         }
-        items={[
-          ...(actionsFor?.onPress
-            ? [
-                {
-                  key: "open" as const,
-                  label: actionsFor.onPressLabel ?? t("component.ActivityRowActions.open"),
-                  icon: "chevron-right" as const,
-                },
-              ]
-            : []),
-          {
-            key: "save" as const,
-            label: t("component.ActivityRowActions.addToAddressBook"),
-            icon: "plus" as const,
-          },
-        ]}
-        onSelect={(key) => {
-          const item = actionsFor;
-          setActionsFor(null);
-          if (!item) return;
-          if (key === "open") item.onPress?.();
-          else if (item.saveOffer) EventBus.emit("addressBook:saveDestination", item.saveOffer);
+        canSave={detailFor ? canSave(detailFor) : false}
+        onSave={() => {
+          const item = detailFor;
+          setDetailFor(null);
+          if (!item?.saveOffer) return;
+          // A Nuri user found by address is saved under their username.
+          const username = detailPerson?.person.username;
+          EventBus.emit(
+            "addressBook:saveDestination",
+            username && !item.saveOffer.name
+              ? { ...item.saveOffer, name: username, nuriUsername: username }
+              : item.saveOffer,
+          );
         }}
+        onSendAgain={() => {
+          const item = detailFor;
+          setDetailFor(null);
+          item?.onSendAgain?.();
+        }}
+        onClose={() => setDetailFor(null)}
       />
     </DsSheetHost>
   );

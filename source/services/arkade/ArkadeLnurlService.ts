@@ -173,6 +173,9 @@ export async function getArkadeLnurlStatus(
         status = {
           ...status,
           evmAddress: profile.evm_address ?? patch.evm_address ?? status.evmAddress,
+          // A new address is unproven until it is signed for.
+          evmAddressVerified:
+            profile.evm_address_verified ?? (patch.evm_address ? false : status.evmAddressVerified),
           arkadeAddress: profile.arkade_address ?? patch.arkade_address ?? status.arkadeAddress,
           btcAddress: profile.btc_address ?? patch.btc_address ?? status.btcAddress,
           email: profile.email ?? patch.email ?? status.email,

@@ -230,7 +230,7 @@ const SwapStatusDetailSheet: FC<Props> = ({ visible, onClose, orderId }) => {
         direction="column"
         align="stretch"
         gap="sm"
-        paddingBottom="sm"
+        paddingBottom="lg"
         paddingX="lg"
       >
         <Button

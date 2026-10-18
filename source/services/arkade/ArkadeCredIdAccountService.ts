@@ -193,6 +193,7 @@ export async function claimArkadeLnurlUsernameForCredId(
     registered: true,
     lightningAddress: `${normalized}@nuri.com`,
     evmAddress: null,
+    evmAddressVerified: false,
     arkadeAddress: null,
     btcAddress: null,
     email: null,

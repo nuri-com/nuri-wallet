@@ -136,6 +136,10 @@ import {
   initWirexProvisioningRepair,
   resetWirexProvisioningRepair,
 } from "./services/wirex/WirexProvisioningRepairService";
+import {
+  resetEvmAddressProof,
+  runEvmAddressProof,
+} from "./services/arkade/ArkadeEvmAddressProofService";
 import UsernameOnboardingScreen from "./screens/onboarding/UsernameOnboardingScreen";
 import V1WalletMigrationScreen from "./screens/migration/V1WalletMigrationScreen";
 import { t } from "./lib/i18n";
@@ -404,6 +408,9 @@ function WalletApp() {
     // raise Face ID for a background check. Once per launch, and it self-limits
     // to accounts that are actually missing something.
     initWirexProvisioningRepair();
+    // Same reason: signing the EVM address proof (#1708) reads the EVM key,
+    // silent from the warm cache.
+    runEvmAddressProof();
   }, []);
 
   useEffect(
@@ -1154,7 +1161,10 @@ function WalletApp() {
     // being signed in is the point at which key material is available there. The
     // repair itself is latched once per launch, so the two call sites cannot both
     // run it.
-    if (Platform.OS === "web") initWirexProvisioningRepair();
+    if (Platform.OS === "web") {
+      initWirexProvisioningRepair();
+      runEvmAddressProof();
+    }
     return () => {
       offTokenChange();
       offSessionMinted();
@@ -1185,6 +1195,9 @@ function WalletApp() {
     // The once-per-launch provisioning check is latched per account, so release
     // it too — a relogin to a different wallet must get its own check.
     resetWirexProvisioningRepair();
+    // Same for the EVM address proof: its latch and any run in flight belong
+    // to the account that is leaving.
+    resetEvmAddressProof();
     setIsSignedInWithPRF(false);
     // Scoped to the session that resolved it: a relogin as a different account
     // must not be greeted with the previous one's handle.
@@ -1760,6 +1773,8 @@ function WalletApp() {
       void bootstrapBitcoinOnLogin().catch((error) => {
         console.error("[App:claimTargetedUsername] bootstrapBitcoinOnLogin failed:", error);
       });
+      // The unlock-time proof skipped this account: it had no username yet.
+      runEvmAddressProof();
       setIsSignedInWithPRF(true);
     },
     [],
@@ -1898,6 +1913,8 @@ function WalletApp() {
       void bootstrapBitcoinOnLogin().catch((e) => {
         console.error("[App:handleUsernameClaimSubmit] bootstrapBitcoinOnLogin failed:", e);
       });
+      // The unlock-time proof skipped this account: it had no username yet.
+      runEvmAddressProof();
       setIsSignedInWithPRF(true);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);

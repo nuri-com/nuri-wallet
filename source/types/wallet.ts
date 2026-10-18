@@ -133,6 +133,8 @@ export type WalletTransactionsProps = {
     fiat?: "EUR" | "USD";
   }>;
   onRepeatIbanSend?: (data: { iban: string; firstName: string; lastName: string }) => void;
+  /** Send again to a row's recipient: the Cash send opens on that address, from this list's currency. */
+  onSendAgain?: (address: string) => void;
 };
 
 export type WalletOrderState = "placed" | "pending" | "processed" | "rejected";

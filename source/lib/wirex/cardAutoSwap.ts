@@ -1,13 +1,28 @@
 // lib/wirex/cardAutoSwap.ts
 // The card settles in the user's home currency. Money that arrives in the other
-// currency is swapped into it (Wirex FX). Wirex prices a swap to the cent, so
-// the amount is the balance cut down to whole cents; under a cent nothing runs.
+// currency is swapped into it (Wirex FX). Wirex prices a swap to the cent and
+// refuses one under 10 of the paying currency (its estimate answers
+// `min_amount: 10`), so a swap takes the balance cut down to whole cents, from
+// 10 up. Less than that is offered back as found money and withdrawn to the
+// wallet instead.
+
+const SWAP_MINIMUM_CENTS = 1000;
+
+function wholeCents(held: number | null | undefined): number {
+  if (typeof held !== "number" || !Number.isFinite(held) || held <= 0) return 0;
+  // Rounded to 4 places first so a float such as 12.3 * 100 = 1229.9999 keeps its cent.
+  return Math.floor(Math.round(held * 1e6) / 1e4);
+}
 
 export function autoSwapAmount(held: number | null | undefined): string | null {
-  if (typeof held !== "number" || !Number.isFinite(held) || held <= 0) return null;
-  // Rounded to 4 places first so a float such as 12.3 * 100 = 1229.9999 keeps its cent.
-  const cents = Math.floor(Math.round(held * 1e6) / 1e4);
-  return cents >= 1 ? (cents / 100).toFixed(2) : null;
+  const cents = wholeCents(held);
+  return cents >= SWAP_MINIMUM_CENTS ? (cents / 100).toFixed(2) : null;
+}
+
+/** The balance to offer as found money: at least a cent, under the swap minimum. */
+export function foundMoneyAmount(held: number | null | undefined): number | null {
+  const cents = wholeCents(held);
+  return cents >= 1 && cents < SWAP_MINIMUM_CENTS ? (held as number) : null;
 }
 
 export type CardSwapStep = "wait" | "reset" | "start" | "idle";

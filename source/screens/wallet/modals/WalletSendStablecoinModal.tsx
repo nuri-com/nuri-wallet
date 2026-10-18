@@ -458,9 +458,12 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
 
   // The token decides the code: a USDC send must not render "EUR". No token is
   // the euro send (BASE_EURC), stated in the currency it moves — never the
-  // display currency.
+  // display currency. The title names the Cash balance the user picked
+  // (Euro / Dollar), not the token or its network.
   const currencySymbol = token?.symbol ?? "EUR";
-  const assetLabel = token?.code === "USD" ? "USDC Base" : "EURC Base";
+  const assetLabel = t(
+    token?.code === "USD" ? "screen.HomeScreen.railDollar" : "screen.HomeScreen.railEuro",
+  );
   const availableAmountLabel = availableDisplay == null ? null : availableDisplay.toFixed(2);
   const headerTitle = availableAmountLabel
     ? t("screen.WalletSendStablecoinModal.headlineWithBalance", {

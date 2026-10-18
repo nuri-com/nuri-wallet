@@ -65,7 +65,7 @@ import ChoiceSheet from "../../components/ChoiceSheet";
 import DsSheetHost from "../../components/DsSheetHost";
 import { useFiatAmountInput } from "../../lib/useFiatAmountInput";
 import type { SwapAssetId } from "../../services/swapkit/SwapContract";
-import { moveSourceAmount, moveSpendAmount } from "./moveSpend";
+import { moveSourceAmount, moveSpendAmount, moveTransferBounds } from "./moveSpend";
 import { moveRailPairOpen, moveRailPickOpen } from "./movePairs";
 import { type MoveSwapExecuted, useMoveSwap } from "./hooks/useMoveSwap";
 import { useMoveSwapBounds } from "./hooks/useMoveSwapBounds";
@@ -403,7 +403,12 @@ const MoveSheet: React.FC<Props> = ({
     to: priced ? to?.asset : undefined,
     sendSource: from?.sendSource,
   });
-  const boundBlock = priced ? swapBoundBlock(sourceAmount, bounds) : null;
+  // A transfer has no quote, but arkade -> onchain still runs over the
+  // corridor and carries its band.
+  const boundBlock = swapBoundBlock(
+    sourceAmount,
+    priced ? bounds : moveTransferBounds(from?.key, to?.key),
+  );
   // Prices are on the table: the keypad steps aside for them, and the button
   // means "run this one" instead of "price it".
   const quoting = swap.quotes !== null;
@@ -521,7 +526,9 @@ const MoveSheet: React.FC<Props> = ({
           ? t(boundBlock.kind === "min" ? "swap.cta.minimum" : "swap.cta.maximum", {
               value: railAmount(boundBlock.value, from.key),
             })
-          : t("screen.MoveSheet.next");
+          : overBalance
+            ? t("screen.SepaAmountConfirmationModal.insufficientHint")
+            : t("screen.MoveSheet.next");
   const ctaDisabled =
     !pairChosen ||
     !hasAmount ||

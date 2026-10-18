@@ -30,6 +30,10 @@ export function toLnurlStatus(out: unknown): ArkadeLnurlStatus {
   const lnurlpUrl = record?.lnurlpUrl !== undefined ? record.lnurlpUrl : record?.lnurlp_url;
   const callbackUrl = record?.callbackUrl !== undefined ? record.callbackUrl : record?.callback_url;
   const evmAddress = record?.evmAddress !== undefined ? record.evmAddress : record?.evm_address;
+  const evmAddressVerified =
+    record?.evmAddressVerified !== undefined
+      ? record.evmAddressVerified
+      : record?.evm_address_verified;
   const arkadeAddress =
     record?.arkadeAddress !== undefined ? record.arkadeAddress : record?.arkade_address;
   const btcAddress = record?.btcAddress !== undefined ? record.btcAddress : record?.btc_address;
@@ -53,6 +57,7 @@ export function toLnurlStatus(out: unknown): ArkadeLnurlStatus {
     lnurlpUrl: lnurlpUrl ? String(lnurlpUrl) : null,
     callbackUrl: callbackUrl ? String(callbackUrl) : null,
     evmAddress: evmAddress ? String(evmAddress) : null,
+    evmAddressVerified: evmAddressVerified === true,
     arkadeAddress: arkadeAddress ? String(arkadeAddress) : null,
     btcAddress: btcAddress ? String(btcAddress) : null,
     email: email ? String(email) : null,

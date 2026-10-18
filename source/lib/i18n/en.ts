@@ -816,7 +816,14 @@ export const en = {
   component: {
     ActivityRowActions: {
       open: "Open",
-      viewInExplorer: "View in explorer",
+      viewOnBasescan: "View on Basescan",
+      viewOnMempool: "View on mempool.space",
+      to: "To",
+      from: "From",
+      date: "Date",
+      status: "Status",
+      statusCompleted: "Completed",
+      statusFailed: "Failed",
       sendAgain: "Send again",
       addToAddressBook: "Add to address book",
       contactReceived: "%{name} received",

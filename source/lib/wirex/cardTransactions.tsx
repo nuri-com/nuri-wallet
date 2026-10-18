@@ -139,7 +139,7 @@ const wirexActivityRow = (
   item: WirexActivityItem,
   rates: FxRates | undefined,
   home: FiatCode,
-  row: { title: string; settledLabel: string; onPress?: () => void },
+  row: { title: string; settledLabel: string },
 ): ActivityItem => {
   const isCredit = item.direction === "Inbound";
   const paid = isCredit ? item.destination_amount : item.source_amount;
@@ -151,7 +151,6 @@ const wirexActivityRow = (
       ? item.status_reason || t("screen.CardTransactionsModal.statusFailed")
       : row.settledLabel;
   return {
-    onPress: row.onPress,
     icon: isFailed ? "cross" : isCredit ? "plus" : "arrow-up",
     label: row.title,
     // A sublabel that just repeats the title adds nothing — time only then.
@@ -233,8 +232,8 @@ export type WirexBankCounterparty = { iban: string; bic: string; name: string };
  * into ready-to-render `ActivityItem` rows for `components/ActivitySheet`.
  * Mirrors `mapWirexCardTransactions` but titles rows by the bank counterparty
  * (or a generic "Bank transfer" label) instead of a merchant name.
- * `onCounterpartyPress` (when given) becomes the row's onPress for every row
- * whose counterparty IBAN is known — the send-again entry point.
+ * `onCounterpartyPress` (when given) becomes the row's Send again for every
+ * row whose counterparty IBAN is known.
  */
 export function mapWirexBankActivity(
   items: WirexActivityItem[],
@@ -264,17 +263,15 @@ export function mapWirexBankActivity(
             ? "screen.CardPayout.activityLabel"
             : "screen.WirexSendChoice.sepaTitle",
         ),
-        onPress:
-          onCounterpartyPress && counterparty.iban
-            ? () => onCounterpartyPress(counterparty)
-            : undefined,
       });
       const iban = counterparty.iban.replace(/\s+/g, "").toUpperCase();
       // Whoever the transfer went to or came from can be saved by its IBAN.
       return iban
         ? {
             ...row,
-            onPressLabel: t("component.ActivityRowActions.sendAgain"),
+            ...(onCounterpartyPress
+              ? { onSendAgain: () => onCounterpartyPress(counterparty) }
+              : {}),
             incoming: item.direction === "Inbound",
             saveOffer: {
               destination: {

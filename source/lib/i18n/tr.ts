@@ -812,7 +812,14 @@ export const tr = {
   component: {
     ActivityRowActions: {
       open: "Aç",
-      viewInExplorer: "Gezginde görüntüle",
+      viewOnBasescan: "Basescan'de görüntüle",
+      viewOnMempool: "mempool.space'te görüntüle",
+      to: "Alıcı",
+      from: "Gönderen",
+      date: "Tarih",
+      status: "Durum",
+      statusCompleted: "Tamamlandı",
+      statusFailed: "Başarısız",
       sendAgain: "Tekrar gönder",
       addToAddressBook: "Adres defterine ekle",
       contactReceived: "%{name} aldı",

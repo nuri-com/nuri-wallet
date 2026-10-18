@@ -407,7 +407,7 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
     };
 
     if (railTxs.length === 0) return sortPendingFirst(list);
-    const viewInExplorerLabel = t("component.ActivityRowActions.viewInExplorer");
+    const mempoolLabel = t("component.ActivityRowActions.viewOnMempool");
     const mapped = railTxs.map(({ tx: t, address: txAddress }) => {
       const isPending = !t?.status?.confirmed;
       const display = classifyTransaction(t, txAddress);
@@ -458,7 +458,7 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
           ? { image: swapRow(swapLegs, t.txid, isIncoming)?.image }
           : {}),
         onPress: onOpenExplorer,
-        onPressLabel: viewInExplorerLabel,
+        onPressLabel: mempoolLabel,
         saveOffer: recipient
           ? { destination: { type: "crypto", raw: recipient, network: "bitcoin", asset: "BTC" } }
           : null,

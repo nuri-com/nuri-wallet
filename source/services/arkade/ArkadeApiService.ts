@@ -246,6 +246,8 @@ export type ArkadeLnurlStatusResponse = {
   registered: boolean;
   lightning_address: string | null;
   evm_address?: string | null;
+  /** Whether `evm_address` is proven by its own signature (older servers omit it). */
+  evm_address_verified?: boolean;
   arkade_address?: string | null;
   btc_address?: string | null;
   email?: string | null;
@@ -261,9 +263,16 @@ export type ArkadeLnurlSetProfileResponse = {
   ok: boolean;
   username: string;
   evm_address: string | null;
+  evm_address_verified?: boolean;
   arkade_address?: string | null;
   btc_address?: string | null;
   email?: string | null;
+};
+
+export type ArkadeLnurlNamesResponse = {
+  ok: boolean;
+  /** Lowercase address -> username, null where no single user proved it. */
+  names: Record<string, string | null>;
 };
 
 export type ArkadeLnurlPendingSwap = {
@@ -909,6 +918,8 @@ export async function arkadeLnurlSetProfile(
   payload: {
     username: string;
     evm_address?: string;
+    /** personal_sign by evm_address of "nuri-evm-binding-v1:<credIdB64u>". */
+    evm_address_signature?: string;
     arkade_address?: string;
     btc_address?: string;
     email?: string;
@@ -924,6 +935,20 @@ export async function arkadeLnurlSetProfile(
     },
   );
   return parseJsonResponse<ArkadeLnurlSetProfileResponse>("lnurlSetProfile", res);
+}
+
+// Usernames for up to 100 EVM addresses, named only where one user proved the
+// address (see the server's /arkade/lnurl/names).
+export async function arkadeLnurlNames(
+  assertion: AssertionFields,
+  addresses: string[],
+): Promise<ArkadeLnurlNamesResponse> {
+  const res = await fetchWithTimeout("lnurlNames", buildSignerUrl("/arkade/lnurl/names"), {
+    method: "POST",
+    headers: buildHeaders(true),
+    body: JSON.stringify(toRequestBody(assertion, { addresses })),
+  });
+  return parseJsonResponse<ArkadeLnurlNamesResponse>("lnurlNames", res);
 }
 
 export async function arkadeLnurlPendingSwaps(

@@ -820,7 +820,14 @@ export const sw = {
   component: {
     ActivityRowActions: {
       open: "Fungua",
-      viewInExplorer: "Tazama kwenye explorer",
+      viewOnBasescan: "Tazama kwenye Basescan",
+      viewOnMempool: "Tazama kwenye mempool.space",
+      to: "Kwa",
+      from: "Kutoka",
+      date: "Tarehe",
+      status: "Hali",
+      statusCompleted: "Imekamilika",
+      statusFailed: "Imeshindwa",
       sendAgain: "Tuma tena",
       addToAddressBook: "Ongeza kwenye kitabu cha anwani",
       contactReceived: "%{name} amepokea",

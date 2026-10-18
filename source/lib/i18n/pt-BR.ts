@@ -820,7 +820,14 @@ export const ptBR = {
   component: {
     ActivityRowActions: {
       open: "Abrir",
-      viewInExplorer: "Ver no explorer",
+      viewOnBasescan: "Ver no Basescan",
+      viewOnMempool: "Ver no mempool.space",
+      to: "Para",
+      from: "De",
+      date: "Data",
+      status: "Status",
+      statusCompleted: "Concluído",
+      statusFailed: "Falhou",
       sendAgain: "Enviar de novo",
       addToAddressBook: "Adicionar aos contatos",
       contactReceived: "%{name} recebeu",

@@ -35,6 +35,9 @@
  */
 export const APP_VIEWPORT_HEIGHT_PROPERTY = "--nuri-viewport-height";
 
+/** Frames re-measured after a return to the foreground (about half a second). */
+export const RESUME_SETTLE_FRAMES = 30;
+
 /**
  * The parts of `window` this reads. Structural, so a test (and a headless render)
  * can pass a plain object instead of a browser.
@@ -46,11 +49,15 @@ export type AppViewportTarget = {
       clientHeight?: number;
       style?: { setProperty?: (property: string, value: string) => void };
     };
+    visibilityState?: string;
+    addEventListener?: (type: string, listener: () => void) => void;
+    removeEventListener?: (type: string, listener: () => void) => void;
   };
   visualViewport?: AppViewportVisualViewport | null;
   scrollY?: number;
   scrollTo?: (x: number, y: number) => void;
   requestAnimationFrame?: (callback: () => void) => number;
+  cancelAnimationFrame?: (handle: number) => void;
   addEventListener?: (type: string, listener: () => void) => void;
   removeEventListener?: (type: string, listener: () => void) => void;
 };
@@ -141,6 +148,18 @@ export function applyAppViewportHeight(target: AppViewportTarget | undefined): n
  * top and, once the new height has laid out, brings the focused field into view
  * inside its own scroll view (`onSettled`), which is where the browser's own
  * document scroll would otherwise have put it.
+ *
+ * Coming back to the foreground is a change too, and nothing re-measured on it
+ * (#1711). Leave the installed PWA with the keyboard open and the frame holds the
+ * keyboard-sized height. The resize that says the keyboard is gone arrives around
+ * the app switch, sometimes while the page still reports itself hidden, so a
+ * suspended page can miss it; Home then stays squeezed into the upper part of the
+ * screen above an empty band until some later viewport event. A wallet app opened
+ * from the page (WalletConnect) is the same round trip. So the return itself (the
+ * page becoming visible, `pageshow` from the back-forward cache, the window
+ * regaining focus) re-measures, and keeps re-measuring for the first frames after
+ * it, since a hidden page runs no frames and the viewport the browser reports can
+ * still settle once it paints again.
  */
 export function observeAppViewportHeight(
   target: AppViewportTarget | undefined,
@@ -157,6 +176,29 @@ export function observeAppViewportHeight(
     if (typeof target.requestAnimationFrame === "function") target.requestAnimationFrame(onSettled);
     else onSettled();
   };
+  // Re-measures on the frames right after a return to the foreground.
+  let settleFrame: number | null = null;
+  const stopSettling = () => {
+    if (settleFrame !== null) target.cancelAnimationFrame?.(settleFrame);
+    settleFrame = null;
+  };
+  const resume = () => {
+    if (target.document?.visibilityState === "hidden") return;
+    stopSettling();
+    update();
+    if (typeof target.requestAnimationFrame !== "function") return;
+    let frames = 0;
+    const settle = () => {
+      settleFrame = null;
+      pinDocument(target);
+      applyAppViewportHeight(target);
+      frames += 1;
+      if (frames < RESUME_SETTLE_FRAMES)
+        settleFrame = target.requestAnimationFrame?.(settle) ?? null;
+    };
+    settleFrame = target.requestAnimationFrame(settle);
+  };
+
   const sources: AppViewportEventSource[] = [];
   if (target.visualViewport) sources.push(target.visualViewport);
 
@@ -168,8 +210,12 @@ export function observeAppViewportHeight(
   target.addEventListener?.("scroll", update);
   target.addEventListener?.("orientationchange", update);
   target.addEventListener?.("focusin", update);
+  target.addEventListener?.("pageshow", resume);
+  target.addEventListener?.("focus", resume);
+  target.document?.addEventListener?.("visibilitychange", resume);
 
   return () => {
+    stopSettling();
     for (const source of sources) {
       source.removeEventListener?.("resize", update);
       source.removeEventListener?.("scroll", update);
@@ -178,5 +224,8 @@ export function observeAppViewportHeight(
     target.removeEventListener?.("scroll", update);
     target.removeEventListener?.("orientationchange", update);
     target.removeEventListener?.("focusin", update);
+    target.removeEventListener?.("pageshow", resume);
+    target.removeEventListener?.("focus", resume);
+    target.document?.removeEventListener?.("visibilitychange", resume);
   };
 }

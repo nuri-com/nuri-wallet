@@ -821,7 +821,14 @@ export const nl = {
   component: {
     ActivityRowActions: {
       open: "Openen",
-      viewInExplorer: "Bekijken in explorer",
+      viewOnBasescan: "Bekijken op Basescan",
+      viewOnMempool: "Bekijken op mempool.space",
+      to: "Aan",
+      from: "Van",
+      date: "Datum",
+      status: "Status",
+      statusCompleted: "Voltooid",
+      statusFailed: "Mislukt",
       sendAgain: "Opnieuw versturen",
       addToAddressBook: "Toevoegen aan adresboek",
       contactReceived: "%{name} ontving",

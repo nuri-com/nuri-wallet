@@ -527,8 +527,8 @@ export const fr = {
       receiveNotReady: "Ton portefeuille se prépare. Réessaie dans un instant.",
     },
     WalletSendStablecoinModal: {
-      headline: "Envoyer des %{asset}",
-      headlineWithBalance: "Envoyer des %{asset} (%{amount})",
+      headline: "Envoyer en %{asset}",
+      headlineWithBalance: "Envoyer en %{asset} (%{amount})",
       recipientLabel: "Adresse du portefeuille",
       ctaNext: "Suivant",
       loadingLabel: "Chargement…",
@@ -826,7 +826,14 @@ export const fr = {
   component: {
     ActivityRowActions: {
       open: "Ouvrir",
-      viewInExplorer: "Voir dans l'explorateur",
+      viewOnBasescan: "Voir sur Basescan",
+      viewOnMempool: "Voir sur mempool.space",
+      to: "À",
+      from: "De",
+      date: "Date",
+      status: "Statut",
+      statusCompleted: "Terminé",
+      statusFailed: "Échoué",
       sendAgain: "Renvoyer",
       addToAddressBook: "Ajouter au carnet d'adresses",
       contactReceived: "%{name} a reçu",

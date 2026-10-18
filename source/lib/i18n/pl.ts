@@ -823,7 +823,14 @@ export const pl = {
   component: {
     ActivityRowActions: {
       open: "Otwórz",
-      viewInExplorer: "Zobacz w eksploratorze",
+      viewOnBasescan: "Zobacz w Basescan",
+      viewOnMempool: "Zobacz w mempool.space",
+      to: "Do",
+      from: "Od",
+      date: "Data",
+      status: "Status",
+      statusCompleted: "Zakończono",
+      statusFailed: "Nieudane",
       sendAgain: "Wyślij ponownie",
       addToAddressBook: "Dodaj do książki adresowej",
       contactReceived: "%{name} otrzymał(a)",

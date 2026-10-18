@@ -826,7 +826,14 @@ export const ptPT = {
   component: {
     ActivityRowActions: {
       open: "Abrir",
-      viewInExplorer: "Ver no explorador",
+      viewOnBasescan: "Ver no Basescan",
+      viewOnMempool: "Ver no mempool.space",
+      to: "Para",
+      from: "De",
+      date: "Data",
+      status: "Estado",
+      statusCompleted: "Concluído",
+      statusFailed: "Falhou",
       sendAgain: "Enviar novamente",
       addToAddressBook: "Adicionar ao livro de endereços",
       contactReceived: "%{name} recebeu",
