@@ -46,12 +46,49 @@ const RELAY_TIMEOUT_MS = 8_000;
 // ponytail: public relays commonly reject events >~128KB; if the full backup
 // outgrows this we drop it and rely on the exit-essential event — chunking
 // (multiple d-tags) is the upgrade path if that ever becomes the norm.
+// A dropped event is recorded as "oversize" below so the UI can warn (#1636).
 const MAX_EVENT_CONTENT_CHARS = 100_000;
 
 export type NostrBackupPayload = {
   dTag: string;
   contentJson: string;
 };
+
+// Outcome of the latest publish attempt per d-tag, readable by the UI.
+// lastPublishedAtMs only moves when at least one relay acked the event, so an
+// "oversize" or "failed" state still shows when the last good backup was.
+export type NostrBackupPublishStatus = {
+  dTag: string;
+  state: "published" | "oversize" | "failed";
+  contentChars: number;
+  attemptedAtMs: number;
+  lastPublishedAtMs: number | null;
+  error?: string;
+};
+
+const publishStatusByDTag = new Map<string, NostrBackupPublishStatus>();
+
+function recordPublishStatus(
+  dTag: string,
+  state: NostrBackupPublishStatus["state"],
+  contentChars: number,
+  error?: string,
+): void {
+  const now = Date.now();
+  const previous = publishStatusByDTag.get(dTag);
+  publishStatusByDTag.set(dTag, {
+    dTag,
+    state,
+    contentChars,
+    attemptedAtMs: now,
+    lastPublishedAtMs: state === "published" ? now : (previous?.lastPublishedAtMs ?? null),
+    ...(error ? { error } : {}),
+  });
+}
+
+export function getNostrBackupPublishStatus(dTag: string): NostrBackupPublishStatus | null {
+  return publishStatusByDTag.get(dTag) ?? null;
+}
 
 /**
  * Publish encrypted backup blobs to Nostr relays under the user's support-chat
@@ -64,6 +101,7 @@ export async function publishEncryptedBackupsToNostr(
 ): Promise<void> {
   if (!payloads.length) return;
   let sk: Uint8Array | null = null;
+  const recorded = new Set<string>();
   try {
     sk = await getNostrPrivateKey();
     const pubkey = bytesToHex(schnorr.getPublicKey(sk));
@@ -72,8 +110,10 @@ export async function publishEncryptedBackupsToNostr(
     await ensureDmRelayListPublished(sk);
     for (const payload of payloads) {
       if (payload.contentJson.length > MAX_EVENT_CONTENT_CHARS) {
-        console.log(
-          `[NostrBackupService] skip ${payload.dTag}: content ${payload.contentJson.length} chars exceeds ${MAX_EVENT_CONTENT_CHARS}`,
+        recordPublishStatus(payload.dTag, "oversize", payload.contentJson.length);
+        recorded.add(payload.dTag);
+        console.warn(
+          `[NostrBackupService] NOT published ${payload.dTag}: content ${payload.contentJson.length} chars exceeds ${MAX_EVENT_CONTENT_CHARS} status=oversize`,
         );
         continue;
       }
@@ -89,14 +129,24 @@ export async function publishEncryptedBackupsToNostr(
         signEvent(unsigned, sk),
         RELAY_TIMEOUT_MS,
       );
+      recordPublishStatus(
+        payload.dTag,
+        result.ackedOk > 0 ? "published" : "failed",
+        payload.contentJson.length,
+      );
+      recorded.add(payload.dTag);
       console.log(
         `[NostrBackupService] published ${payload.dTag} size=${payload.contentJson.length} relays=${result.tried} opened=${result.opened} acked=${result.ackedOk}`,
       );
     }
   } catch (error) {
-    console.log(
-      `[NostrBackupService] publish failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    for (const payload of payloads) {
+      if (!recorded.has(payload.dTag)) {
+        recordPublishStatus(payload.dTag, "failed", payload.contentJson.length, message);
+      }
+    }
+    console.log(`[NostrBackupService] publish failed: ${message}`);
   } finally {
     if (sk) zeroize(sk);
   }

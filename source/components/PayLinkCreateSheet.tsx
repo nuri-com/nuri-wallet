@@ -24,6 +24,7 @@ import {
   Scroll,
   Text,
   TextField,
+  TextFieldLabel,
   Topbar,
   TopbarTitle,
   TopbarTrailing,
@@ -115,7 +116,9 @@ const PayLinkCreateSheet: React.FC<Props> = ({ visible, onClose, origin, usernam
             inputMode="decimal"
             placeholder={t(`${K}.amountPlaceholder`, { unit })}
             accessibilityLabel={t(`${K}.amountLabel`, { unit })}
-          />
+          >
+            <TextFieldLabel>{t(`${K}.amountLabel`, { unit })}</TextFieldLabel>
+          </TextField>
           <Text size="sm" muted>
             {typed && !link ? t(`${K}.amountInvalid`, { unit }) : t(`${K}.hint`)}
           </Text>

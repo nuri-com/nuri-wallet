@@ -998,6 +998,9 @@ async function uploadArkadeRecoveryBackupFromPlaintext(
     if (derived) {
       setCachedBackupKey(key, derived.credIdB64u);
     }
+    // Nostr is the exit path for when Nuri is gone, so it must not wait on (or
+    // be skipped by) the Nuri server upload below (#1636).
+    mirrorBackupToNostr(plaintext, key, backup);
     const assertion = cached?.assertion || (await identity.getSigningAssertion());
     const response = await arkadeRecoveryBackupUpload(assertion, backup);
     const summary = summarizeBackup(
@@ -1012,7 +1015,6 @@ async function uploadArkadeRecoveryBackupFromPlaintext(
       true,
     );
     lastUploadedStorageHash = storageContentHash(plaintext.storage.items);
-    mirrorBackupToNostr(plaintext, key, backup);
     logRecoveryBackup(source === "auto" ? "autoUpload" : "upload", {
       status: summary.status,
       source,

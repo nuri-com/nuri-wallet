@@ -58,6 +58,7 @@ import { verifyRegisterCallData } from "../../lib/wirex/registerVerification";
 import { isAccountBlocked, type WirexBankEligibility } from "../../lib/wirex/accountBlocked";
 import { authStateManager } from "../auth/AuthStateService";
 import { EventBus } from "../events/AppEventBusService";
+import { classifyLinklessOnboardResult } from "./WirexOnboardingOutcome";
 import { wirexConfig } from "./wirexConfig";
 
 // The signer contract that `submitSignedApproval` injects into. Mirrors the
@@ -290,7 +291,8 @@ interface ThreeDsPendingData {
 
 // ── Public return shapes ───────────────────────────────────────────────
 export interface WirexOnboardResult {
-  kycUrl: string;
+  outcome: "kyc_url" | "approved_without_link";
+  kycUrl: string | null;
   kycSdkToken: string | null; // native Sumsub SDK token when KYC is pending; null → use kycUrl webview
   wallet: string | null;
   credentialId: string | null;
@@ -1144,6 +1146,24 @@ class WirexService {
       return this.toOnboardResult(registered);
     }
 
+    if (
+      classifyLinklessOnboardResult({
+        status: result.status,
+        kycUrl: result.kyc_url,
+        registerApprovalUrl: result.register_approval_url,
+        registerSessionId: result.register_session_id,
+      }) === "approved_without_link"
+    ) {
+      return {
+        outcome: "approved_without_link",
+        kycUrl: null,
+        kycSdkToken: null,
+        wallet: result.wallet ?? null,
+        credentialId: result.credential_id ?? null,
+        sumsubClientId: null,
+      };
+    }
+
     throw new Error(
       `${LOG_TAG} onboard: result had neither kyc_url nor register link (status=${result.status ?? "unknown"})`,
     );
@@ -1192,6 +1212,7 @@ class WirexService {
       throw new Error(`${LOG_TAG} onboarding done but no kyc_url present`);
     }
     return {
+      outcome: "kyc_url",
       kycUrl,
       kycSdkToken: data.kycSdkToken ?? null,
       wallet: data.wallet ?? null,

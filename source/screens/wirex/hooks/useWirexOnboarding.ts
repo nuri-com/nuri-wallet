@@ -14,6 +14,7 @@ import { Linking, Platform } from "react-native";
 import { LOG_EMOJI, logWithId, warnWithId } from "../../../lib/OperationLogUtils";
 import { getEthereumAddress } from "../../../lib/secureKeyStorage";
 import { wirexKycPermalink } from "../../../lib/wirex/kycPermalink";
+import { nextStepAfterApprovedOnboarding } from "../../../services/wirex/WirexOnboardingOutcome";
 import { wirexService } from "../../../services/wirex/WirexService";
 
 const SOURCE = "screens/wirex/hooks/useWirexOnboarding.ts";
@@ -79,7 +80,27 @@ export function useWirexOnboarding(options?: WirexOnboardingOptions): WirexOnboa
         throw new Error("no_wallet");
       }
       const { username, permalink } = resolveKycIdentity();
-      await wirexService.onboard({ username, email });
+      const onboardResult = await wirexService.onboard({ username, email });
+      if (onboardResult.outcome === "approved_without_link") {
+        const status = await wirexService.getStatus({ wallet: address });
+        if (nextStepAfterApprovedOnboarding(status.verificationStatus) === "complete") {
+          logWithId(
+            `${LOG_EMOJI.card} WirexOnboarding`,
+            "approved onboarding state refreshed",
+            { status: "approved" },
+            {
+              context: "user",
+              event: "FLOW",
+              scope: "WirexOnboarding",
+              action: "openFreeAccount",
+              source: `${SOURCE}#onboardAndLaunchKyc`,
+            },
+          );
+          beforeKyc?.();
+          onKycFinished?.();
+          return;
+        }
+      }
       logWithId(
         `${LOG_EMOJI.card} WirexOnboarding`,
         "identity verification ready",

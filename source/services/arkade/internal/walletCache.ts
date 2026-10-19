@@ -139,6 +139,7 @@ export function resetArkadeWalletCacheState(): void {
 }
 
 export async function getOrCreateWallet(): Promise<ArkadeWallet> {
+  await authStateManager.initialize();
   const configuredNodeUrl = arkadeServerConfigService.getArkadeNodeUrl().replace(/\/+$/, "");
   const walletIdentityKey = getCurrentArkadeWalletIdentityKey();
   const walletCacheKey = getCurrentArkadeWalletCacheKey(configuredNodeUrl);

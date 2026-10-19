@@ -288,40 +288,65 @@ export async function signAndBroadcastSwapKitEvmTx(
   // already guarantees spender === transaction target and native value === 0.
   if (parsed.approval) {
     const approval = parsed.approval;
-    const sendApprove = async (amount: bigint): Promise<void> => {
-      const data = encodeFunctionData({
+    const approveData = (amount: bigint) =>
+      encodeFunctionData({
         abi: ERC20_APPROVE_ABI,
         functionName: "approve",
         args: [approval.spender, amount],
       });
-      const gas = await publicClient.estimateGas({
+    const estimateApprove = (amount: bigint, blockNumber?: bigint) =>
+      publicClient.estimateGas({
         account,
         to: approval.token,
-        data,
+        data: approveData(amount),
+        ...(blockNumber !== undefined ? { blockNumber } : {}),
       });
+    // Returns the block the approval landed in.
+    const sendApprove = async (amount: bigint, gas: bigint): Promise<bigint> => {
       const approveHash = await send(
-        { to: approval.token, data, gas },
+        { to: approval.token, data: approveData(amount), gas },
         await ethereumFees(publicClient, parsed.chainId),
       );
       const receipt = await publicClient.waitForTransactionReceipt({ hash: approveHash });
       if (receipt.status !== "success") {
         throw new Error(`Sweep approval reverted onchain: ${approveHash}`);
       }
+      return receipt.blockNumber;
     };
 
-    const allowanceCall = await publicClient.call({
-      to: approval.token,
-      data: encodeFunctionData({
-        abi: ERC20_ALLOWANCE_ABI,
-        functionName: "allowance",
-        args: [account.address, approval.spender],
-      }),
-    });
-    const allowance = BigInt(allowanceCall.data ?? "0x0");
+    const readAllowance = async (blockNumber?: bigint): Promise<bigint> => {
+      const result = await publicClient.call({
+        to: approval.token,
+        data: encodeFunctionData({
+          abi: ERC20_ALLOWANCE_ABI,
+          functionName: "allowance",
+          args: [account.address, approval.spender],
+        }),
+        ...(blockNumber !== undefined ? { blockNumber } : {}),
+      });
+      const data = result.data;
+      return !data || data === "0x" ? 0n : BigInt(data);
+    };
+    const allowance = await readAllowance();
     if (allowance !== approval.amount) {
       bounds?.onApproving?.();
-      if (allowance !== 0n) await sendApprove(0n);
-      await sendApprove(approval.amount);
+      if (allowance === 0n) {
+        await sendApprove(approval.amount, await estimateApprove(approval.amount));
+      } else {
+        const resetBlock = await sendApprove(0n, await estimateApprove(0n));
+        // Read AND estimate at the reset's block. A load-balanced RPC can answer
+        // one request from a caught-up node and the next from a lagging one, and
+        // an approval priced against the old nonzero allowance runs out of gas.
+        // A node without that block errors and is retried; there is no fallback
+        // to an unpinned estimate.
+        const gas = await simulateUntilStateCatchesUp(async () => {
+          if ((await readAllowance(resetBlock)) !== 0n) {
+            throw new Error("The allowance reset is not visible on the current RPC yet.");
+          }
+          return estimateApprove(approval.amount, resetBlock);
+        });
+        await sendApprove(approval.amount, gas);
+      }
     }
   }
 
