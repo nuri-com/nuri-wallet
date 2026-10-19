@@ -4,6 +4,8 @@ export const sw = {
       title: "Malipo ya Bitcoin Yamepokelewa",
       unlockButton: "Fungua kwa Passkey",
       laterButton: "Dai baadaye",
+      renewalTitle: "Linda Bitcoin yako",
+      renewalBody: "Thibitisha kwa passkey yako ili usipoteze ufikiaji wa salio lako.",
     },
     DesktopGate: {
       subtitle: "Changanua msimbo wa QR ili kufungua Nuri kwenye simu yako.",
@@ -130,6 +132,8 @@ export const sw = {
       errorAmountGreaterThanZero: "Weka kiasi kikubwa kuliko sifuri.",
       errorExceedsBalance: "Kiasi kinazidi salio lililopo baada ya ada.",
       errorSendFailed: "Kuna hitilafu. Tafadhali jaribu tena.",
+      errorSendPartnerFull:
+        "Mshirika wa kutuma amejaa kwa sasa. Bitcoin zako ziko salama. Tafadhali jaribu tena baadaye.",
       errorLightningLockupUnavailable: "Lightning haipatikani. Hakuna kilichotumwa.",
       errorOnchainTooFreshHours: "Itapatikana baada ya takriban saa %{hours}.",
       errorOnchainTooFreshMinutes: "Itapatikana baada ya takriban dakika %{minutes}.",

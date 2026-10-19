@@ -25,7 +25,6 @@ import { getCacheValue } from "../../../services/balance/TransactionCacheService
 import { withCacheBuster } from "../../../lib/url";
 import { getWalletTransactionsDbCacheKey } from "../../../services/balance/transactions/cacheKeys";
 import { fetchWalletTransactions } from "../../../services/balance/transactions/walletTransactions";
-import { maskAddress } from "../../../lib/mask";
 import { resolveFiatCode } from "../../../lib/tokens";
 import { t } from "../../../lib/i18n";
 import { isValidEvmAddress } from "../../../lib/validation";
@@ -249,14 +248,6 @@ const WalletTransactionsModal: React.FC<Props> = ({
       // The counterpart's mark, as a contact's picture: Visa for the card.
       const image = swap ? swap.image : isCard || isOwnCard ? VISA_LOGO : undefined;
       const dateIso = getOrderDateIso(o);
-      const extra =
-        isPendingBalance || isPendingLocal
-          ? ""
-          : isCard || isOwnCard || swap
-            ? ""
-            : chainAddr
-              ? maskAddress(chainAddr)
-              : "";
       const txTime = formatActivityTime(dateIso);
       // "≈ BTC 36326": quoted receive amount in sats, BTC symbol, no word "sats".
       const swapSats =
@@ -277,7 +268,7 @@ const WalletTransactionsModal: React.FC<Props> = ({
                 ? `≈ BTC ${swapSats}`
                 : getSwapKitV2StatusMessage(String(o?.meta?.orderId || "")))) ||
             "Pending broadcast"
-          : withTxTime(txTime, extra);
+          : txTime;
       const orderState = getOrderState(o);
       const isPending = orderState === "pending" || orderState === "placed";
       const isRejected = orderState === "rejected";

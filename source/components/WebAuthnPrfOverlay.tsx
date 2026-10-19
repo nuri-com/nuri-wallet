@@ -16,8 +16,6 @@ import PasskeyWebAuthnPrfView, {
   type PasskeyWebAuthnPrfCreateResult,
 } from "./PasskeyWebAuthnPrfView";
 
-const BUSY_MESSAGE = "webauthn_prf_overlay_busy";
-
 /**
  * Global, always-mounted host for `WebAuthnPrfService`. Listens for
  * "webauthn:prfRequest" and presents a fullscreen confirm screen (same scaffold
@@ -42,10 +40,10 @@ export default function WebAuthnPrfOverlay() {
   useEffect(() => {
     const unsubscribe = EventBus.on<WebAuthnPrfRequestPayload>("webauthn:prfRequest", (payload) => {
       if (!payload) return;
-      // Only one WebAuthn ceremony can run at a time. Reject extras explicitly
-      // so their promises never hang.
+      // WebAuthnPrfService serializes ceremonies and only emits the active one.
+      // Keep this guard fail-closed if a future caller bypasses that boundary.
       if (activeRef.current) {
-        rejectPrfRequest(payload.id, BUSY_MESSAGE);
+        rejectPrfRequest(payload.id, "webauthn_prf_overlay_protocol_overlap");
         return;
       }
       setActiveRequest(payload);
@@ -63,32 +61,34 @@ export default function WebAuthnPrfOverlay() {
     };
   }, [setActiveRequest]);
 
+  // Each handler takes the id of the request its view was rendered for, so a
+  // late result from a timed-out view can never complete the next request.
   const handleCreateResult = useCallback(
-    (result: PasskeyWebAuthnPrfCreateResult) => {
+    (id: string, result: PasskeyWebAuthnPrfCreateResult) => {
       const request = activeRef.current;
-      if (!request) return;
-      resolvePrfRequest(request.id, result);
+      if (!request || request.id !== id) return;
       setActiveRequest(null);
+      resolvePrfRequest(request.id, result);
     },
     [setActiveRequest],
   );
 
   const handleAssertionResult = useCallback(
-    (result: PasskeyWebAuthnPrfAssertionResult) => {
+    (id: string, result: PasskeyWebAuthnPrfAssertionResult) => {
       const request = activeRef.current;
-      if (!request) return;
-      resolvePrfRequest(request.id, result);
+      if (!request || request.id !== id) return;
       setActiveRequest(null);
+      resolvePrfRequest(request.id, result);
     },
     [setActiveRequest],
   );
 
   const handleError = useCallback(
-    (message: string) => {
+    (id: string, message: string) => {
       const request = activeRef.current;
-      if (!request) return;
-      rejectPrfRequest(request.id, message);
+      if (!request || request.id !== id) return;
       setActiveRequest(null);
+      rejectPrfRequest(request.id, message);
     },
     [setActiveRequest],
   );
@@ -98,7 +98,12 @@ export default function WebAuthnPrfOverlay() {
   // above them — the WebView reports cancel/errors via onError, which dismisses
   // the layer.
   return (
-    <Layer visible={!!active} onRequestClose={() => handleError("webauthn_prf_overlay_cancelled")}>
+    <Layer
+      visible={!!active}
+      onRequestClose={() => {
+        if (activeRef.current) handleError(activeRef.current.id, "webauthn_prf_overlay_cancelled");
+      }}
+    >
       {active ? (
         <View chrome="canvas" direction="column" align="stretch" fill="grow">
           <RNView style={[styles.title, { paddingTop: insets.top + 48 }]}>
@@ -131,9 +136,9 @@ export default function WebAuthnPrfOverlay() {
                   prfSalt={active.prfSalt}
                   requestPrf={active.requestPrf}
                   label={active.label}
-                  onCreateResult={handleCreateResult}
-                  onAssertionResult={handleAssertionResult}
-                  onError={handleError}
+                  onCreateResult={(result) => handleCreateResult(active.id, result)}
+                  onAssertionResult={(result) => handleAssertionResult(active.id, result)}
+                  onError={(message) => handleError(active.id, message)}
                 />
               </RNView>
             </RNView>

@@ -242,6 +242,7 @@ const ERROR_CODE_PATTERNS: Array<[RegExp, string]> = [
   // or was for another request): definitive, nothing was created.
   [/^quote expired\b/i, "quote_expired"],
   [/order_in_flight|already in flight/i, "order_in_flight"],
+  [/solver refused|exposure_cap|provider_at_capacity|insufficient_float/i, "provider_refused"],
   [/unmapped_provider_state/i, "unmapped_provider_state"],
   [/missing_capability/i, "missing_capability"],
   [/signer_incompatible/i, "signer_incompatible"],
@@ -251,7 +252,7 @@ const ERROR_CODE_PATTERNS: Array<[RegExp, string]> = [
   [/no executable option|no_route/i, "no_route"],
 ];
 
-function classifyErrorCode(message: string): string | null {
+export function classifyErrorCode(message: string): string | null {
   for (const [pattern, code] of ERROR_CODE_PATTERNS) {
     if (pattern.test(message)) return code;
   }

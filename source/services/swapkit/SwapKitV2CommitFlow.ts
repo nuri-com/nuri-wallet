@@ -29,6 +29,8 @@ import {
   abandonV2CommitIntent,
   persistV2CommitIntent,
   resolveV2CommitIntent,
+  recordV2AdoptionHandoff,
+  clearV2AdoptionHandoff,
 } from "./SwapKitV2OrderStore";
 import type { SwapKitV2LoopOptions } from "./SwapKitV2ActionService";
 
@@ -105,6 +107,48 @@ export type V2CommitSpec = {
     | Array<{ event: string; payload: Record<string, unknown> }>
     | null;
 };
+
+/** Waits between durable-adoption attempts, on top of the cache's own retries.
+ * SQLite busy is contention that clears in moments; this rides it out before
+ * the move is reported unresolved. */
+export const ADOPTION_RETRY_DELAYS_MS: readonly number[] = [250, 1_000, 3_000];
+
+/**
+ * Write the real order row in place of its intent. The order id is put in the
+ * adoption handoff (a separate store) BEFORE any retry wait, so a process that
+ * dies while SQLite is busy still adopts this order on its next launch.
+ */
+async function adoptCommittedOrder(
+  idempotencyKey: string,
+  orderId: string,
+  status: string,
+): Promise<void> {
+  try {
+    await resolveV2CommitIntent(idempotencyKey, orderId, status);
+    return;
+  } catch (first) {
+    // Recorded before any wait, and retried with every attempt until it lands.
+    const record = () =>
+      recordV2AdoptionHandoff({ idempotencyKey, orderId, status }).then(
+        () => true,
+        () => false,
+      );
+    let recorded = await record();
+    let last: unknown = first;
+    for (const delayMs of ADOPTION_RETRY_DELAYS_MS) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (!recorded) recorded = await record();
+      try {
+        await resolveV2CommitIntent(idempotencyKey, orderId, status);
+        if (recorded) await clearV2AdoptionHandoff(idempotencyKey).catch(() => {});
+        return;
+      } catch (error) {
+        last = error;
+      }
+    }
+    throw last;
+  }
+}
 
 /**
  * Commit an accepted option and hand the order to the durable tracker.
@@ -232,7 +276,18 @@ export async function commitAndTrackV2Order(
   }
 
   const orderId = asSwapKitV2OrderId(view.orderId);
-  await resolveV2CommitIntent(idempotencyKey, orderId, view.status);
+  try {
+    await adoptCommittedOrder(idempotencyKey, orderId, view.status);
+  } catch (error) {
+    // The server named a real order but this device could not record it. The
+    // order id is kept in the adoption handoff and the next launch (or
+    // foreground) adopts it under the same idempotency key, so nothing
+    // re-commits. Until then it is unresolved: every money surface refuses a
+    // fresh commit on this flag.
+    const unresolved = error instanceof Error ? error : new Error(String(error));
+    Object.assign(unresolved, { unresolved: true, orderId, idempotencyKey });
+    throw unresolved;
+  }
   spec.onOrderId?.(orderId);
 
   // Re-home the optimistic surfaces onto the real order id, then drop the

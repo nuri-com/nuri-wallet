@@ -12,8 +12,12 @@ import {
 import { getEthereumAddress } from "../../lib/secureKeyStorage";
 import {
   asSwapKitV2OrderId,
+  cancelSwapKitV2Order,
+  classifyErrorCode,
   commitSwapKitV2,
+  isSwapKitV2Terminal,
   quoteSwapKitV2,
+  SwapKitV2Error,
   type SwapKitV2Action,
   type SwapKitV2OrderView,
   type SwapKitV2QuoteOption,
@@ -24,6 +28,7 @@ import {
   abandonV2CommitIntent,
   persistV2CommitIntent,
   resolveV2CommitIntent,
+  SwapKitV2OrderStore,
 } from "./SwapKitV2OrderStore";
 import { getSwapKitV2RecoveryKey } from "./SwapKitV2RecoveryKey";
 
@@ -304,7 +309,39 @@ export async function createArkadeIntentsLightningSend(params: {
     };
   } catch (error) {
     releaseSwapLoop(orderId);
+    if (isProviderRefusal(error, view)) {
+      await retireRefusedLightningOrder(orderId, recoveryKey);
+    }
     throw error;
+  }
+}
+
+/** The solver said no to this order (thrown, or stated on its view). */
+function isProviderRefusal(error: unknown, view: SwapKitV2OrderView): boolean {
+  if (error instanceof SwapKitV2Error && error.code === "provider_refused") return true;
+  const failure = view.failure;
+  return [error instanceof Error ? error.message : String(error), failure?.code, failure?.message]
+    .filter((text): text is string => typeof text === "string" && text.length > 0)
+    .some((text) => text === "provider_refused" || classifyErrorCode(text) === "provider_refused");
+}
+
+/**
+ * A refused Lightning order was never funded here: its funding action is only
+ * returned to the caller, never run, and the refund material it holds is public
+ * key data, not a funding effect. Ask the server to cancel it (the server
+ * refuses an order that moved funds) and drop it from this device only when it
+ * confirms a terminal, non-completed state, so nothing resumes or reserves it.
+ */
+async function retireRefusedLightningOrder(orderId: string, recoveryKey: string): Promise<void> {
+  const cancelled = await cancelSwapKitV2Order(asSwapKitV2OrderId(orderId), {
+    recoveryKey,
+  }).catch((): null => null);
+  if (
+    cancelled &&
+    isSwapKitV2Terminal(cancelled) &&
+    String(cancelled.status).toUpperCase() !== "COMPLETED"
+  ) {
+    await SwapKitV2OrderStore.remove(orderId).catch(() => {});
   }
 }
 

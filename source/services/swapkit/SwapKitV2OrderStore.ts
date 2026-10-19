@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getCacheValue, setCacheValue } from "../balance/TransactionCacheService";
 import { EventBus } from "../events/AppEventBusService";
 
@@ -266,15 +267,132 @@ export async function resolveV2CommitIntent(
   const pending = SwapKitV2OrderStore.list().find(
     (row) => row.idempotencyKey === idempotencyKey && row.orderId.startsWith("ord_pending:"),
   );
-  if (pending) {
-    // Persist the replacement in ONE atomic step: write the real-id row FIRST
-    // (carrying the full flow/executorSpec), then drop the synthetic pending
-    // row. If the app dies between the two, the real order still carries its
-    // bounded executor spec — never a window where only a spec-less row exists
-    // and rediscovery would adopt the order as flow `other`.
-    await SwapKitV2OrderStore.upsert({ ...pending, orderId, status });
-    await SwapKitV2OrderStore.remove(pending.orderId);
+  if (!pending) {
+    // An earlier attempt already swapped the row in memory and only its write
+    // failed: a retry just writes it again.
+    const adopted = SwapKitV2OrderStore.list().find(
+      (row) => row.idempotencyKey === idempotencyKey && row.orderId === orderId,
+    );
+    if (adopted) {
+      await persist();
+      sessionIntentKeys.delete(idempotencyKey);
+    }
+    return;
   }
+  // Replace the synthetic row in memory and persist the complete list once.
+  // A single SQLite statement is both the transaction boundary and avoids the
+  // former upsert/remove pair racing other cache users. A failed write is NOT
+  // rolled back: the real order id is the better truth, a retry or the next
+  // write of any row persists it, and the caller records an adoption handoff
+  // so a relaunch adopts it too. Rolling back a snapshot would also erase other
+  // rows changed while this write waited.
+  memory.splice(memory.indexOf(pending), 1, {
+    ...pending,
+    orderId,
+    status,
+    updatedAt: Date.now(),
+  });
+  await persist();
+  sessionIntentKeys.delete(idempotencyKey);
+}
+
+// ── Adoption handoff ────────────────────────────────────────────────
+//
+// The commit reply named a real order but the order list could not be written
+// (SQLite busy past its retries). The order id must not be lost with the
+// process: it is kept in AsyncStorage, a store separate from that SQLite
+// database, until the list is written. The next launch adopts it into the
+// still-durable commit intent BEFORE unsigned intents are dropped, so the same
+// order resumes with its consent-bound executor spec and nothing re-commits.
+
+const HANDOFF_KEY = "swapkit_v2_adoption_handoffs_v1";
+
+type AdoptionHandoff = { idempotencyKey: string; orderId: string; status: string };
+
+/** The recorded handoffs, or null when the journal cannot be read: unknown is
+ * never treated as empty. */
+async function readHandoffs(): Promise<AdoptionHandoff[] | null> {
+  let raw: string | null;
+  try {
+    raw = await AsyncStorage.getItem(HANDOFF_KEY);
+  } catch {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw || "[]");
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter(
+      (row): row is AdoptionHandoff =>
+        typeof row?.idempotencyKey === "string" &&
+        typeof row?.orderId === "string" &&
+        typeof row?.status === "string",
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function writeHandoffs(rows: AdoptionHandoff[]): Promise<void> {
+  if (rows.length === 0) await AsyncStorage.removeItem(HANDOFF_KEY);
+  else await AsyncStorage.setItem(HANDOFF_KEY, JSON.stringify(rows));
+}
+
+// Every read-modify-write of the journal runs one at a time, or two records
+// (or a record and a clear) would overwrite each other.
+let handoffTail: Promise<unknown> = Promise.resolve();
+function withHandoffs<T>(operation: () => Promise<T>): Promise<T> {
+  const run = handoffTail.then(operation, operation);
+  handoffTail = run.catch(() => {});
+  return run;
+}
+
+async function requireHandoffs(): Promise<AdoptionHandoff[]> {
+  const rows = await readHandoffs();
+  if (!rows) throw new Error("adoption handoff journal unreadable");
+  return rows;
+}
+
+export function recordV2AdoptionHandoff(handoff: AdoptionHandoff): Promise<void> {
+  return withHandoffs(async () => {
+    const rows = await requireHandoffs();
+    await writeHandoffs([
+      ...rows.filter((row) => row.idempotencyKey !== handoff.idempotencyKey),
+      handoff,
+    ]);
+  });
+}
+
+export function clearV2AdoptionHandoff(idempotencyKey: string): Promise<void> {
+  return withHandoffs(async () => {
+    const rows = await requireHandoffs();
+    const next = rows.filter((row) => row.idempotencyKey !== idempotencyKey);
+    if (next.length !== rows.length) await writeHandoffs(next);
+  });
+}
+
+/**
+ * Adopt every recorded handoff whose list write never landed. A handoff is
+ * cleared only once its real order row is positively written; one with nothing
+ * to adopt on this device (another account) is kept. Returns the keys still
+ * handed off, or null when the journal cannot be read.
+ */
+export async function adoptV2AdoptionHandoffs(): Promise<Set<string> | null> {
+  const rows = await readHandoffs();
+  if (!rows) return null;
+  const remaining = new Set<string>();
+  for (const handoff of rows) {
+    try {
+      await resolveV2CommitIntent(handoff.idempotencyKey, handoff.orderId, handoff.status);
+      if (SwapKitV2OrderStore.get(handoff.orderId)?.idempotencyKey === handoff.idempotencyKey) {
+        await clearV2AdoptionHandoff(handoff.idempotencyKey);
+        continue;
+      }
+    } catch {
+      // Still not writable: keep the handoff for the next pass.
+    }
+    remaining.add(handoff.idempotencyKey);
+  }
+  return remaining;
 }
 
 /** Commit intents that never received their reply (status COMMITTING). */
@@ -304,8 +422,14 @@ export async function abandonV2CommitIntent(idempotencyKey: string): Promise<voi
  */
 export async function discardUnsignedV2CommitIntents(): Promise<void> {
   await SwapKitV2OrderStore.hydrate();
+  // An intent whose reply named a real order is not unsigned: adopt it first.
+  // When the journal cannot be read, no intent can be proven unsigned, so
+  // nothing is dropped this pass.
+  const handedOff = await adoptV2AdoptionHandoffs();
+  if (!handedOff) return;
   for (const intent of listUnresolvedV2CommitIntents()) {
     if (sessionIntentKeys.has(intent.idempotencyKey)) continue;
+    if (handedOff.has(intent.idempotencyKey)) continue;
     await SwapKitV2OrderStore.remove(intent.orderId);
     // Its optimistic pending row (commitAndTrackV2Order's provisional id) was
     // persisted too, and the pending-transfer store keeps swap rows forever —

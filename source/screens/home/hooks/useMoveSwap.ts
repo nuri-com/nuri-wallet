@@ -220,16 +220,21 @@ export function useMoveSwap(options: {
       }
     } catch (error) {
       const postPayment = Boolean((error as { postPayment?: boolean })?.postPayment);
-      console.warn(`[MoveSwap] swap failed engine=${accepted.engine} postPayment=${postPayment}`);
+      // Same flag as isUnresolvedCommitOutcome (SwapKitV2CommitFlow).
+      const unresolved = Boolean((error as { unresolved?: boolean })?.unresolved);
+      console.warn(
+        `[MoveSwap] swap failed engine=${accepted.engine} postPayment=${postPayment} unresolved=${unresolved}`,
+      );
       // Already handed off: the order exists and the tracker owns it. Reporting
       // this on a sheet the user has left would be a second screen for a move
       // that is still in flight — the pill says what happened to it.
       if (handedOff) return;
-      if (postPayment) {
-        // The funds already left: the durable order row and its recovery own
-        // this now. Offering another price here would pay a second route for a
-        // move that is already in flight. The Bitcoin hold stays for the same
-        // reason — those sats are gone either way.
+      if (postPayment || unresolved) {
+        // The funds already left (postPayment), or the server named an order
+        // this device could not record yet (unresolved), which relaunch recovery
+        // adopts and funds. Either way the durable row and its recovery own
+        // this now: another price here could pay a second route. The Bitcoin
+        // hold stays for the same reason.
         failedQuoteIdRef.current = null;
         reset();
         onExecuted({ quote: accepted, execution: null });

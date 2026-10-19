@@ -10,7 +10,10 @@
 // transaction history is what settles them — a send is done the moment it shows
 // up there. Legacy on-chain sends clear on mempool confirmation instead.
 
-import { getArkadeHistoryTxidSet } from "../arkade/ArkadeTransactionHistoryService";
+import {
+  getArkadeHistoryTxidSet,
+  isArkadeVirtualTxKnown,
+} from "../arkade/ArkadeTransactionHistoryService";
 import { blockchainService } from "./BlockchainService";
 import { PendingBitcoinSendsStore } from "./PendingBitcoinSendsStore";
 import { EventBus } from "../events/AppEventBusService";
@@ -19,12 +22,11 @@ import { createForegroundPoller, type ForegroundPoller } from "../app/Foreground
 import { getNetworkStatus } from "../app/NetworkStatusService";
 
 const RECONCILE_INTERVAL_MS = 10_000;
-
 let poller: ForegroundPoller | null = null;
 let unsubscribe: (() => void) | null = null;
 let inFlight = false;
 
-async function reconcile(): Promise<void> {
+export async function reconcilePendingSendsOnce(): Promise<void> {
   if (inFlight) return;
   inFlight = true;
   try {
@@ -35,6 +37,20 @@ async function reconcile(): Promise<void> {
     // made, still in flight, so clearing on mere presence would take the
     // "Sending" row away in the same breath it appeared.
     const arkadeTxids = await getArkadeHistoryTxidSet({ settledOnly: true });
+    const markers = list.filter((entry) => entry.reconciliationRequired === true);
+    // A signed send that the wallet history or the Ark indexer knows was
+    // submitted: it becomes an ordinary pending row. Nothing else resolves a
+    // marker: not knowing a txid is no proof it was never submitted (an older
+    // submit can be stranded unfinalized), so the uncertainty stays.
+    if (markers.length > 0) {
+      const known = await getArkadeHistoryTxidSet();
+      for (const marker of markers) {
+        const inHistory = known.has(String(marker.txid || "").toLowerCase());
+        if (inHistory || (await isArkadeVirtualTxKnown(marker.txid)) === true) {
+          await PendingBitcoinSendsStore.markKnown(marker.txid).catch(() => {});
+        }
+      }
+    }
     await Promise.all(
       list.map(async (entry) => {
         const txid = String(entry?.txid || "").trim();
@@ -45,7 +61,9 @@ async function reconcile(): Promise<void> {
           } catch {}
           return;
         }
-        // A local placeholder carries no real txid — only its TTL clears it.
+        // A marker is resolved above, never by TTL or mempool.
+        if (entry.reconciliationRequired) return;
+        // A local placeholder carries no real txid: only its TTL clears it.
         if (entry?.local || !isBtcTxid(txid)) return;
         try {
           const status = await blockchainService.getTransactionStatus(txid);
@@ -63,17 +81,17 @@ async function reconcile(): Promise<void> {
 export function startPendingSendsReconciler(): void {
   if (poller) return;
   unsubscribe = EventBus.on("bitcoin:pendingSendsChanged", () => {
-    void reconcile();
+    void reconcilePendingSendsOnce();
   });
   poller = createForegroundPoller({
     intervalMs: RECONCILE_INTERVAL_MS,
     canTick: () => !getNetworkStatus().isWaitingForNetwork,
     tick: () => {
-      void reconcile();
+      void reconcilePendingSendsOnce();
     },
   });
   poller.start();
-  void reconcile();
+  void reconcilePendingSendsOnce();
 }
 
 export function stopPendingSendsReconciler(): void {

@@ -5,6 +5,8 @@ export const nl = {
       title: "Bitcoinbetaling ontvangen",
       unlockButton: "Ontgrendelen met passkey",
       laterButton: "Later claimen",
+      renewalTitle: "Houd je Bitcoin veilig",
+      renewalBody: "Bevestig met je passkey zodat je de toegang tot je saldo niet verliest.",
     },
     DesktopGate: {
       subtitle: "Scan de QR-code om Nuri op je telefoon te openen.",
@@ -135,6 +137,8 @@ export const nl = {
       errorAmountGreaterThanZero: "Voer een bedrag groter dan nul in.",
       errorExceedsBalance: "Bedrag is hoger dan het beschikbare saldo na kosten.",
       errorSendFailed: "Er ging iets mis. Probeer het opnieuw.",
+      errorSendPartnerFull:
+        "De verzendpartner is tijdelijk overbelast. Je bitcoins zijn veilig. Probeer het later opnieuw.",
       errorLightningLockupUnavailable: "Lightning niet beschikbaar. Er is niets verstuurd.",
       errorOnchainTooFreshHours: "Beschikbaar over ongeveer %{hours} u.",
       errorOnchainTooFreshMinutes: "Beschikbaar over ongeveer %{minutes} min.",

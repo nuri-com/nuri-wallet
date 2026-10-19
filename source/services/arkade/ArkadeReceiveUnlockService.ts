@@ -16,6 +16,7 @@ import { getArkadeReceiveOwner } from "./internal/identity";
 import { emitTrace, logArkadeWalletSignTrace } from "./internal/logging";
 import { recoverArkadeRecoverableVtxosManual } from "./internal/receiveAutoRecover";
 import { resumeArkadeLightningClaimsManual } from "./internal/receiveAutoClaim";
+import { renewArkadeExpiringVtxosManual } from "./internal/vtxoRenewal";
 import { setPendingLnurlSwapsFromReceiveRows } from "./internal/pendingLnurlSwaps";
 import {
   filterArkadeBoardingRowsForCurrentWallet,
@@ -49,7 +50,8 @@ export type ArkadeReceiveUnlockStatus = "idle" | "pending" | "actionable" | "run
 export type ArkadeReceiveUnlockItemKind =
   | "ln_receive_claim"
   | "boarding_sweep"
-  | "recoverable_wallet_update";
+  | "recoverable_wallet_update"
+  | "vtxo_renewal";
 
 export type ArkadeReceiveUnlockItem = {
   kind: ArkadeReceiveUnlockItemKind;
@@ -76,6 +78,9 @@ export type ArkadeReceiveUnlockState = {
   boardingWalletUnavailable: boolean;
   recoverableSats: number;
   recoverableMinSats: number;
+  /** VTXOs whose batch expires within the renewal window (#1635). */
+  vtxoRenewalDueCount: number;
+  vtxoRenewalDueSats: number;
   arkadeWalletPendingVtxoCount: number;
   arkadeWalletPendingVtxoSats: number;
   preconfirmedPendingSats: number;
@@ -121,6 +126,8 @@ const IDLE_STATE: ArkadeReceiveUnlockState = {
   boardingWalletUnavailable: false,
   recoverableSats: 0,
   recoverableMinSats: ARKADE_RECOVERABLE_UNLOCK_MIN_SATS,
+  vtxoRenewalDueCount: 0,
+  vtxoRenewalDueSats: 0,
   arkadeWalletPendingVtxoCount: 0,
   arkadeWalletPendingVtxoSats: 0,
   preconfirmedPendingSats: 0,
@@ -214,6 +221,8 @@ function formatUnlockDetail(
     `boarding_wallet_unavailable=${state.boardingWalletUnavailable ? 1 : 0}`,
     `recoverable_sats=${state.recoverableSats}`,
     `recoverable_min_sats=${state.recoverableMinSats}`,
+    `vtxo_renewal_due_count=${state.vtxoRenewalDueCount}`,
+    `vtxo_renewal_due_sats=${state.vtxoRenewalDueSats}`,
     `arkade_wallet_pending_vtxo_count=${state.arkadeWalletPendingVtxoCount}`,
     `arkade_wallet_pending_vtxo_sats=${state.arkadeWalletPendingVtxoSats}`,
     `preconfirmed_pending_sats=${state.preconfirmedPendingSats}`,
@@ -293,6 +302,8 @@ function buildUnlockState(args: {
   );
   const boardingPendingCount = Math.max(0, args.boardingRows.length - readyBoardingRows.length);
   const recoverableSats = parseSats(args.summary?.balanceRecoverableSats);
+  const vtxoRenewalDueCount = parseSats(args.summary?.vtxoRenewalDueCount);
+  const vtxoRenewalDueSats = parseSats(args.summary?.vtxoRenewalDueSats);
   const arkadeWalletPendingVtxoCount = Math.max(
     0,
     Math.trunc(Number(args.summary?.debugPendingVtxoCount || 0) || 0),
@@ -321,6 +332,13 @@ function buildUnlockState(args: {
       sats: recoverableSats,
     });
   }
+  if (vtxoRenewalDueCount > 0 && vtxoRenewalDueSats >= ARKADE_RECOVERABLE_UNLOCK_MIN_SATS) {
+    actionableItems.push({
+      kind: "vtxo_renewal",
+      count: vtxoRenewalDueCount,
+      sats: vtxoRenewalDueSats,
+    });
+  }
   const actionableCount = actionableItems.reduce((sum, item) => sum + item.count, 0);
   const actionableSats = actionableItems.reduce((sum, item) => sum + item.sats, 0);
   const hasPending =
@@ -345,6 +363,8 @@ function buildUnlockState(args: {
     boardingWalletUnavailable: args.boardingWalletUnavailable === true,
     recoverableSats,
     recoverableMinSats: ARKADE_RECOVERABLE_UNLOCK_MIN_SATS,
+    vtxoRenewalDueCount,
+    vtxoRenewalDueSats,
     arkadeWalletPendingVtxoCount,
     arkadeWalletPendingVtxoSats,
     preconfirmedPendingSats,
@@ -650,12 +670,17 @@ export async function runArkadeReceiveUnlock(
     // which is the only case the single-step selection ever ran it in.
     const plannedKinds: ArkadeReceiveUnlockItemKind[] = revalidated.actionableItems
       .map((item) => item.kind)
-      .filter((kind) => kind !== "recoverable_wallet_update");
-    if (
-      plannedKinds.length === 0 &&
-      revalidated.actionableItems.some((item) => item.kind === "recoverable_wallet_update")
-    ) {
-      plannedKinds.push("recoverable_wallet_update");
+      .filter((kind) => kind !== "recoverable_wallet_update" && kind !== "vtxo_renewal");
+    // A VTXO renewal is a whole settlement round too, so it follows the same
+    // rule: it runs on its own tap, after the receive work and any recoverable
+    // update have cleared.
+    for (const settlementKind of ["recoverable_wallet_update", "vtxo_renewal"] as const) {
+      if (
+        plannedKinds.length === 0 &&
+        revalidated.actionableItems.some((item) => item.kind === settlementKind)
+      ) {
+        plannedKinds.push(settlementKind);
+      }
     }
     // Snapshot the rows BEFORE the first step: the Lightning claim emits
     // `arkade:receiveUpdated`, the app-level monitor answers it with a refresh,
@@ -696,6 +721,10 @@ export async function runArkadeReceiveUnlock(
           await runStep(logs, errors, "recoverable_wallet_update", () =>
             recoverArkadeRecoverableVtxosManual(),
           ),
+        );
+      } else if (kind === "vtxo_renewal") {
+        stepResults.push(
+          await runStep(logs, errors, "vtxo_renewal", () => renewArkadeExpiringVtxosManual()),
         );
       } else if (kind === "boarding_sweep") {
         if (sweepReadyRows.length === 0) {

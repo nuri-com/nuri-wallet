@@ -18,6 +18,7 @@ import {
   type SwapKitV2Move,
 } from "../services/swapkit/SwapKitV2MoveStatus";
 import { resumeSwapKitV2Order } from "../services/swapkit/SwapKitV2PendingTracker";
+import { movePillSignature, v2MoveLabel } from "./v2MoveLabel";
 
 /**
  * V2MoveStatusBridge — the app-level status pill for SwapKit v2 moves.
@@ -69,7 +70,7 @@ export default function V2MoveStatusBridge(): React.ReactElement | null {
       shownRef.current = "";
       return;
     }
-    const signature = `${visible.orderId}:${visible.phase}:${othersRunning}`;
+    const signature = movePillSignature(visible, othersRunning);
     const offer = () => {
       // A signing/confirmation surface owns the screen while it is open.
       if (hasOpenSurface() || shownRef.current === signature) return;
@@ -240,7 +241,7 @@ function MovePill({
               Executing… / Completed. */}
           <RNView style={{ minWidth: 132 }}>
             <Text size="md" muted>
-              {labelFor(move)}
+              {v2MoveLabel(move)}
             </Text>
           </RNView>
           {onPress ? (
@@ -260,31 +261,10 @@ function MovePill({
           icon={icon}
           variant="soft"
           accent={accent}
-          accessibilityLabel={labelFor(move)}
+          accessibilityLabel={v2MoveLabel(move)}
           onPress={() => setCompact(false)}
         />
       </Animated.View>
     </RNView>
   );
-}
-
-function labelFor(move: SwapKitV2Move): string {
-  switch (move.phase) {
-    case "preparing":
-      return t("swap.move.preparing");
-    case "approving":
-      return t("swap.move.approving");
-    case "executing":
-      return t("swap.move.executing");
-    case "completed":
-      return t("swap.move.completed");
-    case "failed":
-      return t("swap.move.failed");
-    case "refunded":
-      return t("swap.move.refunded");
-    case "action_required":
-      return t("swap.move.actionRequired");
-    default:
-      return t("swap.move.processing");
-  }
 }

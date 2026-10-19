@@ -2790,6 +2790,11 @@ export class ArkadeRemoteIdentity implements Identity {
         });
       }
 
+      if (hasOutgoingSpendApproval) {
+        const onSigned = this.spendApproval.takeOnSigned();
+        if (onSigned) await onSigned(txCopy.id);
+      }
+
       return txCopy;
     });
   }

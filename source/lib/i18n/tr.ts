@@ -4,6 +4,8 @@ export const tr = {
       title: "Bitcoin ödemesi alındı",
       unlockButton: "Passkey ile aç",
       laterButton: "Sonra al",
+      renewalTitle: "Bitcoin'ini güvende tut",
+      renewalBody: "Bakiyene erişimini kaybetmemek için passkey'inle onayla.",
     },
     DesktopGate: {
       subtitle: "Nuri'yi telefonunda açmak için QR kodunu tara.",
@@ -134,6 +136,8 @@ export const tr = {
       errorAmountGreaterThanZero: "Sıfırdan büyük bir tutar gir.",
       errorExceedsBalance: "Tutar, ücretlerden sonraki kullanılabilir bakiyeyi aşıyor.",
       errorSendFailed: "Bir şeyler ters gitti. Lütfen tekrar dene.",
+      errorSendPartnerFull:
+        "Gönderim ortağı geçici olarak dolu. Bitcoinleriniz güvende. Lütfen daha sonra tekrar deneyin.",
       errorLightningLockupUnavailable: "Lightning kullanılamıyor. Hiçbir şey gönderilmedi.",
       errorOnchainTooFreshHours: "Yaklaşık %{hours} saat içinde kullanılabilir.",
       errorOnchainTooFreshMinutes: "Yaklaşık %{minutes} dk içinde kullanılabilir.",

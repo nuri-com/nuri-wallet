@@ -48,6 +48,9 @@ export type SwapKitV2Move = {
   status: string;
   /** Why the move needs the user, when it does. */
   blockedReason?: string | null;
+  /** Why a failed move failed, in the app's own localized words. Only the app
+   * writes it (never server text), so the pill can show it as is. */
+  failureReason?: string | null;
   /** A plain wallet↔card transfer rather than a swap order: its id is not an
    * order id, so there is no order detail to open for it. */
   kind?: "transfer";
@@ -143,7 +146,8 @@ function write(orderId: string, patch: Partial<SwapKitV2Move>): void {
     existing &&
     existing.phase === next.phase &&
     existing.status === next.status &&
-    existing.blockedReason === next.blockedReason
+    existing.blockedReason === next.blockedReason &&
+    existing.failureReason === next.failureReason
   ) {
     // ...but it can still carry details the first write did not have. The
     // sheet's handoff notes the move before the commit flow notes it again
@@ -235,6 +239,8 @@ export function noteV2MoveStatus(args: {
   from?: string;
   to?: string;
   blockedReason?: string | null;
+  /** App-localized reason for a failed outcome; ignored for anything else. */
+  failureReason?: string | null;
 }): void {
   const status = String(args.status || "").toUpperCase();
   const terminal = TERMINAL_PHASES[status];
@@ -246,7 +252,13 @@ export function noteV2MoveStatus(args: {
     ...(args.from ? { from: args.from } : {}),
     ...(args.to ? { to: args.to } : {}),
     ...(terminal
-      ? { phase: terminal, blockedReason: null }
+      ? {
+          phase: terminal,
+          blockedReason: null,
+          ...(terminal === "failed" && args.failureReason
+            ? { failureReason: args.failureReason }
+            : {}),
+        }
       : args.blockedReason
         ? { phase: "action_required", blockedReason: args.blockedReason }
         : { phase: stillPreparing ? "preparing" : "processing", blockedReason: null }),

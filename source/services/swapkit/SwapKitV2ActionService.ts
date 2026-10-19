@@ -852,13 +852,14 @@ export function isRefusedBeforeBroadcast(error: unknown): boolean {
   );
 }
 
-function isTerminalLoopFailure(error: unknown): boolean {
+export function isTerminalLoopFailure(error: unknown): boolean {
   if (isRefusedBeforeBroadcast(error)) return true;
   if (!(error instanceof SwapKitV2Error)) return false;
   if (
     error.code === "unsupported_action_kind" ||
     error.code === "unknown_order" ||
-    error.code === "action_reconciliation_required"
+    error.code === "action_reconciliation_required" ||
+    error.code === "provider_refused"
   ) {
     return true;
   }

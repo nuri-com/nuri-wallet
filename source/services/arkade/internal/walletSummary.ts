@@ -50,6 +50,7 @@ import { inspectArkadeRecoveryCsvStatus } from "./recovery";
 import type { ArkadeDebugBalance, ArkadeRecoveryCsvStatus } from "./types";
 import { isZeroArkadeWalletSummary, truncateForLog, withTimeout } from "./utils";
 import { formatVtxoDebugLine } from "./vtxoFormat";
+import { selectArkadeVtxoRenewalCandidates } from "./vtxoRenewalPolicy";
 import { dropUnconfirmedVtxos, type VtxoConfirmingIndexer } from "./vtxoReconciliation";
 import { getCurrentArkadeWalletCacheKey, getOrCreateWallet } from "./walletCache";
 import { readBoardingUtxosShared, resetBoardingUtxoCache } from "./boardingUtxoCache";
@@ -987,6 +988,7 @@ export async function loadArkadeWalletSummary(
       };
     });
 
+  const renewalDue = selectArkadeVtxoRenewalCandidates(Array.isArray(vtxos) ? vtxos : []);
   const out: ArkadeWalletSummary = {
     arkAddress: String(arkAddress || ""),
     boardingAddress: String(boardingAddress || ""),
@@ -999,6 +1001,8 @@ export async function loadArkadeWalletSummary(
     balanceTooFreshSats: String(balance?.tooFresh ?? 0),
     balancePreconfirmedSats: String(balance?.preconfirmed ?? 0),
     balanceRecoverableSats: String(balance?.recoverable ?? 0),
+    vtxoRenewalDueCount: renewalDue.count,
+    vtxoRenewalDueSats: renewalDue.sats,
     balanceAvailableLabel: "SDK available (settled + preconfirmed)",
     balanceSettledLabel: "Settled final",
     balancePreconfirmedLabel: "Preconfirmed finalizing",

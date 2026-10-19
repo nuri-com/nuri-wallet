@@ -5,6 +5,7 @@ import { StyleSheet, View as RNView } from "react-native";
 import { Button, ButtonText, Text, View } from "@ds";
 import BrandDisplayTitle from "../../../components/BrandDisplayTitle";
 import GotPaidIllustration from "../../../assets/illustrations/gotpaid.svg";
+import WalletLockIllustration from "../../../assets/illustrations/wallet-lock.svg";
 import FullscreenLayer from "../../../components/FullscreenLayer";
 import PasskeyWebAuthnPrfView, {
   type PasskeyWebAuthnPrfAssertionResult,
@@ -49,6 +50,11 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
   // boarding sweep) runs its ceremony in the parent document and needs the focus.
   const usesReceiveClaimPasskey =
     state.actionableItems.length === 1 && state.actionableItems[0]?.kind === "ln_receive_claim";
+  // A renewal is not a payment: it gets its own title and says what it does.
+  const renewal =
+    state.actionableItems.length === 1 && state.actionableItems[0]?.kind === "vtxo_renewal"
+      ? state.actionableItems[0]
+      : null;
   // Pre-fetched auth so the "Passkey Unlock" button itself can run the WebView
   // passkey ceremony on one tap (no second confirm screen). Null → fall back to
   // the plain button (which prompts via the overlay).
@@ -184,16 +190,34 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
   return (
     <FullscreenLayer visible={visible} onRequestClose={onClose}>
       <View direction="column" align="center" gap="md" paddingTop="lg">
-        <BrandDisplayTitle>{t("screen.PaymentReceivedModal.title")}</BrandDisplayTitle>
-        <Text size="xl" emphasis align="center">
-          {`BTC ${formatSats(state.actionableSats)} sats`}
-        </Text>
+        <BrandDisplayTitle>
+          {t(
+            renewal
+              ? "screen.PaymentReceivedModal.renewalTitle"
+              : "screen.PaymentReceivedModal.title",
+          )}
+        </BrandDisplayTitle>
+        {/* A renewal is not a payment: no amount, just what the tap does. */}
+        {renewal ? (
+          <Text size="md" muted align="center">
+            {t("screen.PaymentReceivedModal.renewalBody")}
+          </Text>
+        ) : (
+          <Text size="xl" emphasis align="center">
+            {`BTC ${formatSats(state.actionableSats)} sats`}
+          </Text>
+        )}
       </View>
 
       <View direction="column" align="center" justify="center" fill="grow">
-        <PopRiffleView active={visible}>
-          <GotPaidIllustration width={241} height={213} />
-        </PopRiffleView>
+        {/* Renewal shows the wallet lock exactly as the lock screen does. */}
+        {renewal ? (
+          <WalletLockIllustration width={240} height={240} />
+        ) : (
+          <PopRiffleView active={visible}>
+            <GotPaidIllustration width={241} height={213} />
+          </PopRiffleView>
+        )}
       </View>
 
       <View direction="column" align="stretch" gap="sm">

@@ -4,6 +4,8 @@ export const uk = {
       title: "Bitcoin-платіж отримано",
       unlockButton: "Розблокувати passkey",
       laterButton: "Забрати пізніше",
+      renewalTitle: "Збережіть свій Bitcoin у безпеці",
+      renewalBody: "Підтвердьте за допомогою passkey, щоб не втратити доступ до балансу.",
     },
     DesktopGate: {
       subtitle: "Відскануй QR-код, щоб відкрити Nuri на телефоні.",
@@ -133,6 +135,8 @@ export const uk = {
       errorAmountGreaterThanZero: "Введи суму, більшу за нуль.",
       errorExceedsBalance: "Сума перевищує доступний баланс після комісій.",
       errorSendFailed: "Щось пішло не так. Спробуй ще раз.",
+      errorSendPartnerFull:
+        "Партнер із відправлення тимчасово перевантажений. Ваші біткоїни в безпеці. Будь ласка, спробуйте пізніше.",
       errorLightningLockupUnavailable: "Lightning недоступний. Нічого не надіслано.",
       errorOnchainTooFreshHours: "Буде доступно приблизно через %{hours} год.",
       errorOnchainTooFreshMinutes: "Буде доступно приблизно через %{minutes} хв.",

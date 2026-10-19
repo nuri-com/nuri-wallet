@@ -16,7 +16,13 @@ export type BitcoinSendTarget =
   | { kind: "bolt11"; invoice: string }
   | { kind: "lnurl"; lnurl: string; amountSats: number }
   | { kind: "bitcoin_onchain"; address: string; amountSats: number }
-  | { kind: "ark_send"; address: string; amountSats: number };
+  | {
+      kind: "ark_send";
+      address: string;
+      amountSats: number;
+      /** Runs once the send is signed, before it is submitted (see sendArkadeToArk). */
+      onSigned?: (txid: string) => void | Promise<void>;
+    };
 
 export type BitcoinSendResult = {
   kind: BitcoinSendTarget["kind"];

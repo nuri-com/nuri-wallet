@@ -4,6 +4,8 @@ export const en = {
       title: "Bitcoin Payment Received",
       unlockButton: "Passkey Unlock",
       laterButton: "Claim later",
+      renewalTitle: "Keep your Bitcoin safe",
+      renewalBody: "Confirm with your passkey so you don't lose access to your balance.",
     },
     DesktopGate: {
       subtitle: "Scan the QR code to open Nuri on your phone.",
@@ -129,6 +131,8 @@ export const en = {
       errorAmountGreaterThanZero: "Enter an amount greater than zero.",
       errorExceedsBalance: "Amount exceeds available balance after fees.",
       errorSendFailed: "Something went wrong. Please try again.",
+      errorSendPartnerFull:
+        "Send partner is temporarily full. Your bitcoin is safe. Please try again later.",
       errorLightningLockupUnavailable: "Lightning unavailable. Nothing was sent.",
       errorOnchainTooFreshHours: "Available in about %{hours}h.",
       errorOnchainTooFreshMinutes: "Available in about %{minutes} min.",

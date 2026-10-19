@@ -447,6 +447,9 @@ export async function sendArkadeToArk(params: {
    * cancelled approval never reaches it, so a caller recording "may have sent"
    * here is never stranded by a refusal that moved nothing. */
   onBeforeBroadcast?: () => void | Promise<void>;
+  /** Fires once the send's transaction is signed (after the passkey), before
+   * the SDK submits it. See ArmSpendApprovalSummary.onSigned. */
+  onSigned?: (txid: string) => void | Promise<void>;
 }): Promise<string> {
   const address = String(params.address || "").trim();
   const amountSats = Number(params.amountSats);
@@ -524,6 +527,7 @@ export async function sendArkadeToArk(params: {
           source: "arkade",
           approvalScope: "direct_send_session",
           swapIntentId,
+          ...(params.onSigned ? { onSigned: params.onSigned } : {}),
         },
         async () => {
           await params.onBeforeBroadcast?.();

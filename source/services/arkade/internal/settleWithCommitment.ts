@@ -11,17 +11,20 @@ import { clearPendingBatchCommitmentTx, setPendingBatchCommitmentTx } from "./ba
 
 type SettleEvent = { type?: unknown; unsignedCommitmentTx?: unknown };
 
-type SettleableWallet = {
-  settle: (params?: undefined, eventCallback?: (event: SettleEvent) => void) => Promise<unknown>;
+type SettleableWallet<P> = {
+  settle: (params?: P, eventCallback?: (event: SettleEvent) => void) => Promise<unknown>;
 };
 
 /**
- * Run `wallet.settle`, parking the batch commitment for the signer session and
+ * Run `wallet.settle` (all coins, or the explicit `params`), parking the batch commitment for the signer session and
  * clearing it afterwards — on success and on failure alike.
  */
-export async function settleWithBatchCommitment(wallet: SettleableWallet): Promise<unknown> {
+export async function settleWithBatchCommitment<P = undefined>(
+  wallet: SettleableWallet<P>,
+  params?: P,
+): Promise<unknown> {
   try {
-    return await wallet.settle(undefined, (event) => {
+    return await wallet.settle(params, (event) => {
       if (event?.type === SettlementEventType.TreeSigningStarted) {
         setPendingBatchCommitmentTx(String(event.unsignedCommitmentTx || ""));
       }

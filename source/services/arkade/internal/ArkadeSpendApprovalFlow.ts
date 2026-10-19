@@ -80,6 +80,11 @@ export type ArmSpendApprovalSummary = {
   paymentHash?: string;
   psbtB64?: string;
   swapIntentId?: string;
+  /** Runs once, after the first transaction signed under this approval and
+   * before it is returned to the SDK for submission: the real irreversible
+   * boundary. Gets the signed tx id. A throw here stops the send before
+   * anything is submitted. */
+  onSigned?: (txid: string) => void | Promise<void>;
 };
 
 function shortRef(value: string, head = 8, tail = 4): string {
@@ -198,12 +203,25 @@ export function findPsbtOutputForAddress(
 
 export class ArkadeSpendApprovalFlow {
   private pendingSpendApproval: PendingSpendApproval | null = null;
+  /** The armed approval's onSigned, until it has run once. */
+  private onSigned: {
+    approvalId: number;
+    run: NonNullable<ArmSpendApprovalSummary["onSigned"]>;
+  } | null = null;
   private nextSpendApprovalId = 1;
 
   constructor(private readonly deps: SpendApprovalFlowDeps) {}
 
   hasActive(): boolean {
     return this.pendingSpendApproval !== null;
+  }
+
+  /** Hand out the active approval's onSigned exactly once. */
+  takeOnSigned(): NonNullable<ArmSpendApprovalSummary["onSigned"]> | null {
+    const hook = this.onSigned;
+    if (!hook || hook.approvalId !== this.pendingSpendApproval?.id) return null;
+    this.onSigned = null;
+    return hook.run;
   }
 
   getPendingForHttp(): { state: string | null; approvalScope: ArkadeSpendApprovalScope } | null {
@@ -255,6 +273,7 @@ export class ArkadeSpendApprovalFlow {
       approvalScope,
       psbtB64: summary.psbtB64 || null,
     };
+    this.onSigned = summary.onSigned ? { approvalId: id, run: summary.onSigned } : null;
     console.log(
       `🔐 [${shortTime()} ArkadeRemoteIdentity.spendApproval] action=arm id=${id} kind=${this.pendingSpendApproval.summary.kind} title=${this.pendingSpendApproval.summary.title} scope=${approvalScope}`,
     );

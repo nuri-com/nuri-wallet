@@ -28,6 +28,7 @@ export async function withOutgoingBrowserApproval<T>(
     paymentHash?: string;
     psbtB64?: string;
     swapIntentId?: string;
+    onSigned?: (txid: string) => void | Promise<void>;
   },
   work: () => Promise<T>,
   traceContext?: {

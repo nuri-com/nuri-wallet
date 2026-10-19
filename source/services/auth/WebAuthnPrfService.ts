@@ -50,9 +50,10 @@ type RequestVariant = "create" | "prf" | "assertion";
 
 type PendingRequest = {
   variant: RequestVariant;
+  payload: WebAuthnPrfRequestPayload;
   resolve: (value: AnyNativeReturn) => void;
   reject: (reason: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer?: ReturnType<typeof setTimeout>;
 };
 
 /** Hard ceiling on a single ceremony. The in-WebView WebAuthn call has its own
@@ -84,6 +85,8 @@ export type WebAuthnPrfRequestPayload = {
 };
 
 const pendingRequests = new Map<string, PendingRequest>();
+const requestQueue: string[] = [];
+let activeRequestId: string | null = null;
 
 let requestCounter = 0;
 function nextRequestId(): string {
@@ -161,11 +164,13 @@ export function resolvePrfRequest(
   const pending = pendingRequests.get(id);
   if (!pending) return;
   pendingRequests.delete(id);
-  clearTimeout(pending.timer);
+  if (pending.timer) clearTimeout(pending.timer);
   try {
     pending.resolve(mapResult(pending.variant, result));
   } catch (error) {
     pending.reject(error instanceof Error ? error : new Error(String(error)));
+  } finally {
+    finishActiveRequest(id);
   }
 }
 
@@ -174,8 +179,9 @@ export function rejectPrfRequest(id: string, message: string): void {
   const pending = pendingRequests.get(id);
   if (!pending) return;
   pendingRequests.delete(id);
-  clearTimeout(pending.timer);
+  if (pending.timer) clearTimeout(pending.timer);
   pending.reject(new Error(message || "webauthn_prf_request_failed"));
+  finishActiveRequest(id);
 }
 
 // ---- Internals ----
@@ -183,6 +189,50 @@ export function rejectPrfRequest(id: string, message: string): void {
 function normalizeCredId(value?: string | null): string | undefined {
   const trimmed = typeof value === "string" ? value.trim() : "";
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function finishActiveRequest(id: string): void {
+  if (activeRequestId !== id) return;
+  activeRequestId = null;
+  startNextRequest();
+}
+
+function startNextRequest(): void {
+  if (activeRequestId) return;
+
+  while (requestQueue.length > 0) {
+    const id = requestQueue.shift();
+    if (!id) return;
+    const pending = pendingRequests.get(id);
+    if (!pending) continue;
+
+    activeRequestId = id;
+    pending.timer = setTimeout(() => {
+      const stale = pendingRequests.get(id);
+      if (!stale) return;
+      pendingRequests.delete(id);
+      try {
+        EventBus.emit("webauthn:prfCancel", { id });
+      } catch {}
+      stale.reject(new Error("webauthn_prf_timeout"));
+      finishActiveRequest(id);
+    }, REQUEST_TIMEOUT_MS);
+
+    try {
+      log(
+        "requestPrf",
+        `id=${id} variant=${pending.variant} mode=${pending.payload.mode} rp=${pending.payload.rpId}`,
+      );
+      EventBus.emit("webauthn:prfRequest", pending.payload);
+    } catch (error) {
+      if (pending.timer) clearTimeout(pending.timer);
+      pendingRequests.delete(id);
+      pending.reject(error instanceof Error ? error : new Error(String(error)));
+      activeRequestId = null;
+      continue;
+    }
+    return;
+  }
 }
 
 function requestPrf<T extends AnyNativeReturn>(opts: {
@@ -201,21 +251,6 @@ function requestPrf<T extends AnyNativeReturn>(opts: {
     // Only key-derivation ceremonies (create / unlock) need PRF; signing
     // assertions must not evaluate or transport the root PRF.
     const wantsPrf = opts.variant !== "assertion";
-    const timer = setTimeout(() => {
-      const stale = pendingRequests.get(id);
-      if (!stale) return;
-      pendingRequests.delete(id);
-      try {
-        EventBus.emit("webauthn:prfCancel", { id });
-      } catch {}
-      stale.reject(new Error("webauthn_prf_timeout"));
-    }, REQUEST_TIMEOUT_MS);
-    pendingRequests.set(id, {
-      variant: opts.variant,
-      resolve: resolve as (value: AnyNativeReturn) => void,
-      reject,
-      timer,
-    });
     const payload: WebAuthnPrfRequestPayload = {
       id,
       mode: opts.mode,
@@ -228,14 +263,14 @@ function requestPrf<T extends AnyNativeReturn>(opts: {
       buttonLabel: opts.buttonLabel,
       title: opts.title,
     };
-    try {
-      log("requestPrf", `id=${id} variant=${opts.variant} mode=${opts.mode} rp=${opts.rpId}`);
-      EventBus.emit("webauthn:prfRequest", payload);
-    } catch (error) {
-      clearTimeout(timer);
-      pendingRequests.delete(id);
-      reject(error instanceof Error ? error : new Error(String(error)));
-    }
+    pendingRequests.set(id, {
+      variant: opts.variant,
+      payload,
+      resolve: resolve as (value: AnyNativeReturn) => void,
+      reject,
+    });
+    requestQueue.push(id);
+    startNextRequest();
   });
 }
 

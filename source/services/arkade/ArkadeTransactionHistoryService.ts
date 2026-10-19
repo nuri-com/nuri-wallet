@@ -98,6 +98,20 @@ export async function getArkadeHistoryTxidSet(options?: {
   return set;
 }
 
+/** Whether the Ark indexer has this offchain transaction; null when unreadable. */
+export async function isArkadeVirtualTxKnown(txid: string): Promise<boolean | null> {
+  try {
+    const wallet = (await getOrCreateWallet()) as unknown as {
+      indexerProvider?: { getVirtualTxs(txids: string[]): Promise<{ txs?: unknown[] }> };
+    };
+    if (!wallet.indexerProvider) return null;
+    const { txs } = await wallet.indexerProvider.getVirtualTxs([txid]);
+    return Array.isArray(txs) && txs.length > 0;
+  } catch {
+    return null;
+  }
+}
+
 export function getArkadePendingLnurlSwapsSnapshot(): ArkadePendingLnurlSwap[] {
   return readArkadePendingLnurlSwapsCache().map((row) => ({ ...row }));
 }

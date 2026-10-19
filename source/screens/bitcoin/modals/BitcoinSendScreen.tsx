@@ -56,6 +56,11 @@ import { isArkAddress, isValidBitcoinAddressMainnet } from "../../../lib/bitcoin
 import { parseBitcoinUri } from "../../../lib/bitcoin/uri";
 import { sendBitcoin, type BitcoinSendTarget } from "../../../services/bitcoin/BitcoinSendService";
 import {
+  assertDirectArkadeSendCanStart,
+  isDirectArkadeSendReconciliationRequiredError,
+  sendDirectArkadeWithReconciliation,
+} from "../../../services/bitcoin/DirectArkadeSendReconciliationService";
+import {
   estimateOnchainSendFeeSats,
   sendBitcoinOnchainFromMusig2,
 } from "../../../services/bitcoin/OnchainSendService";
@@ -124,6 +129,7 @@ import { paysBySwap, TZ_METHODS } from "../../../lib/remit/zapremitForm";
 import { resolveLightningBounds } from "../../../lib/bitcoin/lightningLimits";
 import { maxFundAmountSats } from "../../../services/swapkit/SwapKitArkadeIntentsCreate";
 import { sendArkadeToBitcoinViaLightning } from "../../../services/swapkit/SwapKitV2ArkadeToBtcService";
+import { SwapKitV2Error } from "../../../services/swapkit/SwapKitV2Service";
 import { type MovePill, startMovePill } from "../../../services/wallet/CardTransferPill";
 import { getEthereumAddress } from "../../../lib/secureKeyStorage";
 import {
@@ -1209,6 +1215,17 @@ export default function BitcoinSendScreen({
           setSubmittedAmountLocked(false);
           // A cancelled passkey is the user's own decision, not a failure.
           if (!isUserCancelledAuth(error)) {
+            const isRefused =
+              (error instanceof SwapKitV2Error && error.code === "provider_refused") ||
+              /solver refused|exposure_cap|provider_at_capacity|insufficient_float/i.test(
+                error instanceof Error ? error.message : String(error),
+              );
+            if (isRefused) {
+              // The partner is full: nothing was funded. Say so; the user
+              // decides whether to try again or send another way.
+              failSend(t("screen.BitcoinSendScreen.errorSendPartnerFull"));
+              return;
+            }
             failSend(errMsgText(error, t("screen.BitcoinSendScreen.errorSendFailed")));
           }
           return;
@@ -1450,6 +1467,10 @@ export default function BitcoinSendScreen({
               : isLnurl
                 ? { kind: "lnurl", lnurl: lightningRequest, amountSats: currentSats }
                 : { kind: "bitcoin_onchain", address: addr, amountSats: currentSats };
+        // An unresolved direct send is a wallet-wide uncertainty. Check before
+        // starting a new pill or balance hold; the boundary callback re-checks
+        // immediately before wallet.send for race safety.
+        if (target.kind === "ark_send") await assertDirectArkadeSendCanStart();
         // Money is about to move: the pill takes over from the sheet.
         handOffToPill();
         arkadeLightningSendActiveRef.current = target.kind === "bolt11" || target.kind === "lnurl";
@@ -1473,7 +1494,13 @@ export default function BitcoinSendScreen({
             target.kind === "bitcoin_onchain" ? undefined : OUTGOING_ARKADE_SEND_HOLD_TTL_MS,
           );
         }
-        const result = await sendBitcoin(target);
+        const result =
+          target.kind === "ark_send"
+            ? await sendDirectArkadeWithReconciliation({
+                address: target.address,
+                amountSats: target.amountSats,
+              })
+            : await sendBitcoin(target);
         // The corridor pays the phone once it sees its invoice settled. Telling
         // it now is what makes that prompt rather than leaving the shillings on
         // the server's own polling interval. Fire-and-forget on purpose: the
@@ -1500,8 +1527,9 @@ export default function BitcoinSendScreen({
           // nor history shows them yet. Only the lightning path recorded one, so
           // an ark send and a collaborative exit left the user with no sign that
           // anything had happened. Cleared by the reconciler once the send shows
-          // up in the transaction list (or confirms on-chain).
-          if (result.txid) {
+          // up in the transaction list (or confirms on-chain). Direct Arkade
+          // success already atomically replaced its boundary placeholder.
+          if (result.txid && result.kind !== "ark_send") {
             void PendingBitcoinSendsStore.add({
               txid: result.txid,
               amountSats: currentSats,
@@ -1525,17 +1553,28 @@ export default function BitcoinSendScreen({
         const localPendingId = arkadeLocalPendingIdRef.current;
         const submittedTxid = arkadeSubmittedTxidRef.current;
         const closedAfterSubmitted = arkadeSubmittedClosedRef.current;
+        const directArkadeReconciliationRequired = isDirectArkadeSendReconciliationRequiredError(e);
         // Signed and gone: the pill states the failure. Refused before that:
         // the sheet comes back with its figures and says why.
-        if (closedAfterSubmitted && !isUserCancelledAuth(e)) {
+        if (
+          (closedAfterSubmitted || directArkadeReconciliationRequired) &&
+          !isUserCancelledAuth(e)
+        ) {
           movePillRef.current?.fail();
           movePillRef.current = null;
         } else {
           takeBackFromPill();
         }
-        bitcoinBalanceStore.revertArkadeOutgoingBalance("send_error");
-        if (localPendingId || pendingId || submittedTxid) {
-          await removeArkadePending(localPendingId, pendingId, submittedTxid);
+        // Once direct wallet.send may have started, the durable local row and
+        // outgoing hold are the only safe truth. Never turn an ambiguous spend
+        // back into available balance or a retryable form.
+        if (!directArkadeReconciliationRequired) {
+          bitcoinBalanceStore.revertArkadeOutgoingBalance("send_error");
+          if (localPendingId || pendingId || submittedTxid) {
+            await removeArkadePending(localPendingId, pendingId, submittedTxid);
+          }
+        }
+        if (directArkadeReconciliationRequired || localPendingId || pendingId || submittedTxid) {
           try {
             EventBus.emit("bitcoin:refresh");
             EventBus.emit("bitcoin:syncWallet");

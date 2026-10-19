@@ -130,6 +130,7 @@ export const arkadeProvider: BtcL2Provider = {
       const txid = await sendArkadeToArk({
         address: target.address,
         amountSats: target.amountSats,
+        onSigned: target.onSigned,
       });
       emitPostSendRefresh();
       return { kind: "ark_send", txid, raw: txid };

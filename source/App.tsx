@@ -582,9 +582,11 @@ function WalletApp() {
   // the hub already delivered. Idempotent: in-flight orders are deduped.
   useEffect(() => {
     if (!isSignedInWithPRF || !isAppActive || biometricLockVisible) return;
-    // v2 orders resume on every signed-in foreground. A commit intent from an
-    // earlier launch never got its reply, so nothing was signed for it: it is
-    // dropped (the user asks again), then the tracker drives every real order.
+    // v2 orders resume on every signed-in foreground. An intent whose reply
+    // named an order this device could not record is adopted first; any other
+    // intent from an earlier launch never got its reply, so nothing was signed
+    // for it: it is dropped (the user asks again), then the tracker drives
+    // every real order.
     void discardUnsignedV2CommitIntents()
       .catch(() => {})
       .finally(() => void resumeSwapKitV2Orders());

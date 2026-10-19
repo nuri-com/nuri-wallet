@@ -38,6 +38,7 @@ import { rebuildV2ExecutorsForOrder } from "./SwapKitV2ResumeExecutors";
 import { getSwapKitV2RecoveryKey } from "./SwapKitV2RecoveryKey";
 import { DIRECT_SWAP_SETTLED_EVENT } from "./SwapKitDirectEvmSwapService";
 import { SwapKitV2OrderStore } from "./SwapKitV2OrderStore";
+import { formatV2TrackingFailureDiagnostic } from "./SwapKitV2TrackingDiagnostic";
 import { finishInFlight } from "../money/announce";
 import { MoneyInFlightStore } from "../money/MoneyInFlightStore";
 import {
@@ -47,6 +48,7 @@ import {
   restoreV2ArkadeReservations,
 } from "./SwapKitV2MoveAccounting";
 import { noteV2MoveNeedsUser, noteV2MoveStatus, restoreV2Move } from "./SwapKitV2MoveStatus";
+import { t } from "../../lib/i18n";
 
 const SOURCE = "services/swapkit/SwapKitV2PendingTracker.ts";
 
@@ -368,6 +370,7 @@ export function startSwapKitV2Tracking(
       : 0;
   let failure: string | null = null;
   let refusedUnsent = false;
+  let isProviderRefused = false;
   let orderRecoveryKey: string | null = null;
   const controller = new AbortController();
   const aborted = () => controller.signal.aborted;
@@ -441,19 +444,24 @@ export function startSwapKitV2Tracking(
       // A deliberate stop (soft logout) is not a failure: publish nothing,
       // write nothing — the account this order belonged to is going away.
       if (error instanceof SwapKitV2LoopAbortedError || aborted()) return;
+      const last = lastViews.get(id);
       errorWithId(
         `${LOG_EMOJI.bitcoin} SwapKitV2.track`,
-        `tracking failed id=${id}`,
+        `tracking stopped id=${id} ${formatV2TrackingFailureDiagnostic(error, last)}`,
         { err: error instanceof Error ? error.message : String(error) },
         { source: `${SOURCE}#startSwapKitV2Tracking`, event: "API_ERR", action: "track" },
       );
       failure = error instanceof Error ? error.message : String(error);
+      isProviderRefused =
+        (error instanceof SwapKitV2Error && error.code === "provider_refused") ||
+        /solver refused|exposure_cap|provider_at_capacity|insufficient_float/i.test(failure);
       // Nothing left the wallet on this pass: the step was refused before its
       // broadcast, or the route needs an action this order's executors cannot
       // run at all (checked before anything executes).
       refusedUnsent =
         isRefusedBeforeBroadcast(error) ||
-        (error instanceof SwapKitV2Error && error.code === "unsupported_action_kind");
+        (error instanceof SwapKitV2Error && error.code === "unsupported_action_kind") ||
+        isProviderRefused;
     } finally {
       releaseSwapLoop(id);
       // Nothing was broadcast for the refused step: if the server confirms the
@@ -461,7 +469,12 @@ export function startSwapKitV2Tracking(
       // "Action required" move. A funded order keeps the path below.
       if (failure && refusedUnsent && orderRecoveryKey && trackingIntakeOpen) {
         const cancelled = await cancelUnfundedV2Order(id, orderRecoveryKey).catch(() => false);
-        if (cancelled) failure = null;
+        if (cancelled) {
+          failure = null;
+          // The partner refused this order: say so, plainly, instead of a
+          // silent retry until it expires. Nothing was funded.
+          if (isProviderRefused) recordProviderRefusedTerminalMessage(id);
+        }
       }
       // AFTER the claim is released, never before: the pill's only CTA resumes
       // tracking, and a resume that races this loop's own claim would be
@@ -498,6 +511,31 @@ export function startSwapKitV2Tracking(
   activeV2Trackers.set(id, { controller, done });
   void done.finally(() => {
     if (activeV2Trackers.get(id)?.done === done) activeV2Trackers.delete(id);
+  });
+}
+
+export function recordProviderRefusedTerminalMessage(orderId: string): void {
+  const message = t("screen.BitcoinSendScreen.errorSendPartnerFull");
+  const currentView = lastViews.get(orderId);
+  const failureView: SwapKitV2OrderView = {
+    ...(currentView ?? {
+      mode: "commit" as const,
+      orderId: asSwapKitV2OrderId(orderId),
+      actions: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }),
+    status: "FAILED",
+    failure: {
+      code: "provider_refused",
+      message,
+    },
+  };
+  lastViews.set(orderId, failureView);
+  noteV2MoveStatus({
+    orderId,
+    status: "FAILED",
+    failureReason: message,
   });
 }
 
