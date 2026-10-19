@@ -9,6 +9,8 @@ import { wirexAccountService } from "../wirex/WirexAccountService";
 import { getEthereumAddress } from "../../lib/secureKeyStorage";
 import { getCacheValue, setCacheValue } from "../balance/TransactionCacheService";
 import { t } from "../../lib/i18n";
+import { formatFiat } from "../../lib/currency/displayFiat";
+import { groupCount } from "../../lib/formatting";
 import { LOG_EMOJI, logWithId } from "../../lib/OperationLogUtils";
 import { getSwapKitV2RecoveryKey } from "./SwapKitV2RecoveryKey";
 import { listSwapKitV2Orders } from "./SwapKitV2Service";
@@ -20,7 +22,15 @@ export type SwapRole = "funding" | "settlement" | "refund";
  * payout went, and which of the order's transactions this one is (one hash can
  * be both funding and payout of a same-chain swap).
  */
-export type SwapLeg = { from: string; to: string; settleTarget: string; roles: SwapRole[] };
+export type SwapLeg = {
+  from: string;
+  to: string;
+  settleTarget: string;
+  roles: SwapRole[];
+  /** What left and what arrived, as the server's decimal strings (canonical unit). */
+  sent?: string;
+  received?: string;
+};
 type Legs = Map<string, SwapLeg>;
 
 const txKey = (hash: string) => hash.trim().toLowerCase().replace(/^0x/, "");
@@ -57,12 +67,23 @@ async function loadSwapLegs(owner: string): Promise<Legs> {
       from?: unknown;
       to?: unknown;
       settleTarget?: unknown;
+      acceptedDepositAmount?: unknown;
+      minimumSettleAmount?: unknown;
+    };
+    const execution = (order.execution ?? {}) as {
+      depositAmount?: unknown;
+      settleAmount?: unknown;
     };
     const tx = (order.transactions ?? {}) as Record<string, unknown>;
+    // The amounts the order ran with, else the bounds the user accepted.
+    const sent = execution.depositAmount ?? accepted.acceptedDepositAmount;
+    const received = execution.settleAmount ?? accepted.minimumSettleAmount;
     const base = {
       from: String(accepted.from ?? ""),
       to: String(accepted.to ?? ""),
       settleTarget: String(accepted.settleTarget ?? "").toLowerCase(),
+      ...(sent != null && String(sent) ? { sent: String(sent) } : {}),
+      ...(received != null && String(received) ? { received: String(received) } : {}),
     };
     for (const role of ["funding", "settlement", "refund"] as const) {
       const hash = tx[role];
@@ -154,15 +175,47 @@ export function swapLegFor(legs: Legs, hash: string | null | undefined) {
 
 type Side = { name: string; image?: ImageSourcePropType };
 
+const symbolOf = (id: string) => id.split(/[_@]/)[0] ?? id;
+
 /** An asset as the home names it: by its currency, never a token ticker. */
 function sideOf(id: string): Side {
-  const symbol = id.split(/[_@]/)[0] ?? id;
+  const symbol = symbolOf(id);
   if (/^BTC$/.test(symbol)) return { name: t("screen.HomeScreen.railBitcoin"), image: BTC_LOGO };
   if (/^EUR/.test(symbol)) return { name: t("screen.HomeScreen.railEuro"), image: EUR_FLAG };
   if (/^(USD|DAI$)/.test(symbol))
     return { name: t("screen.HomeScreen.railDollar"), image: USD_FLAG };
   return { name: symbol };
 }
+
+/** Decimal BTC as whole sats, from the string (no float rounding). */
+function satsOf(decimal: string): number | null {
+  const m = /^(\d*)(?:\.(\d*))?$/.exec(decimal.trim());
+  if (!m || (!m[1] && !m[2])) return null;
+  const frac = (m[2] ?? "").padEnd(8, "0");
+  if (frac.length > 8 && /[1-9]/.test(frac.slice(8))) return null;
+  return Number(m[1] || "0") * 100_000_000 + Number(frac.slice(0, 8));
+}
+
+/** A swap amount the way activity rows write money: "EUR 5.00", "BTC 6 844". */
+export function swapAmountText(id: string, decimal: string | undefined): string | null {
+  if (!decimal) return null;
+  const symbol = symbolOf(id);
+  if (/^BTC$/.test(symbol)) {
+    const sats = satsOf(decimal);
+    return sats === null ? null : `BTC ${groupCount(sats)}`;
+  }
+  const value = Number(decimal);
+  if (!Number.isFinite(value)) return null;
+  if (/^EUR/.test(symbol)) return formatFiat(value, "EUR");
+  if (/^(USD|DAI$)/.test(symbol)) return formatFiat(value, "USD");
+  return `${symbol} ${decimal}`;
+}
+
+/** Both sides of a swap, for its details: what was sold and what was bought. */
+export type SwapSides = {
+  from: { name: string; amount: string | null };
+  to: { name: string; amount: string | null };
+};
 
 const CARD: Side = {
   name: t("screen.HomeScreen.groupCardBanking"),
@@ -179,7 +232,7 @@ export function swapRow(
   legs: Legs,
   hash: string | null | undefined,
   incoming: boolean,
-): { title: string; image?: ImageSourcePropType } | null {
+): { title: string; image?: ImageSourcePropType; sides?: SwapSides } | null {
   const leg = swapLegFor(legs, hash);
   if (!leg) return null;
   const from = sideOf(leg.from);
@@ -205,5 +258,13 @@ export function swapRow(
   // them shows where the money went.
   const cash = (side: Side) => side.image === EUR_FLAG || side.image === USD_FLAG;
   const other = cash(from) && cash(to) ? to : incoming ? from : to;
-  return { title: `${from.name} → ${to.name}`, ...(other.image ? { image: other.image } : {}) };
+  const sides: SwapSides = {
+    from: { name: from.name, amount: swapAmountText(leg.from, leg.sent) },
+    to: { name: to.name, amount: swapAmountText(leg.to, leg.received) },
+  };
+  return {
+    title: `${from.name} → ${to.name}`,
+    ...(other.image ? { image: other.image } : {}),
+    sides,
+  };
 }

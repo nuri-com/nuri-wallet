@@ -322,6 +322,7 @@ const WalletTransactionsModal: React.FC<Props> = ({
       const recipient =
         !isIncoming &&
         !own &&
+        !swap &&
         chainAddr &&
         !isCard &&
         !isPendingLocal &&
@@ -351,10 +352,18 @@ const WalletTransactionsModal: React.FC<Props> = ({
             }
           : {}),
         incoming: isIncoming,
-        // Money in names its sender the way money out names its recipient.
-        ...(isIncoming && chainAddr && isValidEvmAddress(chainAddr)
+        // Money in names its sender the way money out names its recipient;
+        // your own wallet, the card and a swap are no sender to name.
+        ...(isIncoming &&
+        chainAddr &&
+        !own &&
+        !isOwnCard &&
+        !isCard &&
+        !swap &&
+        isValidEvmAddress(chainAddr)
           ? { counterpartyAddress: chainAddr }
           : {}),
+        ...(swap?.sides ? { swap: swap.sides } : {}),
         saveOffer: recipient
           ? {
               destination: {

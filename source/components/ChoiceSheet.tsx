@@ -80,7 +80,13 @@ export default function ChoiceSheet<K extends string>({
 }: ChoiceSheetProps<K>) {
   return (
     <DsSheetHost visible={visible} onClose={onClose} mode={mode}>
-      <Header paddingTop="lg">
+      {/* A full page starts under the status bar like every other page; a
+          bottom sheet has no inset and keeps its own top step. */}
+      <Header
+        {...(mode === "full"
+          ? { safeAreaTop: true, chrome: "canvas" as const }
+          : { paddingTop: "lg" as const })}
+      >
         <Topbar surface="transparent" layout="fluid">
           {/* The title belongs in the topbar row, next to the ✕ — not one row
               below it. TopbarTitle is the DS slot for it (lg/emphasis/one-line). */}

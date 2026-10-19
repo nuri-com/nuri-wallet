@@ -32,6 +32,7 @@ import { contactAvatar } from "../lib/addressBook/petAvatar";
 import { isValidEvmAddress } from "../lib/validation";
 import { EventBus } from "../services/events/AppEventBusService";
 import type { SaveOffer } from "../screens/addressBook/addressBookModel";
+import type { SwapSides } from "../services/swapkit/swapActivity";
 import { getAppLocale, t } from "../lib/i18n";
 import PullToRefresh from "./PullToRefresh";
 
@@ -84,6 +85,8 @@ export type ActivityItem = {
   counterpartyScripts?: string[];
   /** The other party's address (a sender, for money in), matched against saved contacts. */
   counterpartyAddress?: string;
+  /** A swap leg: its details show what was sold and bought, never an address. */
+  swap?: SwapSides;
   /** Pending rows sort into a leading "Pending" section. */
   pending?: boolean;
   /** ISO timestamp used for the month grouping. */

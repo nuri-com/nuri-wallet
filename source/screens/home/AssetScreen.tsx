@@ -12,7 +12,6 @@
 // returns to the home, it does not tear the flow down.
 import type * as React from "react";
 import { Fragment } from "react";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Button,
   ButtonText,
@@ -27,7 +26,6 @@ import {
   ListActionTrailingText,
   ListActionTrailingTextMuted,
   ListSeparator,
-  NuriSafeAreaProvider,
   Screen,
   Scroll,
   Topbar,
@@ -195,63 +193,58 @@ const AssetScreen: React.FC<Props> = ({
   onHistory,
   extra,
 }) => {
-  const insets = useSafeAreaInsets();
   if (!asset) return null;
 
   return (
     <Layer visible={visible} onRequestClose={onClose}>
-      {/* A Layer renders outside DsOverlayRoot's NuriSafeAreaProvider, so DS
-          `safeArea*` would see inset 0 without this. */}
-      <NuriSafeAreaProvider top={insets.top} bottom={insets.bottom}>
-        <Screen>
-          {/* grow-SHRINK: a flexShrink:0 box grows to its content in a browser
+      <Screen>
+        {/* grow-SHRINK: a flexShrink:0 box grows to its content in a browser
               rather than being capped by the screen, leaving the Scroll below
               with no bounded height and nothing to scroll. */}
-          <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
-            <Header safeAreaTop chrome="canvas">
-              <Topbar layout="fluid" surface="transparent">
-                <TopbarTitle>{asset.label}</TopbarTitle>
-                <TopbarTrailing>
-                  <IconButton
-                    icon="cross"
-                    variant="soft"
-                    accessibilityLabel={t("common.close")}
-                    onPress={onClose}
-                  />
-                </TopbarTrailing>
-              </Topbar>
-            </Header>
-
-            <Scroll safeAreaBottom>
-              <View direction="column" align="stretch" gap="lg" paddingY="md">
-                <BalanceRegion
-                  amount={asset.primary}
-                  converted={asset.secondary}
-                  onSwap={onSwap}
-                  swapA11yLabel={t("screen.AssetScreen.swapA11yLabel")}
+        <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
+          <Header safeAreaTop chrome="canvas">
+            <Topbar layout="fluid" surface="transparent">
+              <TopbarTitle>{asset.label}</TopbarTitle>
+              <TopbarTrailing>
+                <IconButton
+                  icon="cross"
+                  variant="soft"
+                  accessibilityLabel={t("common.close")}
+                  onPress={onClose}
                 />
+              </TopbarTrailing>
+            </Topbar>
+          </Header>
 
-                <View direction="row" align="center" gap="sm" distribute="even" paddingX="lg">
-                  <Button size="lg" variant="soft" onPress={onReceive}>
-                    <ButtonText>{t("actions.receive")}</ButtonText>
-                  </Button>
-                  <Button size="lg" variant="solid" accent={asset.accent} onPress={onSend}>
-                    <ButtonText>{t("actions.send")}</ButtonText>
-                  </Button>
-                </View>
+          <Scroll safeAreaBottom>
+            <View direction="column" align="stretch" gap="lg" paddingY="md">
+              <BalanceRegion
+                amount={asset.primary}
+                converted={asset.secondary}
+                onSwap={onSwap}
+                swapA11yLabel={t("screen.AssetScreen.swapA11yLabel")}
+              />
 
-                <AssetActivityList
-                  assetLabel={asset.label}
-                  pending={pending}
-                  balances={balances}
-                  onHistory={onHistory}
-                  extra={extra}
-                />
+              <View direction="row" align="center" gap="sm" distribute="even" paddingX="lg">
+                <Button size="lg" variant="soft" onPress={onReceive}>
+                  <ButtonText>{t("actions.receive")}</ButtonText>
+                </Button>
+                <Button size="lg" variant="solid" accent={asset.accent} onPress={onSend}>
+                  <ButtonText>{t("actions.send")}</ButtonText>
+                </Button>
               </View>
-            </Scroll>
-          </View>
-        </Screen>
-      </NuriSafeAreaProvider>
+
+              <AssetActivityList
+                assetLabel={asset.label}
+                pending={pending}
+                balances={balances}
+                onHistory={onHistory}
+                extra={extra}
+              />
+            </View>
+          </Scroll>
+        </View>
+      </Screen>
     </Layer>
   );
 };

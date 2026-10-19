@@ -32,8 +32,7 @@
 // to the caller.
 import type React from "react";
 import { Fragment, useEffect, useState } from "react";
-import { LayoutAnimation, Platform, View as RNView, StyleSheet, UIManager } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LayoutAnimation, Platform, View as RNView, UIManager } from "react-native";
 import {
   Bleed,
   Button,
@@ -50,6 +49,8 @@ import {
   SelectTriggerLabel,
   SelectTriggerValue,
   Text,
+  Topbar,
+  TopbarTrailing,
   View,
 } from "@ds";
 import AmountKeypad from "../../components/AmountKeypad";
@@ -234,7 +235,6 @@ const MoveSheet: React.FC<Props> = ({
   onExecuted,
   locked = null,
 }) => {
-  const insets = useSafeAreaInsets();
   // Which side the keypad is typing into. The other side shows its value small
   // in its own row.
   const [focus, setFocus] = useState<Side>("from");
@@ -647,17 +647,28 @@ const MoveSheet: React.FC<Props> = ({
   return (
     <DsSheetHost visible={visible} onClose={onClose} mode="full">
       {overlay ? (
-        <Scroll safeAreaTop safeAreaBottom>
-          {/* The wait and the failure lead with a title at the very top, and the
-              close button floats over that spot — without this it ran behind the
-              button. The band is the button's own height (the size `lg` leaf);
-              the status view's own top padding then puts the title on the same
-              step the card gets. */}
-          <View direction="column" align="stretch" fill="grow">
-            <View height="lg" />
-            {overlay}
-          </View>
-        </Scroll>
+        <>
+          {/* The wait and the failure have no Cancel row of their own, so THEY
+              keep a way out: the page's own close, like every other page. The
+              board does not: its Cancel button is the way out. */}
+          <Header safeAreaTop chrome="canvas">
+            <Topbar surface="transparent">
+              <TopbarTrailing>
+                <IconButton
+                  icon="cross"
+                  variant="soft"
+                  accessibilityLabel={t("common.close")}
+                  onPress={onClose}
+                />
+              </TopbarTrailing>
+            </Topbar>
+          </Header>
+          <Scroll safeAreaBottom>
+            <View direction="column" align="stretch" fill="grow">
+              {overlay}
+            </View>
+          </Scroll>
+        </>
       ) : (
         <>
           {/* No scroll on this screen: the keypad and the buttons are docked and
@@ -777,27 +788,6 @@ const MoveSheet: React.FC<Props> = ({
         </>
       )}
 
-      {/* The wait and the failure have no Cancel row of their own, so THEY are
-          the states that keep a way out. The board does not: its Cancel button
-          is the way out, and a second one over the cards is just chrome.
-          The inset alone is not a margin: in a browser tab it is 0, so the
-          button sat flush in the corner. The gutter it is held off the edges by
-          is the DS `lg` step — spelled as padding on a DS View, so it stays the
-          same step as the content's own `paddingX="lg"` if the scale moves. The
-          raw inset is all this layer positions by. */}
-      {overlay ? (
-        <RNView pointerEvents="box-none" style={[styles.closeFloat, { top: insets.top }]}>
-          <View direction="row" justify="end" paddingTop="lg" paddingEnd="lg">
-            <IconButton
-              icon="cross"
-              variant="soft"
-              accessibilityLabel={t("common.close")}
-              onPress={onClose}
-            />
-          </View>
-        </RNView>
-      ) : null}
-
       {/* The source/destination pickers are full-screen so their DS Scroll has a
           bounded viewport on web. In the destination picker the source is disabled so a pair cannot collapse. */}
       <ChoiceSheet
@@ -846,11 +836,5 @@ const MoveSheet: React.FC<Props> = ({
     </DsSheetHost>
   );
 };
-
-const styles = StyleSheet.create({
-  // Pins the close button's own layer to the top-right; every gutter inside it
-  // is DS padding. `top` is added at render from the live safe-area inset.
-  closeFloat: { position: "absolute", zIndex: 2, right: 0 },
-});
 
 export default MoveSheet;

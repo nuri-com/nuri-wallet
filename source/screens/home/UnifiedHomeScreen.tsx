@@ -11,11 +11,6 @@
 // This is the app's only screen, so everything that used to depend on a tab
 // being mounted lives here: the Wirex readiness poll, the support deep link's
 // card-detail drain, and the overlay teardown the biometric lock relies on.
-//
-// The overlay outlet renders layers as a SIBLING of DsOverlayRoot's
-// NuriSafeAreaProvider, so DS `safeArea*` sees inset 0 inside a Layer. Seeding a
-// provider here from the native insets is what makes `<Header safeAreaTop>` work;
-// `<Screen>` supplies the FixedRegionLayoutProvider it reads them through.
 import React, {
   useCallback,
   useEffect,

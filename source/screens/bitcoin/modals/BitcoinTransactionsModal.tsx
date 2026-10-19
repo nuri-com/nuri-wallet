@@ -373,16 +373,14 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
         const _createdAt = atx.timestamp
           ? new Date(atx.timestamp).toISOString()
           : new Date().toISOString();
+        const swap = swapRow(swapLegs, atx.id, isIncoming);
         list.push({
           key: atx.id,
           icon: atx.isMigrationTx ? "transfer-horizontal" : isIncoming ? "plus" : "arrow-up",
           sublabel: subtitle,
-          label: atx.isMigrationTx
-            ? "Migration"
-            : (swapRow(swapLegs, atx.id, isIncoming)?.title ?? title),
-          ...(swapRow(swapLegs, atx.id, isIncoming)?.image
-            ? { image: swapRow(swapLegs, atx.id, isIncoming)?.image }
-            : {}),
+          label: atx.isMigrationTx ? "Migration" : (swap?.title ?? title),
+          ...(swap?.image ? { image: swap.image } : {}),
+          ...(swap?.sides ? { swap: swap.sides } : {}),
           amount: `${sign}BTC ${atx.amountSats}`,
           amountSecondary: fiatLine ?? `${homeSym} —`,
           pending: isPending,
@@ -446,17 +444,18 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
             // Never the wallet's own addresses: a transfer between its rails
             // (or change) has no recipient to save.
             .filter((a: string) => a && a !== txAddress && !railAddresses.has(a.toLowerCase()));
-      const recipient = paidTo.length === 1 ? paidTo[0] : null;
+      // A swap's deposit address is the swap, never someone to save.
+      const swap = swapRow(swapLegs, t.txid, isIncoming);
+      const recipient = paidTo.length === 1 && !swap ? paidTo[0] : null;
       return {
         // Address-scoped: a transfer between the two on-chain rails appears in
         // both histories, once as a send and once as a receive.
         key: `${txAddress}:${t.txid}`,
         icon: isIncoming ? "plus" : "arrow-up",
         sublabel: subtitle,
-        label: swapRow(swapLegs, t.txid, isIncoming)?.title ?? title,
-        ...(swapRow(swapLegs, t.txid, isIncoming)?.image
-          ? { image: swapRow(swapLegs, t.txid, isIncoming)?.image }
-          : {}),
+        label: swap?.title ?? title,
+        ...(swap?.image ? { image: swap.image } : {}),
+        ...(swap?.sides ? { swap: swap.sides } : {}),
         onPress: onOpenExplorer,
         onPressLabel: mempoolLabel,
         saveOffer: recipient

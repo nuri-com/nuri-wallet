@@ -11,7 +11,6 @@
 import * as React from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Platform } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Button,
   ButtonText,
@@ -27,7 +26,6 @@ import {
   ListSwitch,
   ListSwitchText,
   NuriIcon,
-  NuriSafeAreaProvider,
   Screen,
   Scroll,
   Separator,
@@ -181,7 +179,6 @@ const SettingsScreen: React.FC<Props> = ({
   onOpenEsim,
   onLogout,
 }) => {
-  const insets = useSafeAreaInsets();
   const locale = useAppLocale();
   const currency = useHomeCurrency();
   const [picker, setPicker] = useState<"language" | "currency" | null>(null);
@@ -243,175 +240,171 @@ const SettingsScreen: React.FC<Props> = ({
   return (
     <>
       <Layer visible={visible} onRequestClose={onClose}>
-        {/* A Layer renders outside DsOverlayRoot's NuriSafeAreaProvider, so DS
-            `safeArea*` would see inset 0 without this. */}
-        <NuriSafeAreaProvider top={insets.top} bottom={insets.bottom}>
-          {/* The Layer's host is transparent and the home stays mounted behind
+        {/* The Layer's host is transparent and the home stays mounted behind
               it: this canvas keeps the home from showing through. */}
-          <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
-            <Screen>
-              {/* The bar pins above the scroll and the content passes behind it;
+        <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
+          <Screen>
+            {/* The bar pins above the scroll and the content passes behind it;
                 the Scroll's dock inset starts the handle at the bar's edge. */}
-              <Dock edge="top">
-                <Header safeAreaTop chrome="transparent" safeAreaChrome="canvas">
-                  <Topbar surface="transparent">
-                    <TopbarTrailing>
-                      <IconButton
-                        icon="cross"
-                        variant="soft"
-                        accessibilityLabel={t("common.close")}
-                        onPress={onClose}
-                      />
-                    </TopbarTrailing>
-                  </Topbar>
-                </Header>
-              </Dock>
+            <Dock edge="top">
+              <Header safeAreaTop chrome="transparent" safeAreaChrome="canvas">
+                <Topbar surface="transparent">
+                  <TopbarTrailing>
+                    <IconButton
+                      icon="cross"
+                      variant="soft"
+                      accessibilityLabel={t("common.close")}
+                      onPress={onClose}
+                    />
+                  </TopbarTrailing>
+                </Topbar>
+              </Header>
+            </Dock>
 
-              <Scroll safeAreaBottom insetTop="dock">
-                <View
-                  direction="column"
-                  align="stretch"
-                  justify="start"
-                  gap="md"
-                  paddingBottom="xl"
-                  fill="grow"
-                >
-                  {username ? (
-                    <View direction="row" align="center" gap="sm" paddingX="lg" paddingTop="md">
-                      <Text size="lg" emphasis>{`@${username}`}</Text>
-                      {verified ? <NuriIcon name="check-circle" /> : null}
-                    </View>
-                  ) : null}
+            <Scroll safeAreaBottom insetTop="dock">
+              <View
+                direction="column"
+                align="stretch"
+                justify="start"
+                gap="md"
+                paddingBottom="xl"
+                fill="grow"
+              >
+                {username ? (
+                  <View direction="row" align="center" gap="sm" paddingX="lg" paddingTop="md">
+                    <Text size="lg" emphasis>{`@${username}`}</Text>
+                    {verified ? <NuriIcon name="check-circle" /> : null}
+                  </View>
+                ) : null}
 
-                  <List>
-                    {payLink && username ? (
-                      <ListAction
-                        accessibilityLabel={t(`${K}.payLink`)}
-                        onPress={() => setCreatingPayLink(true)}
-                      >
-                        <ListActionText>{t(`${K}.payLink`)}</ListActionText>
-                        <ListActionTrailIcon name="chevron-right" />
-                      </ListAction>
-                    ) : null}
+                <List>
+                  {payLink && username ? (
                     <ListAction
-                      accessibilityLabel={t(`${K}.addressBook`)}
-                      onPress={onOpenAddressBook}
+                      accessibilityLabel={t(`${K}.payLink`)}
+                      onPress={() => setCreatingPayLink(true)}
                     >
-                      <ListActionText>{t(`${K}.addressBook`)}</ListActionText>
+                      <ListActionText>{t(`${K}.payLink`)}</ListActionText>
                       <ListActionTrailIcon name="chevron-right" />
                     </ListAction>
-                    <ListAction accessibilityLabel={t(`${K}.support`)} onPress={openSupport}>
-                      <ListActionText>{t(`${K}.support`)}</ListActionText>
-                      <ListActionTrailIcon name="chevron-right" />
-                    </ListAction>
-                  </List>
+                  ) : null}
+                  <ListAction
+                    accessibilityLabel={t(`${K}.addressBook`)}
+                    onPress={onOpenAddressBook}
+                  >
+                    <ListActionText>{t(`${K}.addressBook`)}</ListActionText>
+                    <ListActionTrailIcon name="chevron-right" />
+                  </ListAction>
+                  <ListAction accessibilityLabel={t(`${K}.support`)} onPress={openSupport}>
+                    <ListActionText>{t(`${K}.support`)}</ListActionText>
+                    <ListActionTrailIcon name="chevron-right" />
+                  </ListAction>
+                </List>
 
-                  {showBankCards ? (
-                    // The activation card takes the hairline's place.
-                    <View paddingX="lg" paddingTop="md">
+                {showBankCards ? (
+                  // The activation card takes the hairline's place.
+                  <View paddingX="lg" paddingTop="md">
+                    <View
+                      direction="row"
+                      align="stretch"
+                      chrome="strong"
+                      radius="lg"
+                      clip
+                      aspectRatio="banner"
+                    >
                       <View
-                        direction="row"
-                        align="stretch"
-                        chrome="strong"
-                        radius="lg"
-                        clip
-                        aspectRatio="banner"
+                        direction="column"
+                        align="start"
+                        justify="between"
+                        padding="lg"
+                        fill="grow-shrink"
                       >
-                        <View
-                          direction="column"
-                          align="start"
-                          justify="between"
-                          padding="lg"
-                          fill="grow-shrink"
-                        >
-                          <View direction="column" align="start" gap="xs">
-                            <Text size="md" emphasis>
-                              {t(`${K}.bankCards`)}
-                            </Text>
-                            <Text size="sm" muted>
-                              {t(`${K}.bankCardsBody`)}
-                            </Text>
-                          </View>
-                          <Button variant="solid" size="sm" onPress={onVerify}>
-                            <ButtonText>{t(`${K}.activate`)}</ButtonText>
-                          </Button>
+                        <View direction="column" align="start" gap="xs">
+                          <Text size="md" emphasis>
+                            {t(`${K}.bankCards`)}
+                          </Text>
+                          <Text size="sm" muted>
+                            {t(`${K}.bankCardsBody`)}
+                          </Text>
                         </View>
-                        <Image source={BANK_AND_CARDS} fit="cover" aspectRatio="portrait" />
+                        <Button variant="solid" size="sm" onPress={onVerify}>
+                          <ButtonText>{t(`${K}.activate`)}</ButtonText>
+                        </Button>
                       </View>
+                      <Image source={BANK_AND_CARDS} fit="cover" aspectRatio="portrait" />
                     </View>
+                  </View>
+                ) : null}
+
+                <Heading title={t(`${K}.notifications`)} hairline={!showBankCards} />
+                <List>
+                  {NOTIFICATION_CATEGORIES.map((category) => {
+                    const on = notifications ? categoryOn(notifications, category) : false;
+                    return (
+                      <ListSwitch
+                        key={category}
+                        accent="lilac"
+                        checked={on}
+                        onPress={() => chooseCategory(category, !on)}
+                      >
+                        <ListSwitchText>{t(`${K}.notify_${category}`)}</ListSwitchText>
+                      </ListSwitch>
+                    );
+                  })}
+                </List>
+
+                <Heading title={t(`${K}.settings`)} />
+                <List>
+                  <ListAction
+                    accessibilityLabel={`${t(`${K}.language`)}, ${LANGUAGE_OPTIONS[locale].label}`}
+                    onPress={() => setPicker("language")}
+                  >
+                    <ListActionText>{t(`${K}.language`)}</ListActionText>
+                    <ListActionTextMuted>{LANGUAGE_OPTIONS[locale].label}</ListActionTextMuted>
+                    <ListActionTrailIcon name="chevron-right" />
+                  </ListAction>
+                  <ListAction
+                    accessibilityLabel={`${t(`${K}.currency`)}, ${t(`${K}.currency_${currency}`)}`}
+                    onPress={() => setPicker("currency")}
+                  >
+                    <ListActionText>{t(`${K}.currency`)}</ListActionText>
+                    <ListActionTextMuted>{t(`${K}.currency_${currency}`)}</ListActionTextMuted>
+                    <ListActionTrailIcon name="chevron-right" />
+                  </ListAction>
+                  {visible && PAY_WALLET_AVAILABLE ? (
+                    <PayWalletProvider>
+                      <CryptoWalletRow />
+                    </PayWalletProvider>
                   ) : null}
+                </List>
 
-                  <Heading title={t(`${K}.notifications`)} hairline={!showBankCards} />
-                  <List>
-                    {NOTIFICATION_CATEGORIES.map((category) => {
-                      const on = notifications ? categoryOn(notifications, category) : false;
-                      return (
-                        <ListSwitch
-                          key={category}
-                          accent="lilac"
-                          checked={on}
-                          onPress={() => chooseCategory(category, !on)}
-                        >
-                          <ListSwitchText>{t(`${K}.notify_${category}`)}</ListSwitchText>
-                        </ListSwitch>
-                      );
-                    })}
-                  </List>
+                <Heading title={t(`${K}.shop`)} />
+                <List>
+                  <ListAction accessibilityLabel={t(`${K}.esim`)} onPress={onOpenEsim}>
+                    <ListActionText>{t(`${K}.esim`)}</ListActionText>
+                    <ListActionTrailIcon name="chevron-right" />
+                  </ListAction>
+                </List>
 
-                  <Heading title={t(`${K}.settings`)} />
-                  <List>
-                    <ListAction
-                      accessibilityLabel={`${t(`${K}.language`)}, ${LANGUAGE_OPTIONS[locale].label}`}
-                      onPress={() => setPicker("language")}
-                    >
-                      <ListActionText>{t(`${K}.language`)}</ListActionText>
-                      <ListActionTextMuted>{LANGUAGE_OPTIONS[locale].label}</ListActionTextMuted>
-                      <ListActionTrailIcon name="chevron-right" />
-                    </ListAction>
-                    <ListAction
-                      accessibilityLabel={`${t(`${K}.currency`)}, ${t(`${K}.currency_${currency}`)}`}
-                      onPress={() => setPicker("currency")}
-                    >
-                      <ListActionText>{t(`${K}.currency`)}</ListActionText>
-                      <ListActionTextMuted>{t(`${K}.currency_${currency}`)}</ListActionTextMuted>
-                      <ListActionTrailIcon name="chevron-right" />
-                    </ListAction>
-                    {visible && PAY_WALLET_AVAILABLE ? (
-                      <PayWalletProvider>
-                        <CryptoWalletRow />
-                      </PayWalletProvider>
-                    ) : null}
-                  </List>
+                <Heading title={t(`${K}.account`)} />
+                <List>
+                  <ListAction accessibilityLabel={t(`${K}.logout`)} onPress={onLogout}>
+                    <ListActionText>{t(`${K}.logout`)}</ListActionText>
+                    <ListActionTrailIcon name="chevron-right" />
+                  </ListAction>
+                </List>
 
-                  <Heading title={t(`${K}.shop`)} />
-                  <List>
-                    <ListAction accessibilityLabel={t(`${K}.esim`)} onPress={onOpenEsim}>
-                      <ListActionText>{t(`${K}.esim`)}</ListActionText>
-                      <ListActionTrailIcon name="chevron-right" />
-                    </ListAction>
-                  </List>
-
-                  <Heading title={t(`${K}.account`)} />
-                  <List>
-                    <ListAction accessibilityLabel={t(`${K}.logout`)} onPress={onLogout}>
-                      <ListActionText>{t(`${K}.logout`)}</ListActionText>
-                      <ListActionTrailIcon name="chevron-right" />
-                    </ListAction>
-                  </List>
-
-                  <View paddingX="lg">
-                    <Separator ySpace="none" />
-                  </View>
-                  <View paddingX="lg">
-                    <Text size="sm" muted>
-                      {t(`${K}.version`, { version: getAppVersion() })}
-                    </Text>
-                  </View>
+                <View paddingX="lg">
+                  <Separator ySpace="none" />
                 </View>
-              </Scroll>
-            </Screen>
-          </View>
-        </NuriSafeAreaProvider>
+                <View paddingX="lg">
+                  <Text size="sm" muted>
+                    {t(`${K}.version`, { version: getAppVersion() })}
+                  </Text>
+                </View>
+              </View>
+            </Scroll>
+          </Screen>
+        </View>
       </Layer>
 
       {username ? (

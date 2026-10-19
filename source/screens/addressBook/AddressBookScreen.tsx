@@ -12,7 +12,6 @@
 import type * as React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Image, StyleSheet } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Button,
   ButtonIcon,
@@ -32,7 +31,6 @@ import {
   SelectFieldLabel,
   SelectFieldValue,
   ListActionTrailIcon,
-  NuriSafeAreaProvider,
   Screen,
   Scroll,
   Text,
@@ -198,7 +196,6 @@ const AddressBookScreen: React.FC<Props> = ({
   saveRequest,
   onSaveRequestHandled,
 }) => {
-  const insets = useSafeAreaInsets();
   const [book, setBook] = useState<AddressBook | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [query, setQuery] = useState("");
@@ -516,116 +513,114 @@ const AddressBookScreen: React.FC<Props> = ({
   return (
     <>
       <Layer visible={visible} onRequestClose={onClose}>
-        <NuriSafeAreaProvider top={insets.top} bottom={insets.bottom}>
-          <Screen>
-            <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
-              <Header safeAreaTop chrome="canvas">
-                <Topbar layout="fluid" surface="transparent">
-                  <TopbarTitle>{t(`${K}.title`)}</TopbarTitle>
-                  <TopbarTrailing>
-                    <View direction="row" gap="sm" align="center">
-                      <IconButton
-                        icon="plus"
-                        variant="soft"
-                        accessibilityLabel={t(`${K}.add`)}
-                        onPress={() => {
-                          if (!book) return;
-                          setFormError(null);
-                          setLookup("idle");
-                          setDraft(emptyDraft());
-                        }}
-                      />
-                      <IconButton
-                        icon="cross"
-                        variant="soft"
-                        accessibilityLabel={t("common.close")}
-                        onPress={onClose}
-                      />
-                    </View>
-                  </TopbarTrailing>
-                </Topbar>
-              </Header>
-
-              <Scroll safeAreaBottom>
-                <View direction="column" align="stretch" gap="lg" paddingY="md">
-                  <View paddingX="lg">
-                    <TextField
-                      value={query}
-                      onChangeText={setQuery}
-                      placeholder={t(`${K}.searchPlaceholder`)}
-                      inputMode="search"
-                      autoCapitalize="none"
-                      accessibilityLabel={t(`${K}.search`)}
-                    >
-                      <TextFieldLabel>{t(`${K}.search`)}</TextFieldLabel>
-                    </TextField>
+        <Screen>
+          <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
+            <Header safeAreaTop chrome="canvas">
+              <Topbar layout="fluid" surface="transparent">
+                <TopbarTitle>{t(`${K}.title`)}</TopbarTitle>
+                <TopbarTrailing>
+                  <View direction="row" gap="sm" align="center">
+                    <IconButton
+                      icon="plus"
+                      variant="soft"
+                      accessibilityLabel={t(`${K}.add`)}
+                      onPress={() => {
+                        if (!book) return;
+                        setFormError(null);
+                        setLookup("idle");
+                        setDraft(emptyDraft());
+                      }}
+                    />
+                    <IconButton
+                      icon="cross"
+                      variant="soft"
+                      accessibilityLabel={t("common.close")}
+                      onPress={onClose}
+                    />
                   </View>
+                </TopbarTrailing>
+              </Topbar>
+            </Header>
 
-                  {statusLabel || conflictCount > 0 ? (
-                    <View paddingX="lg">
-                      <Text size="sm" muted>
-                        {[
-                          statusLabel,
-                          conflictCount > 0 ? t(`${K}.conflicts`, { count: conflictCount }) : null,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </Text>
-                    </View>
-                  ) : null}
+            <Scroll safeAreaBottom>
+              <View direction="column" align="stretch" gap="lg" paddingY="md">
+                <View paddingX="lg">
+                  <TextField
+                    value={query}
+                    onChangeText={setQuery}
+                    placeholder={t(`${K}.searchPlaceholder`)}
+                    inputMode="search"
+                    autoCapitalize="none"
+                    accessibilityLabel={t(`${K}.search`)}
+                  >
+                    <TextFieldLabel>{t(`${K}.search`)}</TextFieldLabel>
+                  </TextField>
+                </View>
 
-                  {/* A–Z, like a phone's contacts: pet, name, first destination.
+                {statusLabel || conflictCount > 0 ? (
+                  <View paddingX="lg">
+                    <Text size="sm" muted>
+                      {[
+                        statusLabel,
+                        conflictCount > 0 ? t(`${K}.conflicts`, { count: conflictCount }) : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* A–Z, like a phone's contacts: pet, name, first destination.
                       Drawn a page at a time so a large book never builds every
                       row (and every pet) at once. */}
-                  {groupByInitial(contacts.slice(0, shownCount), initialOf).map((group) => (
-                    <View key={group.letter} direction="column" align="stretch" gap="xs">
-                      <View paddingX="lg">
-                        <Text size="sm" emphasis muted>
-                          {group.letter}
-                        </Text>
-                      </View>
-                      <List>
-                        {group.contacts.map((contact) => (
-                          <ContactRow
-                            key={contact.id}
-                            contact={contact}
-                            onPress={() => {
-                              setDetailMessage(null);
-                              const conflict = conflicts.find((c) => c.id === contact.id);
-                              if (conflict) setConflictPrompt(conflict);
-                              else setOpen(contact);
-                            }}
-                          />
-                        ))}
-                      </List>
-                    </View>
-                  ))}
-
-                  {contacts.length > shownCount ? (
+                {groupByInitial(contacts.slice(0, shownCount), initialOf).map((group) => (
+                  <View key={group.letter} direction="column" align="stretch" gap="xs">
                     <View paddingX="lg">
-                      <Button
-                        variant="soft"
-                        size="sm"
-                        accessibilityLabel={t(`${K}.showMore`)}
-                        onPress={() => setShownCount((n) => n + LIST_PAGE)}
-                      >
-                        <ButtonText>{t(`${K}.showMore`)}</ButtonText>
-                      </Button>
-                    </View>
-                  ) : null}
-
-                  {contacts.length === 0 && status !== "loading" ? (
-                    <View paddingX="lg">
-                      <Text size="sm" muted align="center">
-                        {query ? t(`${K}.noMatches`) : t(`${K}.empty`)}
+                      <Text size="sm" emphasis muted>
+                        {group.letter}
                       </Text>
                     </View>
-                  ) : null}
-                </View>
-              </Scroll>
-            </View>
-          </Screen>
-        </NuriSafeAreaProvider>
+                    <List>
+                      {group.contacts.map((contact) => (
+                        <ContactRow
+                          key={contact.id}
+                          contact={contact}
+                          onPress={() => {
+                            setDetailMessage(null);
+                            const conflict = conflicts.find((c) => c.id === contact.id);
+                            if (conflict) setConflictPrompt(conflict);
+                            else setOpen(contact);
+                          }}
+                        />
+                      ))}
+                    </List>
+                  </View>
+                ))}
+
+                {contacts.length > shownCount ? (
+                  <View paddingX="lg">
+                    <Button
+                      variant="soft"
+                      size="sm"
+                      accessibilityLabel={t(`${K}.showMore`)}
+                      onPress={() => setShownCount((n) => n + LIST_PAGE)}
+                    >
+                      <ButtonText>{t(`${K}.showMore`)}</ButtonText>
+                    </Button>
+                  </View>
+                ) : null}
+
+                {contacts.length === 0 && status !== "loading" ? (
+                  <View paddingX="lg">
+                    <Text size="sm" muted align="center">
+                      {query ? t(`${K}.noMatches`) : t(`${K}.empty`)}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            </Scroll>
+          </View>
+        </Screen>
       </Layer>
 
       {/* Contact page, like a phone's contact card: avatar and name, the main

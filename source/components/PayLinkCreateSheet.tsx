@@ -69,7 +69,7 @@ const PayLinkCreateSheet: React.FC<Props> = ({ visible, onClose, origin, usernam
     // Full mode: the DS forbids inputs in a sheet; only a full page moves the
     // field and the Copy footer above the keyboard.
     <DsSheetHost visible={visible} onClose={close} mode="full">
-      <Header paddingTop="lg">
+      <Header safeAreaTop chrome="canvas">
         <Topbar surface="transparent" layout="fluid">
           <TopbarTitle>{t(`${K}.title`)}</TopbarTitle>
           <TopbarTrailing>

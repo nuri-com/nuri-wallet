@@ -11,7 +11,6 @@
 import type * as React from "react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Linking, Platform } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Localization from "expo-localization";
 import {
   Button,
@@ -26,7 +25,6 @@ import {
   ListActionTrailIcon,
   ListActionTrailingText,
   ListSeparator,
-  NuriSafeAreaProvider,
   SelectField,
   SelectFieldChevron,
   SelectFieldLabel,
@@ -327,7 +325,6 @@ function InstallGuide({ esim, method }: { esim: OwnedEsim; method: InstallMethod
 }
 
 const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
-  const insets = useSafeAreaInsets();
   const [record, setRecord] = useState<EsimRecord>(currentEsims);
   const [places, setPlaces] = useState<EsimPlace[] | null>(null);
   const [placesError, setPlacesError] = useState<string | null>(null);
@@ -516,168 +513,166 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
   return (
     <>
       <Layer visible={visible} onRequestClose={onClose}>
-        <NuriSafeAreaProvider top={insets.top} bottom={insets.bottom}>
-          <Screen>
-            <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
-              <Header safeAreaTop chrome="canvas">
-                <Topbar layout="fluid" surface="transparent">
-                  <TopbarTitle>{t(`${K}.title`)}</TopbarTitle>
-                  <TopbarTrailing>
-                    <IconButton
-                      icon="cross"
-                      variant="soft"
-                      accessibilityLabel={t("common.close")}
-                      onPress={onClose}
-                    />
-                  </TopbarTrailing>
-                </Topbar>
-              </Header>
+        <Screen>
+          <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
+            <Header safeAreaTop chrome="canvas">
+              <Topbar layout="fluid" surface="transparent">
+                <TopbarTitle>{t(`${K}.title`)}</TopbarTitle>
+                <TopbarTrailing>
+                  <IconButton
+                    icon="cross"
+                    variant="soft"
+                    accessibilityLabel={t("common.close")}
+                    onPress={onClose}
+                  />
+                </TopbarTrailing>
+              </Topbar>
+            </Header>
 
-              <Scroll safeAreaBottom>
-                <View direction="column" align="stretch" gap="xl" paddingY="md">
-                  {hasMine ? (
-                    <View direction="column" align="stretch" gap="sm">
-                      <View paddingX="lg">
-                        <Text size="sm" emphasis muted>
-                          {t(`${K}.mine`)}
-                        </Text>
-                      </View>
-                      <List>
-                        {/* An unpaid order opens its invoice again, but only while
-                            this wallet never started a send for it: a second
-                            send of the same invoice would lock sats nobody can
-                            claim (reopenEsimPayment). */}
-                        {openOrders.map((order, index) => (
-                          <Fragment key={order.paymentHash}>
-                            {index > 0 ? <ListSeparator /> : null}
-                            {(() => {
-                              const slow =
-                                order.paidAt !== undefined && now - order.paidAt > SLOW_DELIVERY_MS;
-                              const canPay = !slow && payable.has(order.paymentHash);
-                              const label = slow
-                                ? t(`${K}.slow`)
-                                : order.paidAt !== undefined
-                                  ? t(`${K}.delivering`)
-                                  : canPay
-                                    ? t(`${K}.payNow`)
-                                    : t(`${K}.pending`);
-                              return (
-                                <ListAction
-                                  accessibilityLabel={`${order.placeName}, ${label}`}
-                                  onPress={
-                                    slow
-                                      ? () => openSupport(order)
-                                      : canPay
-                                        ? () => payOrder(order)
-                                        : undefined
-                                  }
-                                >
-                                  <ListActionText>{order.placeName}</ListActionText>
-                                  <ListActionTextMuted>
-                                    {bundleSummary(order.bundleName)}
-                                  </ListActionTextMuted>
-                                  <ListActionTrailingText>{label}</ListActionTrailingText>
-                                  {slow || canPay ? (
-                                    <ListActionTrailIcon name="chevron-right" />
-                                  ) : null}
-                                </ListAction>
-                              );
-                            })()}
-                          </Fragment>
-                        ))}
-                        {record.esims.map((esim, index) => {
-                          const status = statuses[esim.iccid];
-                          const left = status ? currentDataLeft(status) : null;
-                          return (
-                            <Fragment key={esim.iccid}>
-                              {index > 0 || openOrders.length > 0 ? <ListSeparator /> : null}
-                              <ListAction
-                                accessibilityLabel={esim.placeName}
-                                onPress={() => openEsimPage(esim)}
-                              >
-                                <ListActionText>{esim.placeName}</ListActionText>
-                                <ListActionTextMuted>
-                                  {bundleSummary(esim.bundleName)}
-                                </ListActionTextMuted>
-                                {status ? (
-                                  <ListActionTrailingText>
-                                    {!status.installed
-                                      ? t(`${K}.notInstalled`)
-                                      : left !== null
-                                        ? t(`${K}.left`, { amount: formatDataAmount(left) })
-                                        : t(`${K}.noActivePlan`)}
-                                  </ListActionTrailingText>
-                                ) : null}
-                                <ListActionTrailIcon name="chevron-right" />
-                              </ListAction>
-                            </Fragment>
-                          );
-                        })}
-                      </List>
-                    </View>
-                  ) : null}
-
+            <Scroll safeAreaBottom>
+              <View direction="column" align="stretch" gap="xl" paddingY="md">
+                {hasMine ? (
                   <View direction="column" align="stretch" gap="sm">
                     <View paddingX="lg">
                       <Text size="sm" emphasis muted>
-                        {t(`${K}.buy`)}
+                        {t(`${K}.mine`)}
                       </Text>
                     </View>
-                    <View paddingX="lg">
-                      <TextField
-                        value={query}
-                        onChangeText={setQuery}
-                        placeholder={t(`${K}.searchPlaceholder`)}
-                        inputMode="search"
-                        autoCapitalize="none"
-                        accessibilityLabel={t(`${K}.search`)}
-                      >
-                        {query.length > 0 ? (
-                          <TextFieldIconButton
-                            name="cross-circle"
-                            accessibilityLabel={t(`${K}.clearSearch`)}
-                            onPress={() => setQuery("")}
-                          />
-                        ) : null}
-                      </TextField>
-                    </View>
-                    {places === null && !placesError ? (
-                      <View align="center" paddingY="lg">
-                        <Spinner />
-                      </View>
-                    ) : null}
-                    {placesError ? (
-                      <View paddingX="lg">
-                        <Text size="sm" muted align="center">
-                          {placesError}
-                        </Text>
-                      </View>
-                    ) : null}
-                    {shown.length > 0 ? (
-                      <List>
-                        {shown.map((p, index) => (
-                          <Fragment key={`${p.kind}:${p.code}`}>
-                            {index > 0 ? <ListSeparator /> : null}
-                            <ListAction accessibilityLabel={p.name} onPress={() => openPlace(p)}>
-                              <ListActionText>{placeLabel(p)}</ListActionText>
+                    <List>
+                      {/* An unpaid order opens its invoice again, but only while
+                            this wallet never started a send for it: a second
+                            send of the same invoice would lock sats nobody can
+                            claim (reopenEsimPayment). */}
+                      {openOrders.map((order, index) => (
+                        <Fragment key={order.paymentHash}>
+                          {index > 0 ? <ListSeparator /> : null}
+                          {(() => {
+                            const slow =
+                              order.paidAt !== undefined && now - order.paidAt > SLOW_DELIVERY_MS;
+                            const canPay = !slow && payable.has(order.paymentHash);
+                            const label = slow
+                              ? t(`${K}.slow`)
+                              : order.paidAt !== undefined
+                                ? t(`${K}.delivering`)
+                                : canPay
+                                  ? t(`${K}.payNow`)
+                                  : t(`${K}.pending`);
+                            return (
+                              <ListAction
+                                accessibilityLabel={`${order.placeName}, ${label}`}
+                                onPress={
+                                  slow
+                                    ? () => openSupport(order)
+                                    : canPay
+                                      ? () => payOrder(order)
+                                      : undefined
+                                }
+                              >
+                                <ListActionText>{order.placeName}</ListActionText>
+                                <ListActionTextMuted>
+                                  {bundleSummary(order.bundleName)}
+                                </ListActionTextMuted>
+                                <ListActionTrailingText>{label}</ListActionTrailingText>
+                                {slow || canPay ? (
+                                  <ListActionTrailIcon name="chevron-right" />
+                                ) : null}
+                              </ListAction>
+                            );
+                          })()}
+                        </Fragment>
+                      ))}
+                      {record.esims.map((esim, index) => {
+                        const status = statuses[esim.iccid];
+                        const left = status ? currentDataLeft(status) : null;
+                        return (
+                          <Fragment key={esim.iccid}>
+                            {index > 0 || openOrders.length > 0 ? <ListSeparator /> : null}
+                            <ListAction
+                              accessibilityLabel={esim.placeName}
+                              onPress={() => openEsimPage(esim)}
+                            >
+                              <ListActionText>{esim.placeName}</ListActionText>
+                              <ListActionTextMuted>
+                                {bundleSummary(esim.bundleName)}
+                              </ListActionTextMuted>
+                              {status ? (
+                                <ListActionTrailingText>
+                                  {!status.installed
+                                    ? t(`${K}.notInstalled`)
+                                    : left !== null
+                                      ? t(`${K}.left`, { amount: formatDataAmount(left) })
+                                      : t(`${K}.noActivePlan`)}
+                                </ListActionTrailingText>
+                              ) : null}
                               <ListActionTrailIcon name="chevron-right" />
                             </ListAction>
                           </Fragment>
-                        ))}
-                      </List>
-                    ) : places && query ? (
-                      <View paddingX="lg">
-                        <Text size="sm" muted align="center">
-                          {t(`${K}.noMatches`)}
-                        </Text>
-                      </View>
-                    ) : null}
+                        );
+                      })}
+                    </List>
                   </View>
+                ) : null}
+
+                <View direction="column" align="stretch" gap="sm">
+                  <View paddingX="lg">
+                    <Text size="sm" emphasis muted>
+                      {t(`${K}.buy`)}
+                    </Text>
+                  </View>
+                  <View paddingX="lg">
+                    <TextField
+                      value={query}
+                      onChangeText={setQuery}
+                      placeholder={t(`${K}.searchPlaceholder`)}
+                      inputMode="search"
+                      autoCapitalize="none"
+                      accessibilityLabel={t(`${K}.search`)}
+                    >
+                      {query.length > 0 ? (
+                        <TextFieldIconButton
+                          name="cross-circle"
+                          accessibilityLabel={t(`${K}.clearSearch`)}
+                          onPress={() => setQuery("")}
+                        />
+                      ) : null}
+                    </TextField>
+                  </View>
+                  {places === null && !placesError ? (
+                    <View align="center" paddingY="lg">
+                      <Spinner />
+                    </View>
+                  ) : null}
+                  {placesError ? (
+                    <View paddingX="lg">
+                      <Text size="sm" muted align="center">
+                        {placesError}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {shown.length > 0 ? (
+                    <List>
+                      {shown.map((p, index) => (
+                        <Fragment key={`${p.kind}:${p.code}`}>
+                          {index > 0 ? <ListSeparator /> : null}
+                          <ListAction accessibilityLabel={p.name} onPress={() => openPlace(p)}>
+                            <ListActionText>{placeLabel(p)}</ListActionText>
+                            <ListActionTrailIcon name="chevron-right" />
+                          </ListAction>
+                        </Fragment>
+                      ))}
+                    </List>
+                  ) : places && query ? (
+                    <View paddingX="lg">
+                      <Text size="sm" muted align="center">
+                        {t(`${K}.noMatches`)}
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
-              </Scroll>
-            </View>
-          </Screen>
-        </NuriSafeAreaProvider>
+              </View>
+            </Scroll>
+          </View>
+        </Screen>
       </Layer>
 
       {/* Plans for one country or region, cheapest first; a tap orders it and

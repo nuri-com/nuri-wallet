@@ -111,7 +111,8 @@ const ActivityDetailSheet: React.FC<Props> = ({
                   {detail.handle}
                 </Text>
               ) : null}
-              {item.amount ? (
+              {/* A swap states its figures in the From/To card below. */}
+              {item.amount && !detail.swap ? (
                 <Text size="3xl" emphasis align="center">
                   {item.amount}
                 </Text>
@@ -128,6 +129,34 @@ const ActivityDetailSheet: React.FC<Props> = ({
                 <ButtonIcon name="arrow-up" />
                 <ButtonText>{t(`${K}.sendAgain`)}</ButtonText>
               </Button>
+            ) : null}
+
+            {detail.swap ? (
+              <View
+                variant="soft"
+                radius="lg"
+                paddingX="lg"
+                paddingY="md"
+                direction="column"
+                align="stretch"
+                gap="md"
+              >
+                {(["from", "to"] as const).map((side) => (
+                  <View key={side} direction="column" align="stretch" gap="xs">
+                    <Text size="sm" muted>
+                      {t(side === "to" ? `${K}.to` : `${K}.from`)}
+                    </Text>
+                    <View direction="row" justify="between" align="center" gap="sm">
+                      <Text size="md">{detail.swap?.[side].name}</Text>
+                      {detail.swap?.[side].amount ? (
+                        <Text size="md" emphasis>
+                          {detail.swap[side].amount}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+                ))}
+              </View>
             ) : null}
 
             {detail.counterparty ? (

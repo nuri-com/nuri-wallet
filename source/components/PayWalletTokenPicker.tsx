@@ -71,7 +71,7 @@ const PayWalletTokenPicker: React.FC<Props> = ({ visible, holdings, onClose, onS
 
   return (
     <DsSheetHost visible={visible} onClose={onClose} mode="full">
-      <Header paddingTop="lg">
+      <Header safeAreaTop chrome="canvas">
         <Topbar surface="transparent" layout="fluid">
           <TopbarTitle>{t(`${K}.chooseToken`)}</TopbarTitle>
           <TopbarTrailing>
