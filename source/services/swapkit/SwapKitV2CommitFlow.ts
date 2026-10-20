@@ -22,7 +22,14 @@ import {
   commitSwapKitV2,
 } from "./SwapKitV2Service";
 import { startSwapKitV2Tracking, emitV2SwapRefresh } from "./SwapKitV2PendingTracker";
+import {
+  newV2CommitIdempotencyKey,
+  setV2QuoteRecoveryKeySource,
+  takeV2QuoteCommitKey,
+} from "./SwapKitV2QuoteCommitKey";
 import { getSwapKitV2RecoveryKey } from "./SwapKitV2RecoveryKey";
+
+setV2QuoteRecoveryKeySource(getSwapKitV2RecoveryKey);
 import {
   type SwapKitV2ExecutorSpec,
   type SwapKitV2StoredOrder,
@@ -166,7 +173,10 @@ async function adoptCommittedOrder(
 export async function commitAndTrackV2Order(
   spec: V2CommitSpec,
 ): Promise<{ orderId: string; view: SwapKitV2OrderView }> {
-  const idempotencyKey = `expo:${spec.owner.toLowerCase()}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+  // The key the quote named, so the server already prepared this commit's
+  // storage (single use); otherwise a new one.
+  const idempotencyKey =
+    takeV2QuoteCommitKey(spec.quoteId) ?? newV2CommitIdempotencyKey(spec.owner);
   const recoveryKey = await getSwapKitV2RecoveryKey();
 
   await persistV2CommitIntent({

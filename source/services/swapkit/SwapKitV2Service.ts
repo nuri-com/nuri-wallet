@@ -19,6 +19,7 @@
 import { SWAPKIT_V2_MCP_URL } from "../../config/endpoints";
 import { SWAPKIT_ENABLED } from "../../config/network";
 import { LOG_EMOJI, errorWithId, logWithId } from "../../lib/OperationLogUtils";
+import { rememberV2QuoteCommitKey, v2QuoteCommitHint } from "./SwapKitV2QuoteCommitKey";
 
 const SOURCE = "services/swapkit/SwapKitV2Service.ts";
 
@@ -403,11 +404,29 @@ export function resetSwapKitV2CapabilitiesCache(): void {
 export async function quoteSwapKitV2(
   args: Omit<SwapKitV2SwapArgs, "mode">,
 ): Promise<SwapKitV2QuoteResponse> {
+  // A committable quote (it names a destination) also names the commit to come,
+  // so the server prepares that commit's storage while the providers quote
+  // (SwapKitV2QuoteCommitKey). A caller that already knows its commit key passes
+  // it; otherwise a new one is remembered for the commit of this quote. Only a
+  // hint: without the wallet's recovery key it is left out.
+  const commitHint = args.settleTarget
+    ? await v2QuoteCommitHint(String(args.owner), {
+        idempotencyKey: typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined,
+        recoveryKey: typeof args.recoveryKey === "string" ? args.recoveryKey : undefined,
+      })
+    : null;
   await getSwapKitV2Capabilities();
   const response = await callSwapKitV2Tool<SwapKitV2QuoteResponse>("swap", {
     ...args,
+    ...(commitHint ?? {}),
     mode: "quote",
   });
+  if (commitHint && !args.idempotencyKey) {
+    rememberV2QuoteCommitKey(
+      (response.options ?? []).map((option) => String(option.quoteId ?? "")),
+      commitHint.idempotencyKey,
+    );
+  }
   return { ...response, options: preferPermitOptions(response.options ?? []) };
 }
 

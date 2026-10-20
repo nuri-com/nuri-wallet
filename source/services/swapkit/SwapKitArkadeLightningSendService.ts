@@ -94,6 +94,13 @@ function lightningQuoteRequest(args: {
 
 type LightningQuoteRequest = ReturnType<typeof lightningQuoteRequest>;
 
+/** One order per invoice: the commit key is the owner plus the invoice's
+ * payment hash. The quote names it too, so the server prepares that commit's
+ * storage while it quotes. */
+function lightningCommitKey(owner: string, invoice: string): string {
+  return `expo:lightning:${owner}:${decodeBolt11Facts(invoice).paymentHash}`;
+}
+
 /** The option a Lightning send commits: the first one whose required
  * capabilities this wallet has. Shared by the send and the prefetch so both
  * judge the same option. */
@@ -156,7 +163,11 @@ export async function prefetchArkadeIntentsLightningQuote(params: {
   if (!owner) return;
   const request = lightningQuoteRequest({ invoice, invoiceSats, owner, refundAddress });
   const fetchedAtMs = Date.now();
-  const quote = await quoteSwapKitV2(request);
+  const quote = await quoteSwapKitV2({
+    ...request,
+    idempotencyKey: lightningCommitKey(owner, invoice),
+    recoveryKey: await getSwapKitV2RecoveryKey().catch((): undefined => undefined),
+  });
   // The expiry that matters is the one of the option the send will pick, with
   // the same predicate the send uses. No stated validity on THAT option: do not
   // hold the quote at all.
@@ -222,12 +233,18 @@ export async function createArkadeIntentsLightningSend(params: {
   // A quote fetched for this exact request while the user was still on the
   // review screen is used once, if the server still stands behind it; anything
   // else is quoted now. Every check below runs on it exactly as on a fresh one.
-  const quote = takePrefetchedLightningQuote(request) ?? (await quoteSwapKitV2(request));
+  const recoveryKey = await getSwapKitV2RecoveryKey();
+  const quote =
+    takePrefetchedLightningQuote(request) ??
+    (await quoteSwapKitV2({
+      ...request,
+      idempotencyKey: lightningCommitKey(owner, invoice),
+      recoveryKey,
+    }));
   const option = selectLightningOption(quote);
   if (!option) throw new Error("No Lightning route is available.");
   if (Number(option.settleAmount).toFixed(8) !== request.amount)
     throw new Error("SwapKit settle amount does not match the invoice.");
-  const recoveryKey = await getSwapKitV2RecoveryKey();
   // One order per invoice: the same invoice re-sends the same key, which
   // returns the order the server already created, so a second tap can never
   // fund a second lockup. When that order ended with nothing funded (it
@@ -239,7 +256,7 @@ export async function createArkadeIntentsLightningSend(params: {
   // before sats move, e.g. by a resumed send whose evidence never reached the
   // server). The server's "nothing moved" only covers evidence it received.
   const paymentHash = decodeBolt11Facts(invoice).paymentHash;
-  const baseKey = `expo:lightning:${owner}:${paymentHash}`;
+  const baseKey = lightningCommitKey(owner, invoice);
   let idempotencyKey = baseKey;
   let view: SwapKitV2OrderView;
   for (let attempt = 0; ; attempt++) {
