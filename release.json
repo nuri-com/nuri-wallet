@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_sha": "59b7f39700422fcdf092487442c9a4449da946f7",
-  "release_id": "pwa-59b7f3970042",
+  "source_sha": "940c5d26a30a462f7c3017a85afcc80ac1e1489a",
+  "release_id": "pwa-940c5d26a30a",
   "app_version": "0.106.0",
   "origin": "https://app.nuri.com",
   "files": [
@@ -621,9 +621,9 @@
       "sha256": "c7e80a4c8ad7dfae59b3a9a30a94994e859192c10e31adf32abb687ba2d9ae43"
     },
     {
-      "path": "_expo/static/js/web/index-2a882ba44b6f53a39a8572554e9394a2.js",
-      "bytes": 12202307,
-      "sha256": "515964b07969afa181295321983edb5cb29fac5c8f50e57b753bd074fafcca83"
+      "path": "_expo/static/js/web/index-4a4c9fd45c847631f49374ab332f9135.js",
+      "bytes": 12202368,
+      "sha256": "e90a672cb4812d911533e5b80f27b256ab02972a5c414b35b8fcba8532d18e8e"
     },
     {
       "path": "_expo/static/js/web/index-66d4201d201ee2b134051bc4b2fb07f1.js",
@@ -1508,7 +1508,7 @@
     {
       "path": "deployment.json",
       "bytes": 665,
-      "sha256": "071d3f12c15261fe55baf69a1907c87c1adf5030b1de98a0d3d84f7040bdc452"
+      "sha256": "2c64565d0a6f1ef6268529dd8828d964f1093baca1644dc83ce1fe6a2817650d"
     },
     {
       "path": "favicon-32.png",
@@ -1543,7 +1543,7 @@
     {
       "path": "index.html",
       "bytes": 12217,
-      "sha256": "bae210c08ab5ec806f0c8f5e7836bc282ad09f871915df59903444ad7fe02c05"
+      "sha256": "5f40c3d52dd80a24a954408199d6c9af2dd72fec07ac167061f4320db01ccd70"
     },
     {
       "path": "manifest.json",
@@ -1566,9 +1566,9 @@
       "sha256": "d3f499490d1f70abbff5a07f3baa941470645365508ff00c837438bc190ca9b9"
     },
     {
-      "path": "waict/C1n3cepMKicBvljVA1S--E",
+      "path": "waict/ZwVBv3g5tsz_DtqhR7YCR8",
       "bytes": 43652,
-      "sha256": "0b59f771ea4c2a2701be58d50354bef84ce33bbe388b4f4609b106edfa59fe1a"
+      "sha256": "670541bf7839b6ccff0edaa147b60247c164dca94bb1af2d219aa749bacd994f"
     }
   ]
 }

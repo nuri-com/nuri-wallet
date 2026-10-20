@@ -39,7 +39,7 @@ const inactiveVisaCardArtwork = require("../assets/cards/nuri-card-visa-platinum
 export type HomeCarouselItem = {
   key: string;
   label: string;
-  image: ImageSourcePropType;
+  images: ImageSourcePropType[];
   amount: string;
   converted?: string | null;
   detailsLabel?: string;
@@ -132,8 +132,10 @@ const BalanceCard: React.FC<{
     <>
       <View height="lg" direction="row" align="center" justify="between">
         <View direction="row" align="center" gap="sm">
-          {images[0] ? <IconAvatar size="sm" source={images[0]} /> : null}
-          {images[1] ? <IconAvatar size="sm" source={images[1]} /> : null}
+          {images.map((source, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: fixed, ordered marks.
+            <IconAvatar key={index} size="sm" source={source} />
+          ))}
           {visaArtwork ? (
             <NuriScope mode="light">
               <VisaLabelText>{label}</VisaLabelText>
@@ -234,7 +236,7 @@ const HomeCardCarousel: React.FC<Props> = ({
         label: item.label,
         amount: item.amount,
         converted: item.converted,
-        images: [item.image],
+        images: item.images,
         detailsLabel: item.detailsLabel,
         onDetails: item.onDetails,
         inactiveVisaArtwork: item.inactiveVisaArtwork,

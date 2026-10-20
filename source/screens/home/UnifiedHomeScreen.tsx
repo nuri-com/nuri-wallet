@@ -1237,6 +1237,11 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     key: group.rail as RailKey,
     label: overviewLabels[group.key],
     image: overviewImages[group.key],
+    // Cash holds both pockets, so its card shows both flags, display currency first.
+    images:
+      group.key === "cash"
+        ? [homeFlag, homeFlag === USD_FLAG ? EUR_FLAG : USD_FLAG]
+        : [group.key === "bitcoin" ? BTC_LOGO : VISA_LOGO],
     accent: group.key === "bitcoin" ? "orange" : group.key === "cash" ? "lilac" : "neutral",
     amount: overviewFigure(group.amountHome, home),
   })) satisfies { key: RailKey; accent: Accent }[];
@@ -2074,11 +2079,11 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                   navigationRevision={carouselNavigationRevision}
                   totalLabel={t("screen.HomeScreen.totalBalance")}
                   totalAmount={total}
-                  totalImages={[homeFlag, BTC_LOGO]}
+                  totalImages={carouselRails.map((rail) => rail.images[0])}
                   items={carouselRails.map((rail) => ({
                     key: rail.key,
                     label: rail.label,
-                    image: rail.image,
+                    images: rail.images,
                     amount: rail.amount,
                     inactiveVisaArtwork: wirexRailsNeedActivation && rail.key === "visa",
                     ...(rail.key !== "visa" || wirexRailsNeedActivation
