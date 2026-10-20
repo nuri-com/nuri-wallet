@@ -9,6 +9,13 @@
 // paying that invoice out of arkade via the standard pay_lightning_invoice
 // executor — the exact same corridor a normal arkade Lightning send uses.
 //
+// ONE ORDER WHEN THE SERVER OFFERS IT: the server also serves BTC_ARKADE → BTC
+// as one composite order (the Arkade solver pays the provider's invoice
+// server-side), which saves the second order and its commit and still funds
+// with one passkey. sendArkadeToBitcoinViaLightning prices both corridors at
+// once and takes the composite when it is offered; the BTC_LN path stays as the
+// fallback. Either way nothing offboards.
+//
 // The commit response's bound actions ARE the execution: the server binds the
 // BTC_LN → BTC leg and hands back the funding Lightning invoice; nothing is
 // reconstructed client-side, and no send_asset executor is installed, so the
@@ -18,6 +25,7 @@ import { newOp, LOG_EMOJI } from "../../lib/OperationLogUtils";
 import { t } from "../../lib/i18n";
 import { isValidEvmAddress } from "../../lib/validation";
 import { getBitcoinReceiveAddress } from "../bitcoin/BitcoinAddressService";
+import { getArkadeReceiveAddress } from "../arkade/ArkadeAddressService";
 import {
   SWAPKIT_V2_ACTION_KINDS,
   type SwapKitV2QuoteOption,
@@ -32,6 +40,9 @@ const SOURCE = "services/swapkit/SwapKitV2ArkadeToBtcService.ts";
 void SOURCE;
 
 const FROM_ASSET = "BTC_LN";
+/** The one-order corridor: the server pays the Lightning hop itself. */
+const COMPOSITE_FROM_ASSET = "BTC_ARKADE";
+export type ArkadeToBtcSource = typeof FROM_ASSET | typeof COMPOSITE_FROM_ASSET;
 /** The signer that funds this route: the Arkade wallet pays the bound Lightning
  * invoice. Quote and commit MUST name the same one. */
 const ARKADE_TO_BTC_SIGNER_CLASS = { arkade: "arkade-vhtlc" } as const;
@@ -92,6 +103,9 @@ export async function quoteV2ArkadeToBtc(args: {
   sats: number;
   owner: string;
   refundAddress?: string;
+  /** BTC_LN (default): the wallet pays the bound invoice. BTC_ARKADE: one
+   * composite order, refunded to the wallet's own Arkade address. */
+  from?: ArkadeToBtcSource;
 }): Promise<{ options: V2ArkadeToBtcQuote[]; unavailable: V2ArkadeToBtcUnavailable[] }> {
   const owner = args.owner.trim();
   if (!owner || !isValidEvmAddress(owner)) throw new Error("Base wallet address not available.");
@@ -100,13 +114,11 @@ export async function quoteV2ArkadeToBtc(args: {
     throw new Error("Recipient Bitcoin address is invalid.");
   if (!Number.isSafeInteger(args.sats) || args.sats <= 0)
     throw new Error("Enter a positive Bitcoin amount.");
-  // Refund: THIS wallet's own Arkade boarding address (a Bitcoin address, as a
-  // Lightning-funded order requires), never a server-named one — a refund lands
-  // back in Arkade.
-  const refundAddress = args.refundAddress ?? (await getBitcoinReceiveAddress());
+  const from = args.from ?? FROM_ASSET;
+  const refundAddress = args.refundAddress ?? (await arkadeToBtcRefundAddress(from));
   const amountBtc = args.sats / 100_000_000;
   const response: SwapKitV2QuoteResponse = await quoteSwapKitV2({
-    from: FROM_ASSET,
+    from,
     to: TO_ASSET,
     amount: String(amountBtc),
     side: "deposit",
@@ -123,6 +135,19 @@ export async function quoteV2ArkadeToBtc(args: {
       ...(entry.reason ? { reason: entry.reason } : {}),
     })),
   };
+}
+
+/** Refund: THIS wallet's own address, never a server-named one. A Lightning-
+ * funded order (BTC_LN) refunds on the Bitcoin chain, so it takes the Arkade
+ * boarding address (a Bitcoin address); the composite (BTC_ARKADE) refunds the
+ * Arkade lockup, so it takes the Arkade address. Both land back in Arkade. */
+async function arkadeToBtcRefundAddress(from: ArkadeToBtcSource): Promise<string> {
+  if (from === COMPOSITE_FROM_ASSET) {
+    const address = await getArkadeReceiveAddress();
+    if (!address) throw new Error("Arkade receive address not available.");
+    return String(address);
+  }
+  return getBitcoinReceiveAddress();
 }
 
 export type ExecuteV2ArkadeToBtcArgs = {
@@ -143,6 +168,8 @@ export type ExecuteV2ArkadeToBtcArgs = {
   ownReceiveAddress?: string;
   onStatus?: (text: string) => void;
   onOrderId?: (orderId: string) => void;
+  /** The corridor the accepted option was quoted on (default BTC_LN). */
+  from?: ArkadeToBtcSource;
 };
 
 /**
@@ -169,9 +196,14 @@ export async function executeV2ArkadeToBtc(
     // A Lightning-funded order refunds on the Bitcoin chain, so the refund must
     // be a Bitcoin address (the server refuses an Arkade one for BTC_LN). The
     // wallet's Arkade boarding address is one: a refund lands back in Arkade.
+    // The composite refunds its Arkade lockup to the wallet's Arkade address.
+    const from = args.from ?? FROM_ASSET;
     const readOwnAddress =
-      args.ownReceiveAddress || (args.refundAddress ? null : await getBitcoinReceiveAddress());
-    const refundAddress = args.refundAddress ?? (readOwnAddress as string);
+      args.ownReceiveAddress ||
+      (args.refundAddress && from === FROM_ASSET ? null : await getBitcoinReceiveAddress());
+    const refundAddress =
+      args.refundAddress ??
+      (from === FROM_ASSET ? (readOwnAddress as string) : await arkadeToBtcRefundAddress(from));
     const amountBtc = args.sats / 100_000_000;
 
     args.onStatus?.(t("swap.status.exchanging"));
@@ -179,7 +211,7 @@ export async function executeV2ArkadeToBtc(
     const { orderId } = await commitAndTrackV2Order({
       flow: "arkade_to_btc",
       owner,
-      from: FROM_ASSET,
+      from,
       to: TO_ASSET,
       amount: String(amountBtc),
       side: "deposit",
@@ -191,9 +223,10 @@ export async function executeV2ArkadeToBtc(
       capabilities: ARKADE_TO_BTC_CAPABILITIES,
       optionId: args.optionId,
       ...(args.quoteId ? { quoteId: args.quoteId } : {}),
-      // Standard executors WITHOUT send_asset: the only bound action is the
-      // Lightning funding invoice, paid from arkade. There is no EVM leg to
-      // cap, so no approval ceiling is needed.
+      // Standard executors WITHOUT send_asset: the only bound actions are the
+      // Lightning funding invoice paid from arkade (BTC_LN), or the composite's
+      // refund material and single Arkade lockup funding (BTC_ARKADE). There is
+      // no EVM leg to cap, so no approval ceiling is needed.
       loopOptions: { executors: makeStandardV2Executors({}) },
       onOrderId: args.onOrderId,
       // The arkade SOURCE rail has no transfer store, so give the move store
@@ -243,13 +276,30 @@ export async function sendArkadeToBitcoinViaLightning(args: {
   // and the own-destination check: it is the same address each time, and each
   // read is a full wallet summary.
   const refundAddress = await getBitcoinReceiveAddress();
-  const { options } = await quoteV2ArkadeToBtc({
-    toAddress: args.toAddress,
-    sats: args.sats,
-    owner: args.owner,
-    refundAddress,
-  });
-  const option = options[0];
+  // Both corridors are priced at once. The one-order composite is taken when the
+  // server offers it; the two-order Lightning path is the fallback. Within the
+  // chosen corridor, the option that delivers the most BTC wins.
+  const [lightning, composite] = await Promise.all([
+    quoteV2ArkadeToBtc({
+      toAddress: args.toAddress,
+      sats: args.sats,
+      owner: args.owner,
+      refundAddress,
+    }).catch(() => ({ options: [] as V2ArkadeToBtcQuote[] })),
+    quoteV2ArkadeToBtc({
+      toAddress: args.toAddress,
+      sats: args.sats,
+      owner: args.owner,
+      from: COMPOSITE_FROM_ASSET,
+    }).catch(() => ({ options: [] as V2ArkadeToBtcQuote[] })),
+  ]);
+  // Only the server-paid Lightning composites: an Arkade-source route that
+  // offboarded instead would break the never-offboard rule above.
+  const oneOrder = composite.options.filter((option) =>
+    option.provider?.startsWith("arkade-intents-"),
+  );
+  const from = oneOrder.length ? COMPOSITE_FROM_ASSET : FROM_ASSET;
+  const option = mostReceived(oneOrder.length ? oneOrder : lightning.options);
   if (!option) throw new Error("No Lightning route to Bitcoin is available.");
   return executeV2ArkadeToBtc({
     toAddress: args.toAddress,
@@ -258,8 +308,17 @@ export async function sendArkadeToBitcoinViaLightning(args: {
     ...(option.quoteId ? { quoteId: option.quoteId } : {}),
     quotedReceive: option.settleAmount,
     owner: args.owner,
+    from,
     ownReceiveAddress: refundAddress,
     ...(args.onStatus ? { onStatus: args.onStatus } : {}),
     ...(args.onOrderId ? { onOrderId: args.onOrderId } : {}),
   });
+}
+
+/** The option that delivers the most BTC; the server's order breaks ties. */
+export function mostReceived(options: V2ArkadeToBtcQuote[]): V2ArkadeToBtcQuote | undefined {
+  return options.reduce<V2ArkadeToBtcQuote | undefined>(
+    (best, option) => (!best || option.settleAmount > best.settleAmount ? option : best),
+    undefined,
+  );
 }
