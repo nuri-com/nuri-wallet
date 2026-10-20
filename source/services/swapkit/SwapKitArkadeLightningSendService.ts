@@ -5,6 +5,7 @@ import { claimSwapLoop, releaseSwapLoop } from "./SwapKitLoopRegistry";
 // it for the v2 tracker. This keeps wallet-summary wakeups from funding in parallel.
 import { isValidArkAddress } from "@arkade-os/sdk";
 import { decodeBolt11Facts } from "../../lib/bitcoin/lightning";
+import { lightningSendStartedFor } from "../arkade/lightningSendStarted";
 import {
   ARKADE_LIGHTNING_MAX_SEND_SATS,
   ARKADE_LIGHTNING_MIN_SEND_SATS,
@@ -23,7 +24,7 @@ import {
   type SwapKitV2QuoteOption,
   type SwapKitV2QuoteResponse,
 } from "./SwapKitV2Service";
-import { executeAndSubmitV2Action } from "./SwapKitV2ActionService";
+import { executeAndSubmitV2Action, wasAnyV2ActionStarted } from "./SwapKitV2ActionService";
 import {
   abandonV2CommitIntent,
   persistV2CommitIntent,
@@ -227,34 +228,54 @@ export async function createArkadeIntentsLightningSend(params: {
   if (Number(option.settleAmount).toFixed(8) !== request.amount)
     throw new Error("SwapKit settle amount does not match the invoice.");
   const recoveryKey = await getSwapKitV2RecoveryKey();
-  const idempotencyKey = `expo:lightning:${owner}:${decodeBolt11Facts(invoice).paymentHash}`;
-  await persistV2CommitIntent({
-    ...request,
-    idempotencyKey,
-    recoveryKey,
-    flow: "arkade_lightning",
-    acceptedDeposit: option.depositAmount,
-    acceptedDepositAmount: option.depositAmount,
-    minimumSettleAmount: request.amount,
-  });
-  // Nothing is signed before the reply names the order, so a failed or lost
-  // reply is a plain failure: drop the intent and let the user pay again (the
-  // same invoice re-sends the same key, which returns an order the server did
-  // create).
-  let view = await commitSwapKitV2({
-    ...request,
-    optionId: option.optionId,
-    ...(option.quoteId ? { quoteId: option.quoteId } : {}),
-    idempotencyKey,
-    recoveryKey,
-    acceptedDepositAmount: option.depositAmount,
-    minimumSettleAmount: request.amount,
-  }).catch(async (error: unknown) => {
-    await abandonV2CommitIntent(idempotencyKey).catch(() => {});
-    throw error;
-  });
+  // One order per invoice: the same invoice re-sends the same key, which
+  // returns the order the server already created, so a second tap can never
+  // fund a second lockup. When that order ended with nothing funded (it
+  // expired, or failed with no money moved) it can never be paid, and the
+  // key would hand it back forever: the next key is derived from it, so a
+  // retry gets a fresh order and a lost reply still replays the same one.
+  // Never when this device may have funded the old order: a Lightning send
+  // record for the invoice or any started action of that order (both written
+  // before sats move, e.g. by a resumed send whose evidence never reached the
+  // server). The server's "nothing moved" only covers evidence it received.
+  const paymentHash = decodeBolt11Facts(invoice).paymentHash;
+  const baseKey = `expo:lightning:${owner}:${paymentHash}`;
+  let idempotencyKey = baseKey;
+  let view: SwapKitV2OrderView;
+  for (let attempt = 0; ; attempt++) {
+    await persistV2CommitIntent({
+      ...request,
+      idempotencyKey,
+      recoveryKey,
+      flow: "arkade_lightning",
+      acceptedDeposit: option.depositAmount,
+      acceptedDepositAmount: option.depositAmount,
+      minimumSettleAmount: request.amount,
+    });
+    // Nothing is signed before the reply names the order, so a failed or lost
+    // reply is a plain failure: drop the intent and let the user pay again (the
+    // same invoice re-sends the same key, which returns an order the server did
+    // create).
+    const key = idempotencyKey;
+    view = await commitSwapKitV2({
+      ...request,
+      optionId: option.optionId,
+      ...(option.quoteId ? { quoteId: option.quoteId } : {}),
+      idempotencyKey: key,
+      recoveryKey,
+      acceptedDepositAmount: option.depositAmount,
+      minimumSettleAmount: request.amount,
+    }).catch(async (error: unknown) => {
+      await abandonV2CommitIntent(key).catch(() => {});
+      throw error;
+    });
+    await resolveV2CommitIntent(key, asSwapKitV2OrderId(view.orderId), view.status);
+    if (!endedUnfunded(view) || attempt >= MAX_UNFUNDED_REPLAYS) break;
+    if (await mayHaveFunded(view.orderId, paymentHash)) break;
+    await SwapKitV2OrderStore.remove(view.orderId).catch(() => {});
+    idempotencyKey = `${baseKey}:after:${view.orderId}`;
+  }
   const orderId = asSwapKitV2OrderId(view.orderId);
-  await resolveV2CommitIntent(idempotencyKey, orderId, view.status);
   if (!claimSwapLoop(orderId)) throw new Error("This Lightning payment is already in progress.");
   try {
     if (view.actions.length === 1 && view.actions[0].kind === "arkade_refund_material") {
@@ -313,6 +334,25 @@ export async function createArkadeIntentsLightningSend(params: {
       await retireRefusedLightningOrder(orderId, recoveryKey);
     }
     throw error;
+  }
+}
+
+/** Earlier orders for one invoice a send walks past; each was a real tap. */
+const MAX_UNFUNDED_REPLAYS = 50;
+
+/** The server states this order is over and no money ever moved for it. */
+function endedUnfunded(view: SwapKitV2OrderView): boolean {
+  const status = String(view.status || "").toUpperCase();
+  if (status === "EXPIRED") return true;
+  return status === "FAILED" && view.failure?.funds === "none-moved";
+}
+
+/** Fails closed: an unreadable record counts as possibly funded. */
+async function mayHaveFunded(orderId: string, paymentHash: string): Promise<boolean> {
+  try {
+    return (await lightningSendStartedFor(paymentHash)) || (await wasAnyV2ActionStarted(orderId));
+  } catch {
+    return true;
   }
 }
 

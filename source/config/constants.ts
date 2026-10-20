@@ -41,9 +41,11 @@ export const ARKADE_BITCOIN_ONCHAIN_MIN_SEND_SATS = 3_200;
 export const BITCOIN_LNURL_MIN_SEND_SATS = 500;
 // What the Arkade Intents Lightning corridor serves today. The solver refuses
 // out-of-range itself; these exist so the user is told at the keypad instead of
-// mid-flow, and they are expected to move as the corridor ramps up.
+// mid-flow, and they are expected to move as the corridor ramps up. The max
+// mirrors the SwapKit server's cap (arkade-intents MAX_SEND_SATS, 100,000 since
+// nuri-mcp-bitcoin-swapkit#381); never above it.
 export const ARKADE_LIGHTNING_MIN_SEND_SATS = 500;
-export const ARKADE_LIGHTNING_MAX_SEND_SATS = 50_000;
+export const ARKADE_LIGHTNING_MAX_SEND_SATS = 100_000;
 // The Lightning-legged swap into a Base stable has its own floor: the provider
 // states a fiat-denominated minimum, so the live number rides on the quote
 // (`limits.minSats`) and this is only the fallback for a quote that omits it.

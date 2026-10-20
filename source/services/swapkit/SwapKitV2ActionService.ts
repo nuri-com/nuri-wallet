@@ -493,6 +493,23 @@ export async function wasV2ActionStartedWithoutEvidence(
   return evidence == null;
 }
 
+/**
+ * True when this device reached the broadcast boundary of any action of an
+ * order: every value-moving executor writes its STARTED marker there, before
+ * the send, and the marker stays after success. Evidence alone is not a mark:
+ * public actions (refund material) journal results that move no money. The
+ * server's "nothing moved" only reflects evidence it received, so a marked
+ * order may have funded. Reads strictly: an unreadable journal throws, and the
+ * caller must treat that as "may have funded".
+ */
+export async function wasAnyV2ActionStarted(orderId: string): Promise<boolean> {
+  const started = await getCacheValue<unknown>(STARTED_KEY);
+  if (started == null) return false;
+  if (typeof started !== "object") throw new Error(`unreadable v2 action journal ${STARTED_KEY}`);
+  const prefix = journalKey(orderId, "");
+  return Object.keys(started).some((entry) => entry.startsWith(prefix));
+}
+
 // ── The dispatcher ──────────────────────────────────────────────────
 
 export const BASE_CHAIN_ID = 8453;

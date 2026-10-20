@@ -33,6 +33,7 @@
 import type React from "react";
 import { Fragment, useEffect, useState } from "react";
 import { LayoutAnimation, Platform, View as RNView, UIManager } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Bleed,
   Button,
@@ -235,6 +236,7 @@ const MoveSheet: React.FC<Props> = ({
   onExecuted,
   locked = null,
 }) => {
+  const insets = useSafeAreaInsets();
   // Which side the keypad is typing into. The other side shows its value small
   // in its own row.
   const [focus, setFocus] = useState<Side>("from");
@@ -706,13 +708,16 @@ const MoveSheet: React.FC<Props> = ({
             </View>
           </View>
 
+          {/* The footer adds the safe-area inset on top of its padding. On a
+              phone without a home indicator that inset is 0 and "sm" left the
+              buttons on the screen edge, so it gets "lg" there instead. */}
           <Footer
             safeAreaBottom
             direction="column"
             align="stretch"
             gap="sm"
             paddingX="lg"
-            paddingBottom="sm"
+            paddingBottom={insets.bottom > 0 ? "sm" : "lg"}
           >
             {/* ONE box under the cards, whatever it holds. The keypad sizes it
                 and the price takes at least that height, so the card above keeps

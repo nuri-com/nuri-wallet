@@ -286,12 +286,20 @@ export async function resolveV2CommitIntent(
   // write of any row persists it, and the caller records an adoption handoff
   // so a relaunch adopts it too. Rolling back a snapshot would also erase other
   // rows changed while this write waited.
-  memory.splice(memory.indexOf(pending), 1, {
-    ...pending,
-    orderId,
-    status,
-    updatedAt: Date.now(),
-  });
+  // A replayed key names an order this device already holds: keep that row
+  // as it is (its status may be newer than the replayed commit view) and drop
+  // the intent, never a second row for one order.
+  const held = memory.find((row) => row.orderId === orderId);
+  if (held) {
+    memory.splice(memory.indexOf(pending), 1);
+  } else {
+    memory.splice(memory.indexOf(pending), 1, {
+      ...pending,
+      orderId,
+      status,
+      updatedAt: Date.now(),
+    });
+  }
   await persist();
   sessionIntentKeys.delete(idempotencyKey);
 }

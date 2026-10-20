@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_sha": "67edb72ce6793bcba5d16cd9e481bf0617591b68",
-  "release_id": "pwa-67edb72ce679",
+  "source_sha": "9d54d9a0f4f6365ad778a88e2df3db103c39f052",
+  "release_id": "pwa-9d54d9a0f4f6",
   "app_version": "0.106.0",
   "origin": "https://app.nuri.com",
   "files": [
@@ -476,9 +476,9 @@
       "sha256": "7564c86bc3cf3a1e7c5a043be766a957b673e8bc16f117bd67fbf3f28cc03b02"
     },
     {
-      "path": "_expo/static/js/web/core-46e76aa257f9d6f6ecaa95919bb43551.js",
+      "path": "_expo/static/js/web/core-5f48b52d88adabccb526f714f2b4893a.js",
       "bytes": 58811,
-      "sha256": "52cabff96599dfa2d2405bbabb049b226e46f5b744a87a65434c4183040f7fb6"
+      "sha256": "3df65796015404308009a9469067a2d4be8565aaaa18e25b3522dbf580b595d7"
     },
     {
       "path": "_expo/static/js/web/coreWallet-IZI2OUBR-c744355add863806fc80cb9909404f2e.js",
@@ -521,9 +521,9 @@
       "sha256": "fc0a7a9d5a18b8a17f06860f4f9a7397899acb82de0c6972a4edc44277c5feb0"
     },
     {
-      "path": "_expo/static/js/web/en_US-SK3WV2N3-57d8336e7e8dd72ce404b850c75ceb28.js",
+      "path": "_expo/static/js/web/en_US-SK3WV2N3-595b3ba7142fbbf0aa1d67ce9a5dbae5.js",
       "bytes": 195,
-      "sha256": "031880106a85733ddd2a64c7bda7d84ae33cdd719034a4b8fe6156f8f839f856"
+      "sha256": "58d8367311a1100d959003ac5eedd0e85107b1caf0cdc7944639b073e38a5c34"
     },
     {
       "path": "_expo/static/js/web/enkryptWallet-BO2P32DY-42b25343634f3d977391000c3fe64464.js",
@@ -626,14 +626,9 @@
       "sha256": "2512a0a869e9f728721ca72c02fc93eddee64b41381f3b60d56c26b760765cc2"
     },
     {
-      "path": "_expo/static/js/web/index-2b4eb0833d747b67a6a151d05ef2af3d.js",
-      "bytes": 12398,
-      "sha256": "5e026605d97a63f1d4cadbaa77040e7354d1a65a9314f156e1cf35bfd26039f7"
-    },
-    {
-      "path": "_expo/static/js/web/index-4e88c9eb9130600cf450ca728546724b.js",
-      "bytes": 12198757,
-      "sha256": "434f025cd92990ac21724c65a68a8e1b9f4a90913891b13d253b2a02ceb7341b"
+      "path": "_expo/static/js/web/index-358b3eac07b2b62b3a185f4575340484.js",
+      "bytes": 387181,
+      "sha256": "ee788c0c036a050d0b770d39dc541231166993cda429639ef3a6f818e2de0df9"
     },
     {
       "path": "_expo/static/js/web/index-5b8e47ff6eb9dfdd567373d4bbcf5b9c.js",
@@ -646,29 +641,34 @@
       "sha256": "a61a440c4fdbde5b6fe1bc7b2982a137ce88b4da51e66404567ca15ce565a360"
     },
     {
+      "path": "_expo/static/js/web/index-66ef4977ddd968b6b51180b20921f219.js",
+      "bytes": 12199599,
+      "sha256": "1ad0c8fb1f0358132680e5482ff4be440a010fa1b6a5d36cf89ec907156639e0"
+    },
+    {
+      "path": "_expo/static/js/web/index-797ee89afb99f333e03c4c8496fb3d53.js",
+      "bytes": 653161,
+      "sha256": "2e208d7ac20a2d36b1e4c33c5a6cf1b326a8473e1b6461e8b4933199a6dd4e71"
+    },
+    {
       "path": "_expo/static/js/web/index-8934e3ed6e1f2f99206d43215a97bbec.js",
       "bytes": 7590,
       "sha256": "d7ffb5682cbe5354f7b085c6844bf9494945adbfc7f794af15805df2d9b1071a"
     },
     {
-      "path": "_expo/static/js/web/index-bb82157919930bc20ac30613e40fca22.js",
-      "bytes": 387181,
-      "sha256": "9bd6ffe4cbd22b42ce1032a3f98beb4781175195538779b4bfe9a7b744348e5d"
-    },
-    {
-      "path": "_expo/static/js/web/index-e8cd005a825e440d5a9f7bef46ad7bee.js",
-      "bytes": 661920,
-      "sha256": "37e7a94276ae607e2c23076b6068ee262dccc18fee4552123ee1249c322f7320"
-    },
-    {
-      "path": "_expo/static/js/web/index-f20e905d08ff796065f02dbff1735029.js",
-      "bytes": 653161,
-      "sha256": "f0784a2b000d2c69c1071961f8b29b26a9be27541d92d0f4438620dbd4fa7702"
-    },
-    {
-      "path": "_expo/static/js/web/index-f2930ba74a4f6e9b33c50fa54cd67df1.js",
+      "path": "_expo/static/js/web/index-894c16ab11bafcdde950e746a1ae0c53.js",
       "bytes": 492186,
-      "sha256": "efc9252e6847321b0b75bf98f9d503b1e1d217700f65f79dd867ad3765ed97b3"
+      "sha256": "39a4ea8c724b9a3736526a100f10a016c84a55633861d56cd15a4fb9d5ff37dc"
+    },
+    {
+      "path": "_expo/static/js/web/index-a22668902daea8850aee10830d7d87e1.js",
+      "bytes": 12398,
+      "sha256": "ccd16fde93922fa12731cbd0afd0323854f5f229621e723b44a6ec8afe49df77"
+    },
+    {
+      "path": "_expo/static/js/web/index-bca06f3ffae4dec4fa2ea17d6e663755.js",
+      "bytes": 661920,
+      "sha256": "abcde54e2ebb0f271f0fc1a1b1943cef45bfed2c4d3f7d7a3e3d6c1c38aa34c2"
     },
     {
       "path": "_expo/static/js/web/injectedWallet-AWJSZPMG-2276d1be31cae1047314253f6710b65c.js",
@@ -1508,7 +1508,7 @@
     {
       "path": "deployment.json",
       "bytes": 665,
-      "sha256": "6920142dbefbf1dba30705d3a619359e0a5ad41f7fb288dd60bd0529f325bdf3"
+      "sha256": "f35032e579cdb59b53f8bbd3a71af16640975e40b9136215107ddda3f7aa3d9b"
     },
     {
       "path": "favicon-32.png",
@@ -1543,7 +1543,7 @@
     {
       "path": "index.html",
       "bytes": 12217,
-      "sha256": "e6a709c3c14730a2a830318f76a44d67f02481f7d7f4185a9687b05cea49ec77"
+      "sha256": "0cc59e793428ee5ee7e16f09560cc2f10b457083687f3336222c90cbcfc8fef4"
     },
     {
       "path": "manifest.json",
@@ -1566,9 +1566,9 @@
       "sha256": "d3f499490d1f70abbff5a07f3baa941470645365508ff00c837438bc190ca9b9"
     },
     {
-      "path": "waict/8sJ7J7NNTACxeo7aLVcHen",
+      "path": "waict/a7cB-NWbI354QhnldTzrDw",
       "bytes": 43652,
-      "sha256": "f2c27b27b34d4c00b17a8eda2d57077a720325a0d5767a20baba74322b753b49"
+      "sha256": "6bb701f8d59b237e784219e5753ceb0f00650033b6941f87fb9c6667fa249ed0"
     }
   ]
 }
