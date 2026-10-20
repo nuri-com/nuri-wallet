@@ -448,7 +448,7 @@ export const fr = {
       statusChecking: "Vérification...",
       statusAvailable: "Disponible",
       statusTaken: "Déjà pris, choisis-en un autre",
-      statusInvalid: "3-32 caractères, a-z, 0-9, . _ -",
+      statusInvalid: "3-32 caractères, a-z, 0-9, -",
       statusNetworkError: "Vérification impossible, réessaie",
       previewLabel: "Ton adresse Bitcoin",
       continue: "Continuer",

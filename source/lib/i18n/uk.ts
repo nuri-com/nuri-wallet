@@ -442,7 +442,7 @@ export const uk = {
       statusChecking: "Перевіряємо...",
       statusAvailable: "Доступне",
       statusTaken: "Вже зайняте, обери інше",
-      statusInvalid: "3-32 символи, a-z, 0-9, . _ -",
+      statusInvalid: "3-32 символи, a-z, 0-9, -",
       statusNetworkError: "Не вдалося перевірити, спробуй ще раз",
       previewLabel: "Твоя Bitcoin-адреса",
       continue: "Продовжити",

@@ -452,7 +452,7 @@ export const de = {
       statusChecking: "Wird geprüft...",
       statusAvailable: "Verfügbar",
       statusTaken: "Bereits vergeben, wähle einen anderen",
-      statusInvalid: "3-32 Zeichen, a-z, 0-9, . _ -",
+      statusInvalid: "3-32 Zeichen, a-z, 0-9, -",
       statusNetworkError: "Konnte nicht prüfen, bitte erneut versuchen",
       previewLabel: "Deine Bitcoin-Adresse",
       continue: "Weiter",

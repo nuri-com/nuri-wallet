@@ -444,7 +444,7 @@ export const it = {
       statusChecking: "Verifica...",
       statusAvailable: "Disponibile",
       statusTaken: "Già in uso, scegline un altro",
-      statusInvalid: "3-32 caratteri, a-z, 0-9, . _ -",
+      statusInvalid: "3-32 caratteri, a-z, 0-9, -",
       statusNetworkError: "Verifica non riuscita, riprova",
       previewLabel: "Il tuo indirizzo Bitcoin",
       continue: "Continua",

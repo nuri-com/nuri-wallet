@@ -9,14 +9,24 @@ export type UsernameAvailability = "available" | "taken" | "invalid" | "network_
 // statusMode="errors"). Bound it so a dead request becomes network_error.
 const LOOKUP_TIMEOUT_MS = 8000;
 
-/** Server-side regex (matches the LNURL register handler): /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/ */
+/**
+ * Every username that exists, for lookups (matches the server's handlers). Names
+ * claimed before the ENS rule below can hold a dot or an underscore.
+ */
 export const USERNAME_REGEX = /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/;
+
+/**
+ * A name that can be claimed now: also one valid ENS label, so `<name>.nuri.eth`
+ * resolves (server-arkade-v4 isEnsUsername). No dot, no underscore, no "--" in
+ * places 3 and 4.
+ */
+const CLAIMABLE_USERNAME_REGEX = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])?$/;
 
 export function isUsernameFormatValid(name: string): boolean {
   const normalized = String(name || "")
     .trim()
     .toLowerCase();
-  return USERNAME_REGEX.test(normalized);
+  return CLAIMABLE_USERNAME_REGEX.test(normalized) && normalized.slice(2, 4) !== "--";
 }
 
 export async function checkUsernameAvailability(name: string): Promise<UsernameAvailability> {

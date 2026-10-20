@@ -447,7 +447,7 @@ export const ptPT = {
       statusChecking: "A verificar...",
       statusAvailable: "Disponível",
       statusTaken: "Já está em uso, escolhe outro",
-      statusInvalid: "3-32 caracteres, a-z, 0-9, . _ -",
+      statusInvalid: "3-32 caracteres, a-z, 0-9, -",
       statusNetworkError: "Não foi possível verificar, tenta novamente",
       previewLabel: "O teu endereço Bitcoin",
       continue: "Continuar",

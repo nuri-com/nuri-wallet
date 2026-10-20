@@ -514,6 +514,14 @@ const POLL_MAX_ATTEMPTS = 40;
 const PENDING_WITHDRAW_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const WITHDRAW_POLL_START_INTERVAL_MS = 500;
 const WITHDRAW_POLL_TIMEOUT_MS = POLL_INTERVAL_MS * POLL_MAX_ATTEMPTS;
+/** How often the background row check reads a pending withdrawal's session. */
+const WITHDRAW_BACKGROUND_CHECK_MS = 60_000;
+/**
+ * How long that read may take. It holds the money-movement turn, so a stalled
+ * request must not keep withdrawals and swaps waiting; past this the outcome is
+ * simply still unknown and the marker stays.
+ */
+const WITHDRAW_BACKGROUND_READ_TIMEOUT_MS = 15_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -719,13 +727,41 @@ class WirexService {
     // freshly minted session.
     // `cachedSessionOnly` reads with the cached session and never mints one, so
     // the read can never raise a biometric prompt (the retry included).
-    opts: { authorized?: boolean; abortIf?: () => boolean; cachedSessionOnly?: boolean } = {},
+    // `timeoutMs` (unauthorized reads only) aborts the request and rejects once
+    // it passes, response body included. The rejection does not wait on the
+    // transport honouring the abort, so a late answer is discarded.
+    opts: {
+      authorized?: boolean;
+      abortIf?: () => boolean;
+      cachedSessionOnly?: boolean;
+      timeoutMs?: number;
+    } = {},
   ): Promise<T> {
     const params = new URLSearchParams(query).toString();
     const url = params ? `${this.restBaseUrl}${path}?${params}` : `${this.restBaseUrl}${path}`;
     const label = `GET ${path}`;
     if (!opts.authorized) {
-      return this.unwrap<T>(await fetch(url, { method: "GET" }), label);
+      if (!opts.timeoutMs) return this.unwrap<T>(await fetch(url, { method: "GET" }), label);
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`${label} timed out`));
+        }, opts.timeoutMs);
+      });
+      try {
+        return await Promise.race([
+          (async () =>
+            this.unwrap<T>(
+              await fetch(url, { method: "GET", signal: controller.signal }),
+              label,
+            ))(),
+          timedOut,
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
     }
     // Minting a token awaits a signature, and an account switch can land inside
     // that await — so abandonment is re-checked HERE, after the token resolves
@@ -1388,11 +1424,13 @@ class WirexService {
    *  - completed        → returns the result (the prior withdrawal went through)
    *  - definitive fail  → clears the lock, returns null (safe to start a new one)
    *  - still ambiguous  → throws WirexWithdrawUnconfirmedError (stays locked)
-   * Returns null when there is no pending record.
+   * Returns null when there is no pending record. `once` reads the session a
+   * single time instead of waiting on it (the background row check).
    */
   private async reconcilePendingWithdrawal(
     wallet: string,
     trace: (label: string, data?: unknown) => void,
+    opts: { once?: boolean } = {},
   ): Promise<WirexWithdrawalResult | null> {
     const key = pendingWithdrawKeyFor(wallet);
     const raw = (await getAuthData(key))?.trim();
@@ -1452,6 +1490,7 @@ class WirexService {
         "completed",
         trace,
         marker.kind === "fx" ? wirexConfig.routes.fxResult : wirexConfig.routes.withdrawResult,
+        opts.once,
       );
       if (!result.amount || !result.first_tx_hash || !result.final_tx_hash) {
         throw new Error("wirex_withdraw_result_invalid");
@@ -1522,9 +1561,29 @@ class WirexService {
     if (this.activeWithdrawals > 0) return true;
     const wallet = await getEthereumAddress();
     if (!wallet) return false;
-    const raw = (await getAuthData(pendingWithdrawKeyFor(wallet)))?.trim();
-    return !!raw;
+    if (!(await getAuthData(pendingWithdrawKeyFor(wallet)))?.trim()) return false;
+    // A marker alone is not an answer: ask its execution session, through the
+    // same reconciliation the next withdrawal runs. Completed, definitively
+    // failed, expired or unreadable releases the lock and the row with it; an
+    // unknown outcome keeps both. It only reads, never submits anything. It runs
+    // in the withdrawal turn, so it cannot touch a marker a withdrawal starting
+    // now is writing.
+    const now = Date.now();
+    if (now - this.lastWithdrawalCheckAt < WITHDRAW_BACKGROUND_CHECK_MS) return true;
+    this.lastWithdrawalCheckAt = now;
+    return this.takeWithdrawalTurn(async () => {
+      const owner = await getEthereumAddress();
+      if (!owner) return false;
+      try {
+        await this.reconcilePendingWithdrawal(owner, () => {}, { once: true });
+        return false;
+      } catch {
+        return true;
+      }
+    });
   }
+
+  private lastWithdrawalCheckAt = 0;
 
   /**
    * Whether a SEPA transfer has left the pending state on the bank feed.
@@ -1842,15 +1901,18 @@ class WirexService {
     target: "approval_required" | "completed",
     trace?: (label: string, data?: unknown) => void,
     route: string = wirexConfig.routes.withdrawResult,
+    once = false,
   ): Promise<WithdrawalResultData> {
     const deadline = Date.now() + WITHDRAW_POLL_TIMEOUT_MS;
     let interval = WITHDRAW_POLL_START_INTERVAL_MS;
     for (let attempt = 0; Date.now() < deadline; attempt++) {
       let data: WithdrawalResultData;
       try {
-        data = await this.get<WithdrawalResultData>(route, {
-          session_id: sessionId,
-        });
+        data = await this.get<WithdrawalResultData>(
+          route,
+          { session_id: sessionId },
+          once ? { timeoutMs: WITHDRAW_BACKGROUND_READ_TIMEOUT_MS } : {},
+        );
       } catch (error) {
         // The reason the request itself failed — a dead session, a 4xx, a parse
         // error — is what tells the difference between "not ready yet" and
@@ -1885,6 +1947,7 @@ class WirexService {
       if (!stillWaiting) {
         throw new Error(`wirex_withdraw_unexpected_status:${data.status ?? "unknown"}`);
       }
+      if (once) break;
       await sleep(interval);
       interval = Math.min(POLL_INTERVAL_MS, Math.round(interval * 1.5));
     }

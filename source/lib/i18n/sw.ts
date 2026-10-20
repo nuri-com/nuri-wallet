@@ -445,7 +445,7 @@ export const sw = {
       statusChecking: "Inakagua...",
       statusAvailable: "Linapatikana",
       statusTaken: "Limeshachukuliwa, chagua jingine",
-      statusInvalid: "Herufi 3-32, a-z, 0-9, . _ -",
+      statusInvalid: "Herufi 3-32, a-z, 0-9, -",
       statusNetworkError: "Imeshindwa kukagua, jaribu tena",
       previewLabel: "Anwani yako ya Bitcoin",
       continue: "Endelea",

@@ -443,7 +443,7 @@ export const en = {
       statusChecking: "Checking...",
       statusAvailable: "Available",
       statusTaken: "Already taken, pick another",
-      statusInvalid: "3-32 chars, a-z, 0-9, . _ -",
+      statusInvalid: "3-32 chars, a-z, 0-9, -",
       statusNetworkError: "Couldn't check, try again",
       previewLabel: "Your Bitcoin address",
       continue: "Continue",

@@ -445,7 +445,7 @@ export const nl = {
       statusChecking: "Controleren...",
       statusAvailable: "Beschikbaar",
       statusTaken: "Al in gebruik, kies een andere",
-      statusInvalid: "3-32 tekens, a-z, 0-9, . _ -",
+      statusInvalid: "3-32 tekens, a-z, 0-9, -",
       statusNetworkError: "Controle mislukt, probeer het opnieuw",
       previewLabel: "Je Bitcoin-adres",
       continue: "Doorgaan",

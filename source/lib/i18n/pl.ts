@@ -447,7 +447,7 @@ export const pl = {
       statusChecking: "Sprawdzanie...",
       statusAvailable: "Dostępna",
       statusTaken: "Już zajęta, wybierz inną",
-      statusInvalid: "3-32 znaki, a-z, 0-9, . _ -",
+      statusInvalid: "3-32 znaki, a-z, 0-9, -",
       statusNetworkError: "Nie udało się sprawdzić, spróbuj ponownie",
       previewLabel: "Twój adres Bitcoin",
       continue: "Dalej",

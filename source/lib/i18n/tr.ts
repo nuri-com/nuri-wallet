@@ -439,7 +439,7 @@ export const tr = {
       statusChecking: "Kontrol ediliyor...",
       statusAvailable: "Kullanılabilir",
       statusTaken: "Zaten alınmış, başka birini seç",
-      statusInvalid: "3-32 karakter, a-z, 0-9, . _ -",
+      statusInvalid: "3-32 karakter, a-z, 0-9, -",
       statusNetworkError: "Kontrol edilemedi, tekrar dene",
       previewLabel: "Bitcoin adresin",
       continue: "Devam et",
