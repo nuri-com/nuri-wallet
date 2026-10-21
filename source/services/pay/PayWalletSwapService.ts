@@ -222,6 +222,12 @@ export type PayWalletQuote = {
   request: PayWalletQuoteRequest;
   asset: string;
   option: SwapKitV2QuoteOption;
+  /**
+   * The payment's own recovery key, named on the quote so the server keeps the
+   * quote where the commit looks for it. Without it the quote would carry the
+   * signed-in Nuri wallet's key and the commit would answer "quote expired".
+   */
+  recoveryKey?: string;
 };
 
 const CAPABILITIES = ["execute_evm_call", "sign_typed_data"] as const;
@@ -248,7 +254,7 @@ function quoteArgs(request: PayWalletQuoteRequest, asset: string): Record<string
  */
 export async function quotePayWalletSwap(
   request: PayWalletQuoteRequest,
-  deps: Pick<PayWalletDeps, "quote">,
+  deps: Pick<PayWalletDeps, "quote" | "randomId">,
 ): Promise<(PayWalletQuote & { options: SwapKitV2QuoteOption[] }) | null> {
   const asset = payWalletAssetId(request.token);
   if (!asset) return null;
@@ -272,7 +278,8 @@ export async function quotePayWalletSwap(
     };
     return { request, asset, option, options: [option] };
   }
-  const response = await deps.quote(quoteArgs(request, asset));
+  const recoveryKey = newPayRecoveryKey(deps);
+  const response = await deps.quote({ ...quoteArgs(request, asset), recoveryKey });
   const native = isPayWalletNative(request.token);
   const usable = (response.options ?? []).filter(
     (option) =>
@@ -304,7 +311,12 @@ export async function quotePayWalletSwap(
       ? compareDecimals(a.depositAmount, b.depositAmount)
       : compareDecimals(b.settleAmount, a.settleAmount),
   );
-  return { request, asset, option: options[0] as SwapKitV2QuoteOption, options };
+  return { request, asset, option: options[0] as SwapKitV2QuoteOption, options, recoveryKey };
+}
+
+/** A per-payment recovery key: the payer's order is never the signed-in wallet's. */
+function newPayRecoveryKey(deps: Pick<PayWalletDeps, "randomId">): string {
+  return `${deps.randomId()}${deps.randomId()}`.replace(/-/g, "");
 }
 
 /** The one "route" for a token that already is the balance's asset. */
@@ -646,7 +658,7 @@ export async function payWithWallet(
   }
   const record: PayWalletRecord = {
     accepted,
-    recoveryKey: `${deps.randomId()}${deps.randomId()}`.replace(/-/g, ""),
+    recoveryKey: accepted.recoveryKey ?? newPayRecoveryKey(deps),
     idempotencyKey: deps.randomId(),
     orderId: null,
     evidence: {},
