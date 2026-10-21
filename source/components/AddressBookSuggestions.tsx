@@ -84,30 +84,47 @@ type Props = {
   accepts: (destination: Destination) => boolean;
   /** Cost of a destination from this screen; set to show each contact once, at its cheapest. */
   cost?: (destination: Destination) => number;
+  /**
+   * This screen pays a Nuri username (looked up when the send continues): a
+   * Nuri contact is offered as their username, never a saved address.
+   */
+  payUsername?: boolean;
   onPick: (suggestion: DestinationSuggestion) => void;
 };
 
-export default function AddressBookSuggestions({ active, query, accepts, cost, onPick }: Props) {
+export default function AddressBookSuggestions({
+  active,
+  query,
+  accepts,
+  cost,
+  payUsername = false,
+  onPick,
+}: Props) {
   const contacts = useAddressBookContacts(active);
   const suggestions = useMemo(() => {
     if (!active) return [];
-    if (!query.trim()) return payableContacts(contacts, accepts, cost);
-    return suggestDestinations(contacts, query, accepts, 5, cost);
-  }, [active, contacts, query, accepts, cost]);
+    if (!query.trim()) return payableContacts(contacts, accepts, cost, payUsername);
+    return suggestDestinations(contacts, query, accepts, 5, cost, payUsername);
+  }, [active, contacts, query, accepts, cost, payUsername]);
   if (suggestions.length === 0) return null;
   return (
     <List>
-      {suggestions.map((suggestion) => (
-        <ListAction
-          key={`${suggestion.contact.id}-${suggestion.index}`}
-          accessibilityLabel={`${suggestion.contact.label}, ${destinationHint(suggestion.destination)}`}
-          onPress={() => onPick(suggestion)}
-        >
-          <ListActionLeadingAvatar source={contactAvatar(suggestion.contact)} />
-          <ListActionText>{suggestion.contact.label}</ListActionText>
-          <ListActionTextMuted>{destinationHint(suggestion.destination)}</ListActionTextMuted>
-        </ListAction>
-      ))}
+      {suggestions.map((suggestion) => {
+        const hint = suggestion.username
+          ? `@${suggestion.username}`
+          : destinationHint(suggestion.destination);
+        return (
+          <ListAction
+            key={`${suggestion.contact.id}-${suggestion.index}`}
+            accessibilityLabel={`${suggestion.contact.label}, ${hint}`}
+            onPress={() => onPick(suggestion)}
+          >
+            <ListActionLeadingAvatar source={contactAvatar(suggestion.contact)} />
+            <ListActionText>{suggestion.contact.label}</ListActionText>
+            <ListActionTextMuted>{hint}</ListActionTextMuted>
+          </ListAction>
+        );
+      })}
     </List>
   );
 }

@@ -81,8 +81,6 @@ const OFFCHAIN_LOOKUP = parseAbi([
   "error OffchainLookup(address sender, string[] urls, bytes callData, bytes4 callbackFunction, bytes extraData)",
 ]);
 
-const cache = new Map<string, PayRecipient | null>();
-
 function cleaned(value: string): string | null {
   const trimmed = String(value || "").trim();
   return trimmed.length > 0 ? trimmed : null;
@@ -167,6 +165,9 @@ function ethCall(client: RpcClient, to: Hex, data: Hex): Promise<Hex> {
  * Resolves a username to its rails, or null when the name carries none (an
  * unregistered username answers every key with an empty string).
  *
+ * Asked fresh every time, never cached: a user's addresses can change, and a
+ * send must go to the address their name has now.
+ *
  * Throws only when every RPC is unreachable. Callers must keep "no such user"
  * (null) and "we could not check" (throw) apart: showing an outage as an unknown
  * username sends the payer away from a link that is perfectly valid.
@@ -177,14 +178,11 @@ export async function resolvePayRecipient(username: string): Promise<PayRecipien
     .toLowerCase();
   if (!normalized) return null;
 
-  const cached = cache.get(normalized);
-  if (cached !== undefined) return cached;
-
   const name = `${normalized}.${ENS_PARENT_DOMAIN}`;
   const node = namehash(name);
   const dnsName = toHex(packetToBytes(name));
 
-  const recipient = await withFallback(ENS_CHAIN_ID, async (client) => {
+  return await withFallback(ENS_CHAIN_ID, async (client) => {
     const resolver = await client.getEnsResolver({
       name,
       universalResolverAddress: ENS_UNIVERSAL_RESOLVER,
@@ -217,12 +215,4 @@ export async function resolvePayRecipient(username: string): Promise<PayRecipien
     const hasAnyRail = Object.values(rails).some((value) => value !== null);
     return hasAnyRail ? { username: normalized, ...rails } : null;
   });
-
-  cache.set(normalized, recipient);
-  return recipient;
-}
-
-/** Test seam — the module-level cache would otherwise leak between cases. */
-export function resetPayRecipientCache(): void {
-  cache.clear();
 }

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ImageSourcePropType, StyleSheet } from "react-native";
 
 import {
@@ -28,6 +28,11 @@ import { contactRowLabelKey } from "../lib/addressBook/activityContact";
 import type { ActivityPerson } from "../lib/activityDetail";
 import { arkAddressScript } from "../services/arkade/arkadeCounterparty";
 import { useNuriNames } from "../services/arkade/nuriNames";
+import { rememberNuriPayment } from "../services/addressBook/nuriContactSync";
+import { evmDestination, nuriActivityPayments } from "../lib/addressBook/nuriContacts";
+import { resolvePayRecipient } from "../lib/pay/resolvePayRecipient";
+import { createRecipientLookupGate } from "../lib/pay/recipientLookupGate";
+import { lookUpSendAgain } from "../lib/activitySendAgain";
 import { contactAvatar } from "../lib/addressBook/petAvatar";
 import { isValidEvmAddress } from "../lib/validation";
 import { EventBus } from "../services/events/AppEventBusService";
@@ -65,8 +70,11 @@ export type ActivityItem = {
   onPress?: () => void;
   /** What `onPress` does, as its details list it ("View on Basescan"). */
   onPressLabel?: string;
-  /** Pay the same recipient again: opens the send prefilled, never sends. */
-  onSendAgain?: () => void;
+  /**
+   * Pay the same recipient again: opens the send prefilled, never sends. A Nuri
+   * user is paid at `recipient`, the address their username has now.
+   */
+  onSendAgain?: (recipient?: string) => void;
   /** A live screen of the row's own (a swap in progress), opened instead of the details. */
   onOpen?: () => void;
   /**
@@ -212,6 +220,22 @@ const ActivitySheet: React.FC<Props> = ({
     [items, contactOf],
   );
   const nameOf = useNuriNames(unsavedAddresses, visible);
+  // A Nuri user the server names joins the address book by themselves, with
+  // the addresses of their payments, newest first (#1770). Once saved, the
+  // rows read as the contact; a list whose newest payments are saved writes nothing.
+  useEffect(() => {
+    if (!visible) return;
+    const rows = items.flatMap((item) => {
+      const address = evmOf(item);
+      if (!address) return [];
+      const contact = contactOf(item);
+      const username = contact ? (contact.nuriUsername ?? null) : nameOf(address);
+      return [{ address, username, saved: contact !== null }];
+    });
+    for (const [username, addresses] of nuriActivityPayments(rows)) {
+      void rememberNuriPayment(username, addresses.map(evmDestination)).catch(() => {});
+    }
+  }, [visible, items, contactOf, nameOf]);
   // Who the other side is: a saved contact first, else the Nuri user the
   // server names for the address.
   const personOf = useCallback(
@@ -233,6 +257,52 @@ const ActivitySheet: React.FC<Props> = ({
     },
     [contactOf, nameOf],
   );
+  // Send again to a Nuri user: their username is looked up now, so the send
+  // goes to the address it has today, never one saved from this payment.
+  // A lookup answers only for the row whose details are still open.
+  const [sendAgainBusy, setSendAgainBusy] = useState(false);
+  const [detailMessage, setDetailMessage] = useState<string | null>(null);
+  const sendAgainGate = useRef(createRecipientLookupGate());
+  const openRowKey = useRef("");
+  openRowKey.current = visible && detailFor ? detailFor.key : "";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new row (or none) drops the old lookup
+  useEffect(() => {
+    sendAgainGate.current.invalidate();
+    setSendAgainBusy(false);
+    setDetailMessage(null);
+  }, [detailFor, visible]);
+  const sendAgain = useCallback(async (item: ActivityItem, username: string | undefined) => {
+    if (!item.onSendAgain) return;
+    if (!username || !evmOf(item)) {
+      setDetailFor(null);
+      item.onSendAgain();
+      return;
+    }
+    setSendAgainBusy(true);
+    setDetailMessage(null);
+    const result = await lookUpSendAgain({
+      username,
+      rowKey: item.key,
+      openRowKey: () => openRowKey.current,
+      gate: sendAgainGate.current,
+      resolve: resolvePayRecipient,
+      isValidAddress: isValidEvmAddress,
+    });
+    if (result.kind === "stale") return;
+    setSendAgainBusy(false);
+    if (result.kind === "go") {
+      setDetailFor(null);
+      item.onSendAgain(result.address);
+    } else {
+      setDetailMessage(
+        t(
+          result.kind === "notFound"
+            ? "screen.AddressBook.nuriLookup_notFound"
+            : "screen.AddressBook.nuriLookup_failed",
+        ),
+      );
+    }
+  }, []);
   const pressRow = useCallback((item: ActivityItem) => {
     if (item.onOpen) item.onOpen();
     else setDetailFor(item);
@@ -381,10 +451,10 @@ const ActivitySheet: React.FC<Props> = ({
               : item.saveOffer,
           );
         }}
+        sendAgainBusy={sendAgainBusy}
+        message={detailMessage}
         onSendAgain={() => {
-          const item = detailFor;
-          setDetailFor(null);
-          item?.onSendAgain?.();
+          if (detailFor) void sendAgain(detailFor, detailPerson?.person.username);
         }}
         onClose={() => setDetailFor(null)}
       />

@@ -39,8 +39,12 @@ type Props = {
   /** Offer "Add to address book" (the other side is not saved yet). */
   canSave: boolean;
   onSave: () => void;
-  /** The row's Send again, after the details close. */
+  /** The row's Send again; the details close once it goes ahead. */
   onSendAgain: () => void;
+  /** Send again is looking the recipient up. */
+  sendAgainBusy?: boolean;
+  /** Why Send again could not go ahead. */
+  message?: string | null;
   onClose: () => void;
 };
 
@@ -68,6 +72,8 @@ const ActivityDetailSheet: React.FC<Props> = ({
   canSave,
   onSave,
   onSendAgain,
+  sendAgainBusy = false,
+  message = null,
   onClose,
 }) => {
   const detail = item ? activityDetail(item, person) : null;
@@ -125,10 +131,23 @@ const ActivityDetailSheet: React.FC<Props> = ({
             </View>
 
             {item.onSendAgain ? (
-              <Button size="lg" variant="solid" accent="lilac" onPress={onSendAgain}>
+              <Button
+                size="lg"
+                variant="solid"
+                accent="lilac"
+                disabled={sendAgainBusy}
+                onPress={onSendAgain}
+              >
                 <ButtonIcon name="arrow-up" />
-                <ButtonText>{t(`${K}.sendAgain`)}</ButtonText>
+                <ButtonText>
+                  {sendAgainBusy ? t("screen.AddressBook.nuriLookupBusy") : t(`${K}.sendAgain`)}
+                </ButtonText>
               </Button>
+            ) : null}
+            {message ? (
+              <Text size="sm" muted align="center">
+                {message}
+              </Text>
             ) : null}
 
             {detail.swap ? (

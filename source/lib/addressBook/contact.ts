@@ -294,7 +294,17 @@ export function destinationKey(destination: Destination): string {
   }
 }
 
-export type DestinationSuggestion = { contact: Contact; destination: Destination; index: number };
+export type DestinationSuggestion = {
+  contact: Contact;
+  destination: Destination;
+  index: number;
+  /**
+   * Set for a Nuri user on a screen that pays usernames: the pick is their
+   * username, looked up when the send continues, never a saved address
+   * (`destination` is then only one of their known addresses).
+   */
+  username?: string;
+};
 
 /**
  * Saved destinations that match what the user is typing into a recipient
@@ -314,6 +324,8 @@ export function suggestDestinations(
    * cheapest payable destination: a person is one row, not one per address.
    */
   cost?: (destination: Destination) => number,
+  /** This screen pays a Nuri username: a Nuri contact is one row, their username. */
+  payUsername = false,
 ): DestinationSuggestion[] {
   const q = trim(query).toLowerCase();
   if (!q) return [];
@@ -330,10 +342,15 @@ export function suggestDestinations(
       hit(contact.label) ||
       hit(contact.note ?? "") ||
       (contact.nuriUsername ? hit(`@${contact.nuriUsername}`) : false);
+    // A Nuri user is also found by any address they were paid at before.
+    const byAddress = (destination: Destination) =>
+      Object.values(destination).some((v) => hit(String(v)));
     out.push(
       ...cheapestPerContact(
-        payableDestinations(contact, accepts, cost).filter(
-          (m) => byName || Object.values(m.destination).some((v) => hit(String(v))),
+        payableDestinations(contact, accepts, cost, payUsername).filter(
+          (m) =>
+            byName ||
+            (m.username ? contact.destinations.some(byAddress) : byAddress(m.destination)),
         ),
         cost,
       ),
@@ -343,7 +360,9 @@ export function suggestDestinations(
   if (
     out.some(
       (s) =>
-        compact(s.destination.raw) === cq ||
+        (s.username
+          ? cq === s.username || cq === `@${s.username}`
+          : compact(s.destination.raw) === cq) ||
         (s.destination.type === "bank" && s.destination.iban.toLowerCase() === cq) ||
         (s.destination.type === "card" && s.destination.number === cq.replace(/-/g, "")),
     )
@@ -358,7 +377,20 @@ function payableDestinations(
   contact: Contact,
   accepts: (destination: Destination) => boolean,
   cost?: (destination: Destination) => number,
+  payUsername = false,
 ): DestinationSuggestion[] {
+  // A Nuri user is paid at the address their username has now, whatever was
+  // saved for them: one row, the username.
+  if (payUsername && contact.nuriUsername && contact.destinations[0]) {
+    return [
+      {
+        contact,
+        destination: contact.destinations[0],
+        index: -1,
+        username: contact.nuriUsername,
+      },
+    ];
+  }
   const out: DestinationSuggestion[] = [];
   contact.destinations.forEach((destination, index) => {
     if (!accepts(destination)) return;
@@ -386,18 +418,19 @@ export function payableContacts(
   contacts: Contact[],
   accepts: (destination: Destination) => boolean,
   cost?: (destination: Destination) => number,
+  payUsername = false,
 ): DestinationSuggestion[] {
   return contacts
     .filter((contact) => !contact.deleted)
     .flatMap((contact) => {
-      const payable = payableDestinations(contact, accepts, cost);
+      const payable = payableDestinations(contact, accepts, cost, payUsername);
       return cost ? cheapestPerContact(payable, cost) : payable.slice(0, 1);
     })
     .sort((a, b) => a.contact.label.localeCompare(b.contact.label));
 }
 
 /** Two typed addresses are the same (bech32/hex/Lightning ignore case; base58 doesn't). */
-function sameAddress(a: string, b: string): boolean {
+export function sameAddress(a: string, b: string): boolean {
   const x = a.trim();
   const y = b.trim();
   if (x === y) return true;

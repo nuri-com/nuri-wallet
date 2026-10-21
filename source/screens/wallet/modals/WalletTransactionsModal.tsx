@@ -366,7 +366,9 @@ const WalletTransactionsModal: React.FC<Props> = ({
             }
           : null,
         // Paying someone again: never your own wallet or a swap's counterparty.
-        ...(recipient && !swap && onSendAgain ? { onSendAgain: () => onSendAgain(recipient) } : {}),
+        ...(recipient && !swap && onSendAgain
+          ? { onSendAgain: (to?: string) => onSendAgain(to ?? recipient) }
+          : {}),
         amount: amountText,
         pending: (isPendingBalance || isPendingLocal || isPending) && !isRejected,
         createdAt: dateIso || undefined,

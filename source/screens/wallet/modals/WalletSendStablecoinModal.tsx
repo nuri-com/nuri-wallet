@@ -29,6 +29,8 @@ import { STABLECOIN_MIN_SEND_AMOUNT } from "../../../config/constants";
 import { t } from "../../../lib/i18n";
 import { isEnsName, resolveEnsName } from "../../../lib/qr/resolveEns";
 import { toNuriUsername } from "../../../lib/pay/nuriUsername";
+import { evmDestination } from "../../../lib/addressBook/nuriContacts";
+import { rememberNuriPayment } from "../../../services/addressBook/nuriContactSync";
 import { resolvePayRecipient } from "../../../lib/pay/resolvePayRecipient";
 import { createRecipientLookupGate } from "../../../lib/pay/recipientLookupGate";
 import { isValidEvmAddress } from "../../../lib/validation";
@@ -359,6 +361,15 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
         }
       }
 
+      // Paid a Nuri user by username: they join the address book (#1770).
+      const paidUsername =
+        !exact && resolvedRecipient && resolvedRecipient.trim() === addr
+          ? toNuriUsername(typedRecipient)
+          : null;
+      if (paidUsername) {
+        void rememberNuriPayment(paidUsername, [evmDestination(addr)]).catch(() => {});
+      }
+
       // A send to someone else is reported by the status pill: Completed when
       // it confirmed, else Processing until its receipt, then Completed or
       // failed. A card top-up keeps its own reporting.
@@ -623,8 +634,10 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
                 active={visible && onRecipientStep && !toCard && !payout}
                 query={manualRecipient}
                 accepts={acceptsSavedDestination}
-                onPick={({ destination }) => {
-                  setManualRecipient(destination.raw);
+                payUsername
+                onPick={({ destination, username }) => {
+                  // A Nuri contact: their username, looked up on Next.
+                  setManualRecipient(username ? `@${username}` : destination.raw);
                   resetRecipientLookup();
                 }}
               />

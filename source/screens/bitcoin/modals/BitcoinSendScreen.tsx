@@ -140,6 +140,8 @@ import {
 import { isNuriLightningAddress, toNuriUsername } from "../../../lib/pay/nuriUsername";
 import { resolvePayRecipient } from "../../../lib/pay/resolvePayRecipient";
 import { nuriUsernameDestination } from "../../../lib/pay/nuriUsernameDestination";
+import { bitcoinDestination } from "../../../lib/addressBook/nuriContacts";
+import { rememberNuriPayment } from "../../../services/addressBook/nuriContactSync";
 import { createRecipientLookupGate } from "../../../lib/pay/recipientLookupGate";
 import type { BitcoinSendProps } from "../../../types/bitcoin";
 import { groupCount } from "../../../lib/formatting";
@@ -252,6 +254,9 @@ export default function BitcoinSendScreen({
   // What the field holds right now, for a lookup that lands long after it began.
   const toAddressRef = useRef(toAddress);
   toAddressRef.current = toAddress;
+  // The Nuri user a username lookup turned into the address in the field: a
+  // send that goes there saves them in the address book (#1770).
+  const nuriRecipientRef = useRef<{ username: string; address: string } | null>(null);
   // Any change to the recipient (typing, paste, preset) and any open/close
   // abandons a username lookup still in flight for the old one.
   useEffect(() => {
@@ -525,6 +530,12 @@ export default function BitcoinSendScreen({
 
   const scheduleSendSuccess = useCallback(
     (txId: string) => {
+      const nuri = nuriRecipientRef.current;
+      if (nuri && nuri.address === toAddressRef.current.trim()) {
+        void rememberNuriPayment(nuri.username, [
+          bitcoinDestination(nuri.address, isArkAddress(nuri.address)),
+        ]).catch(() => {});
+      }
       if (!onSendSuccess) return;
       const delay = Platform.OS === "ios" ? 350 : 200;
       setTimeout(() => {
@@ -564,8 +575,10 @@ export default function BitcoinSendScreen({
       .then((recipient) => {
         if (!stillCurrent()) return;
         const destination = nuriUsernameDestination(recipient, sendSource);
-        if (destination) setToAddress(destination);
-        else setErrorMessage(t("screen.BitcoinSendScreen.errorUsernameNotFound"));
+        if (destination) {
+          nuriRecipientRef.current = { username, address: destination };
+          setToAddress(destination);
+        } else setErrorMessage(t("screen.BitcoinSendScreen.errorUsernameNotFound"));
       })
       .catch(() => {
         if (stillCurrent())
@@ -2146,6 +2159,7 @@ export default function BitcoinSendScreen({
           setErrorMessage(t("screen.BitcoinSendScreen.errorUsernameNotFound"));
           return;
         }
+        nuriRecipientRef.current = { username: recipientNuriUsername, address: destination };
         setToAddress(destination);
       } catch {
         // An outage is not an unknown user: say we could not check.
@@ -2251,8 +2265,10 @@ export default function BitcoinSendScreen({
                 query={toAddress}
                 accepts={acceptsPayableBitcoin}
                 cost={suggestionCost}
-                onPick={({ destination }) => {
-                  setToAddress(destination.raw);
+                payUsername
+                onPick={({ destination, username }) => {
+                  // A Nuri contact: their username, looked up on Next.
+                  setToAddress(username ? `@${username}` : destination.raw);
                   setErrorMessage(null);
                 }}
               />

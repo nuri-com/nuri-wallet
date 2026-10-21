@@ -65,11 +65,16 @@ import { wirexService } from "../../services/wirex/WirexService";
 import { t } from "../../lib/i18n";
 import { toNuriUsername } from "../../lib/pay/nuriUsername";
 import { resolvePayRecipient } from "../../lib/pay/resolvePayRecipient";
+import {
+  dismissNuriContact,
+  undismissNuriUsername,
+} from "../../services/addressBook/nuriContactSync";
 import type { IconName } from "@ds";
 import {
   DESTINATION_KINDS,
   type DestinationKind,
   applyNuriLookup,
+  destinationsFromNuriUser,
   kindOf,
   withKind,
   destinationLabel,
@@ -302,6 +307,8 @@ const AddressBookScreen: React.FC<Props> = ({
       };
       if (draft.id) await book.update(draft.id, input);
       else await book.add(input);
+      // Saved by hand: an earlier removal of this Nuri user no longer holds.
+      if (draft.nuriUsername) void undismissNuriUsername(draft.nuriUsername).catch(() => {});
       setDraft(null);
       await refresh(book, query);
       EventBus.emit(ADDRESS_BOOK_CHANGED_EVENT);
@@ -452,6 +459,8 @@ const AddressBookScreen: React.FC<Props> = ({
     async (contact: Contact) => {
       if (!book) return;
       await book.remove(contact.id);
+      // A removed Nuri user is not added back by their next payment.
+      await dismissNuriContact(contact).catch(() => {});
       setOpen(null);
       await refresh(book, query);
       EventBus.emit(ADDRESS_BOOK_CHANGED_EVENT);
@@ -465,6 +474,10 @@ const AddressBookScreen: React.FC<Props> = ({
   }, []);
   // "Pay <name>" with more than one payable destination: which one.
   const [payChoice, setPayChoice] = useState<Contact | null>(null);
+  // Paying a Nuri user waits for their username's current addresses.
+  const [payLookupBusy, setPayLookupBusy] = useState(false);
+  const openRef = useRef(open);
+  openRef.current = open;
 
   const payDestination = useCallback(
     (destination: Destination, contact: Contact) => {
@@ -489,6 +502,39 @@ const AddressBookScreen: React.FC<Props> = ({
       setOpen(null);
     },
     [onPay],
+  );
+
+  // "Pay <name>": a Nuri user is paid at the addresses their username has now,
+  // looked up here, never at the ones saved from earlier payments (#1770).
+  const payContact = useCallback(
+    async (contact: Contact) => {
+      setDetailMessage(null);
+      let destinations = contact.destinations;
+      if (contact.nuriUsername) {
+        setPayLookupBusy(true);
+        try {
+          const rails = await resolvePayRecipient(contact.nuriUsername);
+          if (openRef.current?.id !== contact.id) return;
+          if (!rails) {
+            setDetailMessage(t(`${K}.nuriLookup_notFound`));
+            return;
+          }
+          destinations = destinationsFromNuriUser(rails);
+        } catch {
+          if (openRef.current?.id === contact.id) setDetailMessage(t(`${K}.nuriLookup_failed`));
+          return;
+        } finally {
+          setPayLookupBusy(false);
+        }
+      }
+      const payable = destinations.filter(
+        (d) => routeDestination(d, contact.label).kind !== "unsupported",
+      );
+      if (payable.length === 0) setDetailMessage(t(`${K}.noRail`));
+      else if (payable.length === 1) payDestination(payable[0], contact);
+      else setPayChoice({ ...contact, destinations: payable });
+    },
+    [payDestination],
   );
 
   const statusLabel =
@@ -672,15 +718,13 @@ const AddressBookScreen: React.FC<Props> = ({
               const payable = (open?.destinations ?? []).filter(
                 (d) => routeDestination(d, open?.label).kind !== "unsupported",
               );
-              return payable.length > 0 && open ? (
+              return (payable.length > 0 || open?.nuriUsername) && open ? (
                 <Button
                   size="lg"
                   variant="solid"
                   accent="lilac"
-                  onPress={() => {
-                    if (payable.length === 1) payDestination(payable[0], open);
-                    else setPayChoice(open);
-                  }}
+                  disabled={payLookupBusy}
+                  onPress={() => void payContact(open)}
                 >
                   <ButtonIcon name="arrow-up" />
                   <ButtonText>{t(`${K}.payName`, { name: open.label })}</ButtonText>
@@ -694,8 +738,10 @@ const AddressBookScreen: React.FC<Props> = ({
               </Text>
             ) : null}
 
-            {/* Details, like a phone's contact card: label, the full value, copy. */}
-            {(open?.destinations ?? []).map((destination, index) => (
+            {/* Details, like a phone's contact card: label, the full value, copy.
+                A Nuri user's saved addresses only name their payments; they
+                are paid by username, so none of them is shown to copy. */}
+            {(open?.nuriUsername ? [] : (open?.destinations ?? [])).map((destination, index) => (
               <View
                 // biome-ignore lint/suspicious/noArrayIndexKey: destinations have no id; order is stable
                 key={index}

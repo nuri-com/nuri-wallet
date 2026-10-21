@@ -11,3 +11,5 @@ export const NOSTR_SUPPORT_PENDING_EVENTS_CACHE_KEY = "@cache:nostr_support_pend
 export const NOSTR_CONTACT_PROTOCOLS_CACHE_KEY = "@cache:nostr_contact_protocols";
 // Signed, encrypted address-book events (lib/addressBook); never plaintext.
 export const NOSTR_ADDRESS_BOOK_CACHE_KEY = "@cache:nostr_address_book";
+// Nuri usernames whose auto-saved contact the user deleted (#1770).
+export const NOSTR_ADDRESS_BOOK_DISMISSED_KEY = "@cache:address_book_dismissed_nuri";
