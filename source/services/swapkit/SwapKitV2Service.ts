@@ -19,6 +19,13 @@
 import { SWAPKIT_V2_MCP_URL } from "../../config/endpoints";
 import { SWAPKIT_ENABLED } from "../../config/network";
 import { LOG_EMOJI, errorWithId, logWithId } from "../../lib/OperationLogUtils";
+import { paymentTimed } from "../../lib/paymentTiming";
+import {
+  type V2RefundMaterial,
+  v2AcceptsCommitRefundMaterial,
+  v2CommitRefundMaterial,
+  warmV2CommitRefundMaterial,
+} from "./SwapKitV2CommitRefundMaterial";
 import { rememberV2QuoteCommitKey, v2QuoteCommitHint } from "./SwapKitV2QuoteCommitKey";
 
 const SOURCE = "services/swapkit/SwapKitV2Service.ts";
@@ -290,6 +297,17 @@ function parseEnvelope(rawText: string): JsonRpcEnvelope {
 }
 
 async function callSwapKitV2Tool<T>(name: string, args: Record<string, unknown>): Promise<T> {
+  // Status polls are left out: they run on their own and would only add noise.
+  if (name === "swap_status" || name === "swap_list") return callSwapKitV2ToolOnce<T>(name, args);
+  const mode = typeof args.mode === "string" ? `.${args.mode}` : "";
+  return paymentTimed(`server ${name}${mode}`, () => callSwapKitV2ToolOnce<T>(name, args), {
+    from: typeof args.from === "string" ? args.from : undefined,
+    to: typeof args.to === "string" ? args.to : undefined,
+    withRefundMaterial: args.refundMaterial ? true : undefined,
+  });
+}
+
+async function callSwapKitV2ToolOnce<T>(name: string, args: Record<string, unknown>): Promise<T> {
   // Mainnet-only, same hard gate as v1: a testnet build must never open a real
   // mainnet swap.
   if (!SWAPKIT_ENABLED) {
@@ -415,6 +433,18 @@ export async function quoteSwapKitV2(
         recoveryKey: typeof args.recoveryKey === "string" ? args.recoveryKey : undefined,
       })
     : null;
+  // An Arkade payment's commit carries the wallet's refund key; it is derived
+  // while this quote runs and the user reviews it, not after the tap.
+  const quoteCapabilities: readonly string[] = Array.isArray(args.capabilities)
+    ? args.capabilities
+    : [];
+  if (
+    args.settleTarget &&
+    args.from === "BTC_ARKADE" &&
+    quoteCapabilities.includes("arkade_refund_material")
+  ) {
+    warmV2CommitRefundMaterial(String(args.owner));
+  }
   await getSwapKitV2Capabilities();
   const response = await callSwapKitV2Tool<SwapKitV2QuoteResponse>("swap", {
     ...args,
@@ -458,6 +488,8 @@ export async function commitSwapKitV2(
     recoveryKey: string;
     acceptedDepositAmount: string;
     minimumSettleAmount: string;
+    /** The wallet's refund material, when the caller already holds it. */
+    refundMaterial?: V2RefundMaterial;
   },
 ): Promise<SwapKitV2OrderView> {
   if (!args.settleTarget)
@@ -471,8 +503,26 @@ export async function commitSwapKitV2(
       "commit requires acceptedDepositAmount and minimumSettleAmount consent bounds",
       { code: "consent_bounds_missing" },
     );
-  await getSwapKitV2Capabilities();
-  const view = await callSwapKitV2Tool<SwapKitV2OrderView>("swap", { ...args, mode: "commit" });
+  const caps = await getSwapKitV2Capabilities();
+  // Sent ahead only to a server that takes it (contract 2.5.0); the order then
+  // comes back with its funding action instead of asking for the material.
+  const { refundMaterial: given, ...commit } = args;
+  const refundMaterial = v2AcceptsCommitRefundMaterial(caps.contractVersion)
+    ? (given ??
+      (await paymentTimed("wallet refund material", () =>
+        v2CommitRefundMaterial({
+          from: String(args.from),
+          owner: String(args.owner ?? ""),
+          capabilities: Array.isArray(args.capabilities) ? (args.capabilities as string[]) : [],
+          idempotencyKey: args.idempotencyKey,
+        }),
+      )))
+    : null;
+  const view = await callSwapKitV2Tool<SwapKitV2OrderView>("swap", {
+    ...commit,
+    ...(refundMaterial ? { refundMaterial } : {}),
+    mode: "commit",
+  });
   assertKnownActionKinds(view.actions);
   return view;
 }

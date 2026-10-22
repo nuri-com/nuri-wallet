@@ -20,7 +20,12 @@ import { bytesToHex, sha256, zeroize } from "../../lib/crypto";
 import { getEthereumAddress } from "../../lib/secureKeyStorage";
 import { payArkadeLightningInvoice } from "../arkade/ArkadeLightningSendService";
 import { decodeBolt11Facts } from "../../lib/bitcoin/lightning";
-import { sendArkadeToArk, fundArkadeIntentsOutpoint } from "../arkade/ArkadeSendService";
+import {
+  sendArkadeToArk,
+  fundArkadeIntentsOutpoint,
+  warmArkadeSend,
+} from "../arkade/ArkadeSendService";
+import { setV2FundingWarmup } from "./SwapKitV2FundingWarmup";
 import { getArkadeReceiveAddress } from "../arkade/ArkadeAddressService";
 import { deriveSwapKitHtlcMaterial } from "./SwapKitHtlcKeyService";
 import { approvalCeiling } from "./SwapKitV2ApprovalBounds";
@@ -47,6 +52,7 @@ import { signAndBroadcastSwapKitEvmTx } from "./SwapKitEvmSigner";
 import { executeSwapKitHtlcAction } from "./SwapKitHtlcActionService";
 import type { SwapKitV2ActionContext, SwapKitV2Executors } from "./SwapKitV2ActionService";
 import { noteV2MoveStep } from "./SwapKitV2MoveStatus";
+import { setV2CommitRefundMaterialSource } from "./SwapKitV2CommitRefundMaterial";
 import { SwapKitV2Error } from "./SwapKitV2Service";
 
 /** Chains this wallet will EIP-712 sign on — Base (CoW) and Arbitrum. Mirrors
@@ -643,6 +649,11 @@ export async function executeV2ArkadeClaim(
 }
 
 // ── arkade_refund_material ──────────────────────────────────────────
+
+// The same material, sent with the commit when the server takes it (swapkit #421).
+setV2CommitRefundMaterialSource((scope) => deriveArkadeIntentsRefundMaterial(scope));
+// What the Arkade funding send waits for, read while the server commits.
+setV2FundingWarmup(() => warmArkadeSend());
 
 /** Provide the PUBLIC material a server needs to build an Arkade Intents lockup
  * covenant: the x-only sender public key plus a wallet-minted opaque keyRef.

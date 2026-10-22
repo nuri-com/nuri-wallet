@@ -1,4 +1,6 @@
 import { claimSwapLoop, releaseSwapLoop } from "./SwapKitLoopRegistry";
+import { paymentTimed } from "../../lib/paymentTiming";
+import { warmV2Funding } from "./SwapKitV2FundingWarmup";
 // Arkade Lightning v2: quote, durable commit, then public refund material.
 // Returns the bound funding action without moving money. The caller holds the
 // shared order-loop claim until its approved funding send finishes, then releases
@@ -260,20 +262,23 @@ export async function createArkadeIntentsLightningSend(params: {
   let idempotencyKey = baseKey;
   let view: SwapKitV2OrderView;
   for (let attempt = 0; ; attempt++) {
-    await persistV2CommitIntent({
-      ...request,
-      idempotencyKey,
-      recoveryKey,
-      flow: "arkade_lightning",
-      acceptedDeposit: option.depositAmount,
-      acceptedDepositAmount: option.depositAmount,
-      minimumSettleAmount: request.amount,
-    });
+    await paymentTimed("phone stores commit intent", () =>
+      persistV2CommitIntent({
+        ...request,
+        idempotencyKey,
+        recoveryKey,
+        flow: "arkade_lightning",
+        acceptedDeposit: option.depositAmount,
+        acceptedDepositAmount: option.depositAmount,
+        minimumSettleAmount: request.amount,
+      }),
+    );
     // Nothing is signed before the reply names the order, so a failed or lost
     // reply is a plain failure: drop the intent and let the user pay again (the
     // same invoice re-sends the same key, which returns an order the server did
     // create).
     const key = idempotencyKey;
+    warmV2Funding();
     view = await commitSwapKitV2({
       ...request,
       optionId: option.optionId,
@@ -282,11 +287,15 @@ export async function createArkadeIntentsLightningSend(params: {
       recoveryKey,
       acceptedDepositAmount: option.depositAmount,
       minimumSettleAmount: request.amount,
+      // Sent ahead: the reply then carries the funding action (swapkit #421).
+      refundMaterial: { senderPublicKey, walletKeyRef: `nuri-arkade-intents-v1:${key}` },
     }).catch(async (error: unknown) => {
       await abandonV2CommitIntent(key).catch(() => {});
       throw error;
     });
-    await resolveV2CommitIntent(key, asSwapKitV2OrderId(view.orderId), view.status);
+    await paymentTimed("phone records order", () =>
+      resolveV2CommitIntent(key, asSwapKitV2OrderId(view.orderId), view.status),
+    );
     if (!endedUnfunded(view) || attempt >= MAX_UNFUNDED_REPLAYS) break;
     if (await mayHaveFunded(view.orderId, paymentHash)) break;
     await SwapKitV2OrderStore.remove(view.orderId).catch(() => {});

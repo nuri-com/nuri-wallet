@@ -374,25 +374,26 @@ export function startSwapKitV2Tracking(
   let orderRecoveryKey: string | null = null;
   const controller = new AbortController();
   const aborted = () => controller.signal.aborted;
+  // The hold is written while the funding is prepared, and the broadcast waits
+  // for it: every funding executor awaits `beforeFunding` at its broadcast
+  // boundary (markStarted), so no sats leave before the hold is on disk, and
+  // a failed write refuses the broadcast and stops the order.
+  const held: Promise<void> =
+    arkadeHoldSats > 0 ? holdV2ArkadeFunding(id, arkadeHoldSats) : Promise.resolve();
+  held.catch((error: unknown) => {
+    // Nothing has been signed or sent yet: refusing here costs the user a
+    // retry, while funding without a durable hold risks spending the same
+    // sats twice after a crash.
+    errorWithId(
+      `${LOG_EMOJI.bitcoin} SwapKitV2.track`,
+      `refusing to fund ${id}: its sats could not be reserved durably`,
+      { orderId: id, err: error instanceof Error ? error.message : String(error) },
+      { source: `${SOURCE}#startSwapKitV2Tracking`, event: "API_ERR", action: "reserve" },
+    );
+    controller.abort();
+    noteV2MoveNeedsUser(id, "Could not reserve the sats for this swap.");
+  });
   const done = (async () => {
-    if (arkadeHoldSats > 0) {
-      try {
-        await holdV2ArkadeFunding(id, arkadeHoldSats);
-      } catch (error) {
-        // Nothing has been signed or sent yet: refusing here costs the user a
-        // retry, while funding without a durable hold risks spending the same
-        // sats twice after a crash.
-        errorWithId(
-          `${LOG_EMOJI.bitcoin} SwapKitV2.track`,
-          `refusing to fund ${id}: its sats could not be reserved durably`,
-          { orderId: id, err: error instanceof Error ? error.message : String(error) },
-          { source: `${SOURCE}#startSwapKitV2Tracking`, event: "API_ERR", action: "reserve" },
-        );
-        releaseSwapLoop(id);
-        noteV2MoveNeedsUser(id, "Could not reserve the sats for this swap.");
-        return;
-      }
-    }
     try {
       // The order's authed calls (status/submit) all carry the wallet's
       // recovery capability (contract 2.2.0). The server indexes the order by
@@ -430,6 +431,7 @@ export function startSwapKitV2Tracking(
         intervalMs: loopOptions?.intervalMs,
         maxPolls: loopOptions?.maxPolls,
         signal: controller.signal,
+        beforeFunding: held,
         onUpdate: (latest) => {
           if (aborted()) return;
           rememberView(latest);

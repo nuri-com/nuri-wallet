@@ -14,6 +14,7 @@
 // Adding a corridor adds ZERO code here. This switch grows only for a
 // genuinely new signing primitive (= contract version bump server-side).
 import { LOG_EMOJI, errorWithId, logWithId } from "../../lib/OperationLogUtils";
+import { paymentTimed, paymentTimingMark } from "../../lib/paymentTiming";
 import { getCacheValue, setCacheValue } from "../balance/TransactionCacheService";
 import { noteV2MovePaid } from "./SwapKitV2MoveStatus";
 import {
@@ -523,6 +524,11 @@ export type SwapKitV2DispatchOptions = {
    * on every authed call (submit/status); the tracker derives it once per order
    * from the wallet owner and passes it down. */
   recoveryKey: string;
+  /** Settled before any value leaves: awaited at the executor's broadcast
+   *  boundary (markStarted), so a durable write the funding depends on (the
+   *  tracker's sats hold) runs while the funding is prepared, never after the
+   *  broadcast. A rejection refuses the broadcast. */
+  beforeFunding?: Promise<void>;
 };
 
 /** Every ready action's kind must have an executor BEFORE the first one runs —
@@ -550,21 +556,22 @@ export async function executeAndSubmitV2Action(
   action: SwapKitV2Action,
   options: SwapKitV2DispatchOptions,
 ): Promise<SwapKitV2OrderView> {
+  paymentTimingMark(`action ${action.kind} picked up`);
   const actionId = String(action.actionId || "").trim();
   if (!actionId) throw new SwapKitV2Error("v2 action is missing actionId");
   if (action.state !== "ready") {
     throw new SwapKitV2Error(`v2 action ${actionId} is not ready (state ${action.state})`);
   }
-  const ctx: SwapKitV2ActionContext = {
-    orderId,
-    actionId,
-    previouslyStarted: await wasV2ActionStartedWithoutEvidence(orderId, actionId),
-  };
+  // Two independent reads of the local journal, read together. Replay: a
+  // journaled action re-submits its durable evidence verbatim and never
+  // executes again (swap_submit is idempotent by the action's key).
+  const [previouslyStarted, journaled] = await Promise.all([
+    wasV2ActionStartedWithoutEvidence(orderId, actionId),
+    getJournaledV2Evidence(orderId, actionId),
+  ]);
+  const ctx: SwapKitV2ActionContext = { orderId, actionId, previouslyStarted };
+  paymentTimingMark("action journal read");
   const request = action.request ?? {};
-
-  // Replay: a journaled action re-submits its durable evidence verbatim and
-  // never executes again (swap_submit is idempotent by the action's key).
-  const journaled = await getJournaledV2Evidence(orderId, actionId);
   if (journaled) {
     logWithId(
       `${LOG_EMOJI.bitcoin} SwapKitV2.action`,
@@ -638,25 +645,34 @@ export async function executeAndSubmitV2Action(
   //
   // The marker is idempotent and owned by the executor: every value-moving
   // executor calls it at its own broadcast boundary.
-  let markedStarted = false;
-  const markStarted = async () => {
-    if (markedStarted) return;
-    markedStarted = true;
-    await markActionStarted(orderId, actionId);
-    noteV2MovePaid(orderId);
-  };
-  ctx.markStarted = markStarted;
   const deadlineMs = action.deadline == null ? Number.NaN : Date.parse(String(action.deadline));
   ctx.assertBeforeDeadline = () => {
     if (deadlineMs <= Date.now()) throw v2ActionDeadlineError(actionId);
   };
+  let markedStarted = false;
+  const markStarted = async () => {
+    if (markedStarted) return;
+    await options.beforeFunding;
+    markedStarted = true;
+    await markActionStarted(orderId, actionId);
+    // The hold and the marker are awaited here, at the send itself, so they can
+    // outlast the deadline checked before the action ran: a fresh action is
+    // checked again with nothing left to await before the submit. The refusal
+    // sent nothing, so the marker is dropped below and the action stays
+    // re-runnable. A started one (reconciling) never reaches this hook.
+    if (!ctx.previouslyStarted) ctx.assertBeforeDeadline?.();
+    noteV2MovePaid(orderId);
+  };
+  ctx.markStarted = markStarted;
 
   let evidence: Awaited<ReturnType<typeof executeV2Action>>;
   try {
     // A fresh action past its deadline is never started; an already started
     // one still reconciles, so funds that moved are always reported.
     if (!ctx.previouslyStarted) ctx.assertBeforeDeadline();
-    evidence = await executeV2Action(action, request, ctx, options);
+    evidence = await paymentTimed(`wallet ${action.kind}`, () =>
+      executeV2Action(action, request, ctx, options),
+    );
   } catch (error) {
     // AFTER the boundary: the marker is on disk; a retry reaches the
     // STARTED-without-evidence branch above and fails closed. Rethrow as is.

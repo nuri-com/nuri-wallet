@@ -2,6 +2,7 @@
 // requestApproved*). Identity delegates to this sister class to keep
 // ArkadeRemoteIdentity focused on key derivation and SDK Identity wiring.
 import { AppState } from "react-native";
+import { paymentTimed, paymentTimingMark } from "../../../lib/paymentTiming";
 import { ArkAddress } from "@arkade-os/sdk";
 import * as btc from "@scure/btc-signer";
 import { base64 } from "@scure/base";
@@ -813,8 +814,9 @@ export class ArkadeSpendApprovalFlow {
       expected_next: "post_v5_send_prepare",
     });
 
+    paymentTimingMark("SDK built the transaction, approval signing starts");
     const meta = this.deps.getCredentialMeta();
-    const pubCtx = await this.deps.getPublicContext();
+    const pubCtx = await paymentTimed("signing context", () => this.deps.getPublicContext());
     let sendIntentId = pending.summary.swapIntentId || null;
     // The session belongs to the proof that OPENS it, never to whichever one
     // last touched `pending.psbtB64` — the two proofs reach this class
@@ -865,7 +867,9 @@ export class ArkadeSpendApprovalFlow {
       send_intent_id: sendIntentId,
     };
 
-    const prepared = await arkadeApiSendPrepare(sendPackage);
+    const prepared = await paymentTimed("nuri send prepare", () =>
+      arkadeApiSendPrepare(sendPackage),
+    );
 
     const challengeToken = String(prepared.challenge_token || "").trim();
     const challenge = String(prepared.challenge || "").trim();

@@ -128,7 +128,12 @@ import {
 import { paysBySwap, TZ_METHODS } from "../../../lib/remit/zapremitForm";
 import { resolveLightningBounds } from "../../../lib/bitcoin/lightningLimits";
 import { maxFundAmountSats } from "../../../services/swapkit/SwapKitArkadeIntentsCreate";
-import { sendArkadeToBitcoinViaLightning } from "../../../services/swapkit/SwapKitV2ArkadeToBtcService";
+import { paymentTimingStart } from "../../../lib/paymentTiming";
+import {
+  clearPrefetchedArkadeToBitcoinQuote,
+  prefetchArkadeToBitcoinQuote,
+  sendArkadeToBitcoinViaLightning,
+} from "../../../services/swapkit/SwapKitV2ArkadeToBtcService";
 import { SwapKitV2Error } from "../../../services/swapkit/SwapKitV2Service";
 import { type MovePill, startMovePill } from "../../../services/wallet/CardTransferPill";
 import { getEthereumAddress } from "../../../lib/secureKeyStorage";
@@ -833,6 +838,36 @@ export default function BitcoinSendScreen({
     () => currentSats >= LIGHTNING_TO_BITCOIN_MIN_SATS,
     [currentSats],
   );
+  // An Arkade send to a Bitcoin address: the address and amount are known
+  // before the user confirms, so the corridor quote runs while they review it
+  // (as a scanned invoice's does) instead of after the tap. Read-only, used at
+  // most once and only for exactly this address, amount and wallet.
+  useEffect(() => {
+    if (!visible || !isArkadeToBitcoinAddress || abroadDestination) return;
+    if (currentSats < bitcoinAddressMinSats) return;
+    const handle = setTimeout(() => {
+      void (async () => {
+        const owner = await getEthereumAddress().catch((): null => null);
+        if (owner)
+          await prefetchArkadeToBitcoinQuote({
+            toAddress: trimmedToAddress,
+            sats: currentSats,
+            owner,
+          });
+      })();
+    }, 600);
+    return () => clearTimeout(handle);
+  }, [
+    visible,
+    isArkadeToBitcoinAddress,
+    abroadDestination,
+    trimmedToAddress,
+    currentSats,
+    bitcoinAddressMinSats,
+  ]);
+  useEffect(() => {
+    if (!visible) clearPrefetchedArkadeToBitcoinQuote();
+  }, [visible]);
   // What the wallet actually has to cover. A Lightning target funds a lockup
   // carrying the invoice's sats PLUS the corridor's spread, so comparing the
   // invoice amount alone left an amount near the full balance enabled — it
@@ -1002,6 +1037,7 @@ export default function BitcoinSendScreen({
   }, []);
 
   const handleConfirm = useCallback(() => {
+    paymentTimingStart("send");
     const run = async () => {
       console.log("[BitcoinSendScreen] handleConfirm", {
         sats: currentSats,

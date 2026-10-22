@@ -21,6 +21,7 @@ import type {
   PasskeyWebAuthnPrfCreateResult,
 } from "../../components/PasskeyWebAuthnPrfView";
 import { bytesToBase64url, randomBytes } from "../../lib/crypto";
+import { paymentTimingMark } from "../../lib/paymentTiming";
 import { t } from "../../lib/i18n";
 import { formatWalletPasskeyLabel } from "../../lib/passkeyLabels";
 import { EventBus } from "../events/AppEventBusService";
@@ -223,6 +224,7 @@ function startNextRequest(): void {
         "requestPrf",
         `id=${id} variant=${pending.variant} mode=${pending.payload.mode} rp=${pending.payload.rpId}`,
       );
+      paymentTimingMark("PASSKEY PROMPT SHOWN");
       EventBus.emit("webauthn:prfRequest", pending.payload);
     } catch (error) {
       if (pending.timer) clearTimeout(pending.timer);

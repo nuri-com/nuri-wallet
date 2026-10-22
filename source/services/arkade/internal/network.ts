@@ -198,6 +198,32 @@ export function parseArkNodeInfo(fromServer: ArkInfoRaw): ArkInfo {
   };
 }
 
+/** How long a read of the node's info is reused. It changes rarely (fees,
+ *  floors, keys); every send read it fresh and waited for it. */
+const NODE_INFO_REUSE_MS = 60_000;
+let recentNodeInfo: { nodeUrl: string; at: number; info: Promise<ArkInfo> } | null = null;
+
+/** The node's info, read at most once a minute (a read in flight is shared,
+ *  a failed read is not kept). Fetching it ahead (warmArkadeSend) lets a send
+ *  that follows skip the wait. */
+export function getRecentArkNodeInfo(nodeUrl: string): Promise<ArkInfo> {
+  const now = Date.now();
+  if (
+    recentNodeInfo &&
+    recentNodeInfo.nodeUrl === nodeUrl &&
+    now - recentNodeInfo.at < NODE_INFO_REUSE_MS
+  ) {
+    return recentNodeInfo.info;
+  }
+  const info = fetchArkNodeInfoWithRetry(nodeUrl);
+  const entry = { nodeUrl, at: now, info };
+  recentNodeInfo = entry;
+  info.catch(() => {
+    if (recentNodeInfo === entry) recentNodeInfo = null;
+  });
+  return info;
+}
+
 export async function fetchArkNodeInfoWithRetry(nodeUrl: string): Promise<ArkInfo> {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= ARKADE_NODE_INFO_RETRIES; attempt += 1) {

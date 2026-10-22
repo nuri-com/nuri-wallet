@@ -12,6 +12,8 @@
 // rails, capabilities, executor bounds, pending-row shape) and pass it in.
 // What they no longer own is the ORDER of the steps, or the choice to skip one.
 import { EventBus } from "../events/AppEventBusService";
+import { paymentTimed, paymentTimingMark } from "../../lib/paymentTiming";
+import { warmV2Funding } from "./SwapKitV2FundingWarmup";
 import { finishInFlight, startSwapInFlight } from "../money/announce";
 import type { OwnDestinations } from "../money/assetRails";
 import { noteV2MoveCommitted, forgetV2Move } from "./SwapKitV2MoveStatus";
@@ -177,27 +179,29 @@ export async function commitAndTrackV2Order(
   // storage (single use); otherwise a new one.
   const idempotencyKey =
     takeV2QuoteCommitKey(spec.quoteId) ?? newV2CommitIdempotencyKey(spec.owner);
-  const recoveryKey = await getSwapKitV2RecoveryKey();
+  const recoveryKey = await paymentTimed("recovery key", () => getSwapKitV2RecoveryKey());
 
-  await persistV2CommitIntent({
-    idempotencyKey,
-    owner: spec.owner,
-    from: spec.from,
-    to: spec.to,
-    amount: spec.amount,
-    side: spec.side,
-    settleTarget: spec.settleTarget,
-    refundAddress: spec.refundAddress,
-    acceptedDeposit: spec.acceptedDeposit ?? spec.acceptedDepositAmount,
-    acceptedDepositAmount: spec.acceptedDepositAmount,
-    minimumSettleAmount: spec.minimumSettleAmount,
-    optionId: spec.optionId,
-    recoveryKey,
-    flow: spec.flow,
-    destination: spec.destination,
-    executorSpec: spec.executorSpec,
-    ...(spec.moveAmounts ? { moveAmounts: spec.moveAmounts } : {}),
-  });
+  await paymentTimed("phone stores commit intent", () =>
+    persistV2CommitIntent({
+      idempotencyKey,
+      owner: spec.owner,
+      from: spec.from,
+      to: spec.to,
+      amount: spec.amount,
+      side: spec.side,
+      settleTarget: spec.settleTarget,
+      refundAddress: spec.refundAddress,
+      acceptedDeposit: spec.acceptedDeposit ?? spec.acceptedDepositAmount,
+      acceptedDepositAmount: spec.acceptedDepositAmount,
+      minimumSettleAmount: spec.minimumSettleAmount,
+      optionId: spec.optionId,
+      recoveryKey,
+      flow: spec.flow,
+      destination: spec.destination,
+      executorSpec: spec.executorSpec,
+      ...(spec.moveAmounts ? { moveAmounts: spec.moveAmounts } : {}),
+    }),
+  );
 
   // Show the move the INSTANT the user accepts, not after the commit round-trip
   // (which is a 2–3s network call). The pill and the pending rows are emitted
@@ -254,6 +258,9 @@ export async function commitAndTrackV2Order(
     }
   };
 
+  // An Arkade-funded order is signed right after the commit returns; what that
+  // send waits for is read while the server commits.
+  if (spec.from === "BTC_ARKADE" || spec.from === "BTC_LN") warmV2Funding();
   let view: SwapKitV2OrderView;
   try {
     view = await commitSwapKitV2({
@@ -287,7 +294,9 @@ export async function commitAndTrackV2Order(
 
   const orderId = asSwapKitV2OrderId(view.orderId);
   try {
-    await adoptCommittedOrder(idempotencyKey, orderId, view.status);
+    await paymentTimed("phone adopts order", () =>
+      adoptCommittedOrder(idempotencyKey, orderId, view.status),
+    );
   } catch (error) {
     // The server named a real order but this device could not record it. The
     // order id is kept in the adoption handoff and the next launch (or
@@ -315,6 +324,7 @@ export async function commitAndTrackV2Order(
   void announce(orderId);
   dropProvisional();
 
+  paymentTimingMark("tracking starts");
   startSwapKitV2Tracking(orderId, view, {
     ...spec.loopOptions,
     // Arkade-funded orders: the sats are spoken for from HERE, not from the

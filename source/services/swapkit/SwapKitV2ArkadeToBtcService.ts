@@ -72,6 +72,8 @@ export type V2ArkadeToBtcQuote = {
   etaSeconds?: number;
   limits: SwapKitV2QuoteOption["limits"];
   provider: string | null;
+  /** Until when the server commits this quote, when it says. */
+  validUntil?: string;
 };
 
 export type V2ArkadeToBtcUnavailable = { provider?: string; reason?: string };
@@ -90,6 +92,7 @@ function toV2Quote(option: SwapKitV2QuoteOption): V2ArkadeToBtcQuote {
       : {}),
     limits: option.limits ?? null,
     provider: option.optionId.split(":")[0] || null,
+    ...(option.validUntil ? { validUntil: String(option.validUntil) } : {}),
   };
 }
 
@@ -272,13 +275,43 @@ export async function sendArkadeToBitcoinViaLightning(args: {
   onStatus?: (text: string) => void;
   onOrderId?: (orderId: string) => void;
 }): Promise<{ orderId: string }> {
+  // A tap while the early quote is still on its way waits for it rather than
+  // asking again.
+  if (prefetching?.key === prefetchKey(args)) await prefetching.done;
+  const choice = takePrefetchedArkadeToBtc(args) ?? (await chooseArkadeToBtc(args));
+  const { from, option, refundAddress } = choice;
+  return executeV2ArkadeToBtc({
+    toAddress: args.toAddress,
+    sats: args.sats,
+    optionId: option.optionId,
+    ...(option.quoteId ? { quoteId: option.quoteId } : {}),
+    quotedReceive: option.settleAmount,
+    owner: args.owner,
+    from,
+    ownReceiveAddress: refundAddress,
+    ...(args.onStatus ? { onStatus: args.onStatus } : {}),
+    ...(args.onOrderId ? { onOrderId: args.onOrderId } : {}),
+  });
+}
+
+type ArkadeToBtcChoice = {
+  from: ArkadeToBtcSource;
+  option: V2ArkadeToBtcQuote;
+  refundAddress: string;
+};
+
+/** Quote both corridors and pick: the one-order composite when the server
+ * offers it, the two-order Lightning path as fallback, and within the chosen
+ * corridor the option that delivers the most BTC. */
+async function chooseArkadeToBtc(args: {
+  toAddress: string;
+  sats: number;
+  owner: string;
+}): Promise<ArkadeToBtcChoice> {
   // One read of the wallet's own receive address serves the quote, the commit
   // and the own-destination check: it is the same address each time, and each
   // read is a full wallet summary.
   const refundAddress = await getBitcoinReceiveAddress();
-  // Both corridors are priced at once. The one-order composite is taken when the
-  // server offers it; the two-order Lightning path is the fallback. Within the
-  // chosen corridor, the option that delivers the most BTC wins.
   const [lightning, composite] = await Promise.all([
     quoteV2ArkadeToBtc({
       toAddress: args.toAddress,
@@ -301,18 +334,78 @@ export async function sendArkadeToBitcoinViaLightning(args: {
   const from = oneOrder.length ? COMPOSITE_FROM_ASSET : FROM_ASSET;
   const option = mostReceived(oneOrder.length ? oneOrder : lightning.options);
   if (!option) throw new Error("No Lightning route to Bitcoin is available.");
-  return executeV2ArkadeToBtc({
-    toAddress: args.toAddress,
-    sats: args.sats,
-    optionId: option.optionId,
-    ...(option.quoteId ? { quoteId: option.quoteId } : {}),
-    quotedReceive: option.settleAmount,
-    owner: args.owner,
-    from,
-    ownReceiveAddress: refundAddress,
-    ...(args.onStatus ? { onStatus: args.onStatus } : {}),
-    ...(args.onOrderId ? { onOrderId: args.onOrderId } : {}),
-  });
+  return { from, option, refundAddress };
+}
+
+// ── Quote before the tap ─────────────────────────────────────────────
+// The send screen knows the address and the amount before the user confirms,
+// so the quote can run while they review it, as a scanned invoice's does.
+// Read-only (no order, no signature); used at most once, only for exactly the
+// same address, amount and owner, and only while the server still stands by it.
+
+/** Never reuse a prefetched quote past this age, whatever its stated validity. */
+const PREFETCH_MAX_AGE_MS = 45_000;
+/** Stop using it this long before the server stops standing by it. */
+const PREFETCH_EXPIRY_MARGIN_MS = 15_000;
+
+let prefetched: { key: string; choice: ArkadeToBtcChoice; usableUntilMs: number } | null = null;
+let prefetching: { key: string; done: Promise<void> } | null = null;
+// Bumped by every new prefetch and every clear: a quote that finishes after a
+// newer request or a clear is not kept.
+let prefetchGeneration = 0;
+
+const prefetchKey = (args: { toAddress: string; sats: number; owner: string }) =>
+  `${args.toAddress.trim()}|${args.sats}|${args.owner.trim().toLowerCase()}`;
+
+function takePrefetchedArkadeToBtc(args: {
+  toAddress: string;
+  sats: number;
+  owner: string;
+}): ArkadeToBtcChoice | null {
+  const held = prefetched;
+  prefetched = null;
+  if (!held || held.key !== prefetchKey(args) || Date.now() >= held.usableUntilMs) return null;
+  return held.choice;
+}
+
+/** Quote an Arkade send to a Bitcoin address ahead of the tap. Never throws. */
+export async function prefetchArkadeToBitcoinQuote(args: {
+  toAddress: string;
+  sats: number;
+  owner: string;
+}): Promise<void> {
+  if (!isValidBitcoinAddressMainnet(args.toAddress.trim())) return;
+  if (!Number.isSafeInteger(args.sats) || args.sats <= 0) return;
+  const key = prefetchKey(args);
+  const generation = ++prefetchGeneration;
+  const done = (async () => {
+    try {
+      const fetchedAtMs = Date.now();
+      const choice = await chooseArkadeToBtc(args);
+      const validUntilMs = Date.parse(String(choice.option.validUntil ?? ""));
+      // No stated validity on the option the send would take: do not hold it.
+      if (!Number.isFinite(validUntilMs)) return;
+      if (generation !== prefetchGeneration) return;
+      prefetched = {
+        key,
+        choice,
+        usableUntilMs: Math.min(
+          fetchedAtMs + PREFETCH_MAX_AGE_MS,
+          validUntilMs - PREFETCH_EXPIRY_MARGIN_MS,
+        ),
+      };
+    } catch {}
+  })();
+  prefetching = { key, done };
+  await done;
+  if (prefetching?.done === done) prefetching = null;
+}
+
+/** Drop any held quote (send screen closed, input changed). */
+export function clearPrefetchedArkadeToBitcoinQuote(): void {
+  prefetchGeneration++;
+  prefetched = null;
+  prefetching = null;
 }
 
 /** The option that delivers the most BTC; the server's order breaks ties. */

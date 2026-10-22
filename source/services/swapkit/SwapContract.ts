@@ -1,4 +1,5 @@
 import { SATS_PER_BTC } from "../../lib/bitcoin/convert";
+import { paymentTimed, paymentTimingStart } from "../../lib/paymentTiming";
 import { getEthereumAddress } from "../../lib/secureKeyStorage";
 import { type SwapAmountBounds, foldSwapAmountBounds } from "./SwapAmountBounds";
 import { type SwapKitV2LimitsResponse, getSwapKitV2Limits } from "./SwapKitV2Service";
@@ -546,7 +547,7 @@ const btcToStableEngine: SwapEngine = {
   },
   async execute(quote, options) {
     const detail = quote.detail as BtcToStableDetail;
-    const owner = await getEthereumAddress();
+    const owner = await paymentTimed("owner address", () => getEthereumAddress());
     if (!owner) throw new Error("Base wallet address not available.");
     const { orderId } = await executeV2BtcToStable({
       rail: detail.rail,
@@ -678,5 +679,6 @@ export async function executeSwap(
   }
   const engine = ENGINES.find((candidate) => candidate.id === quote.engine);
   if (!engine) throw new Error(`Unknown swap engine ${quote.engine}.`);
+  paymentTimingStart("swap", { engine: quote.engine });
   return engine.execute(quote, options);
 }

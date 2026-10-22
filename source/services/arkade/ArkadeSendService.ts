@@ -13,13 +13,14 @@ import { bytesToHex } from "../../lib/crypto";
 import { errMsg } from "../../lib/errorMessage";
 import { shortTime } from "../../lib/logShared";
 import { withOutgoingBrowserApproval } from "./internal/browserApproval";
+import { paymentTimed, paymentTimingEnabled, paymentTimingMark } from "../../lib/paymentTiming";
 import {
   clearPendingBatchCommitmentTx,
   setPendingBatchCommitmentTx,
 } from "./internal/batchCommitment";
 import { emitTrace, logArkadeWalletSignTrace } from "./internal/logging";
 import { ArkadeMaxSendAmountError } from "./internal/maxSendAmount";
-import { fetchArkNodeInfoWithRetry } from "./internal/network";
+import { fetchArkNodeInfoWithRetry, getRecentArkNodeInfo } from "./internal/network";
 import { assertArkadeRecoveryCsvCompatible } from "./internal/recovery";
 import {
   ArkadeVtxoTooFreshError,
@@ -442,10 +443,12 @@ export async function sendArkadeBitcoinOnchain(params: {
 export async function sendArkadeToArk(params: {
   address: string;
   amountSats: number;
-  /** Fires AFTER every preflight and AFTER the user approves, immediately
-   * before `wallet.send` — the irreversible boundary. A failed preflight or a
-   * cancelled approval never reaches it, so a caller recording "may have sent"
-   * here is never stranded by a refusal that moved nothing. */
+  /** Fires once the transaction is signed (after the passkey) and before the
+   * SDK submits it: the irreversible boundary. The signer awaits it, so a
+   * rejection here refuses the submit. A failed preflight or a cancelled
+   * passkey never reaches it, so a caller recording "may have sent" here is
+   * never stranded by a refusal that moved nothing, and its durable writes run
+   * while the user confirms instead of before the prompt. */
   onBeforeBroadcast?: () => void | Promise<void>;
   /** Fires once the send's transaction is signed (after the passkey), before
    * the SDK submits it. See ArmSpendApprovalSummary.onSigned. */
@@ -478,7 +481,39 @@ export async function sendArkadeToArk(params: {
     detail: `sats=${sats} recipient=${truncateForLog(address, 90)}`,
   });
   try {
-    const wallet = await getOrCreateWallet();
+    // The node's own floor, checked BEFORE an intent exists and before the user
+    // is asked to approve anything. `wallet.send` would refuse the same amount
+    // moments later, but by then the approval has been armed and a passkey
+    // prompt has been spent on a send that could never go out. Fail closed when
+    // the node cannot be read: an unknown floor is not a floor of zero, and the
+    // offboard path already refuses on the same missing information.
+    const nodeInfo = await paymentTimed("arkade node info", () =>
+      getRecentArkNodeInfo(arkadeServerConfigService.getArkadeNodeUrl().replace(/\/+$/, "")),
+    ).catch((): null => null);
+    const minVtxoSats = requireVtxoMinimumSats(nodeInfo);
+    logArkadeWalletSignTrace("send_ark_minimum_check", {
+      status: "ok",
+      sats,
+      min_vtxo_sats: minVtxoSats,
+      expected_next: sats >= minVtxoSats ? "create_swap_intent" : "surface_minimum_error",
+    });
+    assertMeetsVtxoMinimum(sats, minVtxoSats);
+    // Above the floor, the swap intent is created on the Nuri server while the
+    // wallet loads and its timelock is checked: none of them needs another.
+    // Every check below still runs before anything is approved or signed; an
+    // intent left by a failed check is never used.
+    const swapIntent = paymentTimed("nuri swap intent", () =>
+      createArkadeServerSwapIntent({
+        kind: "ark_send",
+        finalRecipient: address,
+        finalAmountSats: sats,
+        fundingAddress: address,
+        fundingAmountSats: sats,
+        op: "send_ark",
+      }),
+    );
+    swapIntent.catch(() => {});
+    const wallet = await paymentTimed("arkade wallet ready", () => getOrCreateWallet());
     logArkadeWalletSignTrace("send_ark_wallet_ready", {
       sats,
       expected_next: "wallet_send_requests_signatures",
@@ -489,32 +524,11 @@ export async function sendArkadeToArk(params: {
         `ark address network mismatch: expected ${wallet.network.hrp}, got ${decoded.hrp}`,
       );
     }
-    await assertArkadeRecoveryCsvCompatible(wallet, "send_ark");
-    // The node's own floor, checked BEFORE an intent exists and before the user
-    // is asked to approve anything. `wallet.send` would refuse the same amount
-    // moments later, but by then the approval has been armed and a passkey
-    // prompt has been spent on a send that could never go out. Fail closed when
-    // the node cannot be read: an unknown floor is not a floor of zero, and the
-    // offboard path already refuses on the same missing information.
-    const nodeInfo = await fetchArkNodeInfoWithRetry(
-      arkadeServerConfigService.getArkadeNodeUrl().replace(/\/+$/, ""),
-    ).catch((): null => null);
-    const minVtxoSats = requireVtxoMinimumSats(nodeInfo);
-    logArkadeWalletSignTrace("send_ark_minimum_check", {
-      status: "ok",
-      sats,
-      min_vtxo_sats: minVtxoSats,
-      expected_next: sats >= minVtxoSats ? "create_swap_intent" : "surface_minimum_error",
-    });
-    assertMeetsVtxoMinimum(sats, minVtxoSats);
-    const swapIntentId = await createArkadeServerSwapIntent({
-      kind: "ark_send",
-      finalRecipient: address,
-      finalAmountSats: sats,
-      fundingAddress: address,
-      fundingAmountSats: sats,
-      op: "send_ark",
-    });
+    await paymentTimed("arkade timelock check", () =>
+      assertArkadeRecoveryCsvCompatible(wallet, "send_ark"),
+    );
+    const swapIntentId = await swapIntent;
+    paymentTimingMark("approval armed");
     const txid = String(
       await withOutgoingBrowserApproval(
         {
@@ -527,14 +541,39 @@ export async function sendArkadeToArk(params: {
           source: "arkade",
           approvalScope: "direct_send_session",
           swapIntentId,
-          ...(params.onSigned ? { onSigned: params.onSigned } : {}),
+          ...(params.onBeforeBroadcast || params.onSigned || paymentTimingEnabled()
+            ? {
+                onSigned: async (signedTxid: string) => {
+                  paymentTimingMark("passkey done, transaction signed");
+                  await params.onBeforeBroadcast?.();
+                  await params.onSigned?.(signedTxid);
+                },
+              }
+            : {}),
         },
         async () => {
-          await params.onBeforeBroadcast?.();
-          return wallet.send({
-            address,
-            amount: sats,
-          });
+          paymentTimingMark("approved, building and signing (passkey next)");
+          // Dev builds: time the SDK's coin load on its own, to split its build time.
+          const timedWallet = wallet as unknown as {
+            getSpendableVtxos: (...args: unknown[]) => Promise<unknown>;
+          };
+          const loadCoins = timedWallet.getSpendableVtxos;
+          if (paymentTimingEnabled()) {
+            timedWallet.getSpendableVtxos = (...args: unknown[]) =>
+              paymentTimed("SDK loads spendable coins", () => loadCoins.apply(wallet, args));
+          }
+          try {
+            return await paymentTimed("arkade send (build, passkey, submit)", () =>
+              withCoinSyncAhead(wallet, () =>
+                wallet.send({
+                  address,
+                  amount: sats,
+                }),
+              ),
+            );
+          } finally {
+            if (paymentTimingEnabled()) timedWallet.getSpendableVtxos = loadCoins;
+          }
         },
       ),
     );
@@ -607,6 +646,57 @@ export async function sendArkadeToArk(params: {
  * querying the indexer for the lockup's own script and matching the funding
  * txid — the vout is whatever index the send actually produced.
  */
+/** Read ahead what an Arkade send waits for, while something else runs (the
+ *  server commit): the node's info. Read-only and never throws. */
+export function warmArkadeSend(): void {
+  void getRecentArkNodeInfo(arkadeServerConfigService.getArkadeNodeUrl().replace(/\/+$/, "")).catch(
+    () => {},
+  );
+  // The wallet's coins are synced with the indexer now (about a second), and
+  // the send right after reuses that sync (see SEND_COIN_SYNC_REUSE_MS).
+  const startedAt = Date.now();
+  const synced = paymentTimed("coin sync ahead (during commit)", async () => {
+    const wallet = await getOrCreateWallet();
+    const manager = await wallet.getContractManager();
+    await manager.getContractsWithVtxos();
+  });
+  synced.catch(() => {});
+  coinSyncAhead = { startedAt, synced };
+}
+
+/** How long a coin sync made ahead (warmArkadeSend) may serve the send that
+ *  follows it. Coins this wallet is spending or locking are excluded by the
+ *  SDK either way; a coin spent elsewhere meanwhile makes the Arkade server
+ *  refuse the send, so nothing can be spent twice. */
+const SEND_COIN_SYNC_REUSE_MS = 20_000;
+let coinSyncAhead: { startedAt: number; synced: Promise<void> } | null = null;
+
+/** Run `send` reusing the coin sync made ahead, when there is a fresh one;
+ *  otherwise exactly as before (the SDK syncs inside the send). The reuse
+ *  window is open only for this send. */
+async function withCoinSyncAhead<T>(
+  wallet: Awaited<ReturnType<typeof getOrCreateWallet>>,
+  send: () => Promise<T>,
+): Promise<T> {
+  const ahead = coinSyncAhead;
+  coinSyncAhead = null;
+  if (!ahead || Date.now() - ahead.startedAt > SEND_COIN_SYNC_REUSE_MS) return send();
+  const ready = await paymentTimed("coin sync ahead ready", () =>
+    ahead.synced.then(
+      () => true,
+      () => false,
+    ),
+  );
+  if (!ready) return send();
+  const manager = await paymentTimed("contract manager", () => wallet.getContractManager());
+  manager.setVtxoSyncMaxAge(SEND_COIN_SYNC_REUSE_MS);
+  try {
+    return await send();
+  } finally {
+    manager.setVtxoSyncMaxAge(0);
+  }
+}
+
 export async function fundArkadeIntentsOutpoint(params: {
   lockupAddress: string;
   amountSats: number;
@@ -653,7 +743,9 @@ export async function fundArkadeIntentsOutpoint(params: {
     throw new Error("arkade_intents_fund cannot resolve its outpoint: indexer unavailable");
   }
   const lockupScriptHex = bytesToHex(ArkAddress.decode(lockupAddress).pkScript);
-  const res = await indexer.getVtxos({ scripts: [lockupScriptHex] });
+  const res = await paymentTimed("arkade find funded output", () =>
+    indexer.getVtxos({ scripts: [lockupScriptHex] }),
+  );
   const candidates = (res.vtxos ?? []).filter(
     (v) => (!arkTxid || String(v.txid || "") === arkTxid) && Number(v.value) === amountSats,
   );

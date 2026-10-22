@@ -55,6 +55,7 @@ import {
   View,
 } from "@ds";
 import AmountKeypad from "../../components/AmountKeypad";
+import { paymentTimingStart } from "../../lib/paymentTiming";
 import SwapProcessingView, { SwapTryAgainView } from "../../components/SwapProcessingView";
 import SwapRouteChoices from "../../components/SwapRouteChoices";
 import { carriedAmountText } from "../../lib/amounts";
@@ -461,6 +462,7 @@ const MoveSheet: React.FC<Props> = ({
     // replays the amount the user actually accepted.
     const amountToSend = retryAmount ?? sourceAmount;
     if (!(amountToSend > 0)) return;
+    paymentTimingStart("move", { amount: amountToSend });
     setTransfer("idle");
     onClose();
     Promise.resolve(onConfirm(amountToSend))

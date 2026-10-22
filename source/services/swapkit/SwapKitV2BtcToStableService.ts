@@ -12,6 +12,7 @@
 // exactly the stable named. One rail's route, balance or availability never
 // implies another's. This service never falls one rail through to the other.
 import { isValidBitcoinAddressMainnet } from "../../lib/bitcoin/address";
+import { paymentTimed } from "../../lib/paymentTiming";
 import { newOp, LOG_EMOJI } from "../../lib/OperationLogUtils";
 import { t } from "../../lib/i18n";
 import { isValidEvmAddress } from "../../lib/validation";
@@ -274,7 +275,9 @@ export async function executeV2BtcToStable(
     // the arkade rail refunds to our Ark address; the on-chain BTC rail to our
     // own Bitcoin receive address.
     // Same resolution the quote used, so quote and commit bind one address.
-    const refundAddress = await btcRailRefundAddress(args.rail, args.sendSource ?? "arkade");
+    const refundAddress = await paymentTimed("refund address", () =>
+      btcRailRefundAddress(args.rail, args.sendSource ?? "arkade"),
+    );
     if (args.rail === BTC_ONCHAIN_ASSET && !refundAddress) {
       throw new Error(
         args.sendSource === "onchain"
