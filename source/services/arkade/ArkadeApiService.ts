@@ -275,6 +275,12 @@ export type ArkadeLnurlNamesResponse = {
   names: Record<string, string | null>;
 };
 
+export type ArkadeLnurlSearchResponse = {
+  ok: boolean;
+  /** Up to 8 usernames starting with the query, shortest first, never the caller's own. */
+  usernames: string[];
+};
+
 export type ArkadeLnurlPendingSwap = {
   id: string;
   username: string;
@@ -949,6 +955,19 @@ export async function arkadeLnurlNames(
     body: JSON.stringify(toRequestBody(assertion, { addresses })),
   });
   return parseJsonResponse<ArkadeLnurlNamesResponse>("lnurlNames", res);
+}
+
+// Usernames starting with what the user typed (see the server's /arkade/lnurl/search).
+export async function arkadeLnurlSearch(
+  assertion: AssertionFields,
+  query: string,
+): Promise<ArkadeLnurlSearchResponse> {
+  const res = await fetchWithTimeout("lnurlSearch", buildSignerUrl("/arkade/lnurl/search"), {
+    method: "POST",
+    headers: buildHeaders(true),
+    body: JSON.stringify(toRequestBody(assertion, { query })),
+  });
+  return parseJsonResponse<ArkadeLnurlSearchResponse>("lnurlSearch", res);
 }
 
 export async function arkadeLnurlPendingSwaps(

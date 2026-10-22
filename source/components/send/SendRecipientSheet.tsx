@@ -17,6 +17,7 @@ import {
   ListAction,
   ListActionLeadingAvatar,
   ListActionText,
+  ListActionTextMuted,
   Scroll,
   Text,
   TextField,
@@ -31,10 +32,12 @@ import {
 import AddressBookSuggestions, { useAddressBookContacts } from "../AddressBookSuggestions";
 import DsSheetHost from "../DsSheetHost";
 import PayoutAbroadSheet from "../PayoutAbroadSheet";
+import { petAvatar } from "../../lib/addressBook/petAvatar";
 import { t } from "../../lib/i18n";
 import { createRecipientStepGate } from "../../lib/send/recipientStepGate";
 import { resolvePayRecipient } from "../../lib/pay/resolvePayRecipient";
 import { resolveEnsName } from "../../lib/qr/resolveEns";
+import { unsavedNuriUsers } from "../../lib/send/nuriUserSearch";
 import { parseRecipientInput, type RecipientInput } from "../../lib/send/recipientInput";
 import {
   isSendableDestination,
@@ -44,6 +47,7 @@ import {
 } from "../../lib/send/sendRouting";
 import { isValidEvmAddress } from "../../lib/validation";
 import { destinationsFromNuriUser } from "../../screens/addressBook/addressBookModel";
+import { useNuriUserSearch } from "../../services/arkade/nuriUserSearch";
 
 type Props = {
   visible: boolean;
@@ -98,6 +102,12 @@ export default function SendRecipientSheet({
 
   const typed = entry.trim();
   const parsed = useMemo(() => parseRecipientInput(typed), [typed]);
+  // Nuri users matching what is typed, saved or not (saved ones show as contacts).
+  const search = useNuriUserSearch(entry, visible && !resolving);
+  const nuriUsers = useMemo(
+    () => unsavedNuriUsers(search.usernames, search.prefix, contacts),
+    [search.usernames, search.prefix, contacts],
+  );
 
   const edit = (next: string) => {
     stepGate.current.edit();
@@ -125,6 +135,15 @@ export default function SendRecipientSheet({
     ...recipientFromDestinations(contacts, destinations, Boolean(amountSats)),
     ...(amountSats ? { amountSats } : {}),
   });
+
+  // A Nuri user picked from a list: their username, looked up now.
+  const pickUsername = (username: string) => {
+    Keyboard.dismiss();
+    const handle = `@${username}`;
+    edit(handle);
+    entryRef.current = handle;
+    void lookUp({ kind: "nuri-user", username }, handle);
+  };
 
   const next = () => {
     if (!parsed) return;
@@ -276,18 +295,30 @@ export default function SendRecipientSheet({
               cost={() => 0}
               payUsername
               onPick={({ contact, username }) => {
-                Keyboard.dismiss();
                 if (!username) {
+                  Keyboard.dismiss();
                   finish(recipientFromContact(contact));
                   return;
                 }
-                // A Nuri contact: their username, looked up now.
-                const handle = `@${username}`;
-                edit(handle);
-                entryRef.current = handle;
-                void lookUp({ kind: "nuri-user", username }, handle);
+                pickUsername(username);
               }}
             />
+            {/* Nuri users the address book does not have, as the server finds them. */}
+            {nuriUsers.length > 0 ? (
+              <List>
+                {nuriUsers.map((username) => (
+                  <ListAction
+                    key={username}
+                    accessibilityLabel={`@${username}`}
+                    onPress={() => pickUsername(username)}
+                  >
+                    <ListActionLeadingAvatar source={petAvatar(username)} />
+                    <ListActionText>{username}</ListActionText>
+                    <ListActionTextMuted>{`@${username}`}</ListActionTextMuted>
+                  </ListAction>
+                ))}
+              </List>
+            ) : null}
           </View>
         </Scroll>
 
