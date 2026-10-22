@@ -523,6 +523,7 @@ export const tr = {
     },
     SendRecipientSheet: {
       recipientLabel: "Alıcı",
+      needsNetwork: "Nuri kullanıcısı değil. Ağı başa ekle, örneğin base:0x…",
     },
     WalletSendStablecoinModal: {
       headline: "%{asset} gönder",

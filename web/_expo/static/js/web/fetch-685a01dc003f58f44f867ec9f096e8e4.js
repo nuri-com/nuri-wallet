@@ -1,0 +1,4 @@
+__d(function(g,r,i,a,m,e,d){m.exports=r(d[0])},4774,[4986]);
+__d(function(g,r,i,a,m,e,d){Object.defineProperty(e,"__esModule",{value:!0});var n=r(d[0]);Object.keys(n).forEach(function(t){"default"!==t&&"__esModule"!==t&&(t in e&&e[t]===n[t]||Object.defineProperty(e,t,{enumerable:!0,get:function(){return n[t]}}))});var t=r(d[1]);Object.keys(t).forEach(function(n){"default"!==n&&"__esModule"!==n&&(n in e&&e[n]===t[n]||Object.defineProperty(e,n,{enumerable:!0,get:function(){return t[n]}}))})},4986,[4987,4988]);
+__d(function(g,r,i,a,m,e,d){Object.defineProperty(e,"__esModule",{value:!0}),e.fetch=void 0;e.fetch=globalThis.fetch},4987,[]);
+__d(function(g,r,i,a,m,e,d){},4988,[]);

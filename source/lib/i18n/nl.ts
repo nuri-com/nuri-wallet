@@ -531,6 +531,7 @@ export const nl = {
     },
     SendRecipientSheet: {
       recipientLabel: "Ontvanger",
+      needsNetwork: "Geen Nuri-gebruiker. Zet het netwerk ervoor, zoals base:0x…",
     },
     WalletSendStablecoinModal: {
       headline: "%{asset} versturen",

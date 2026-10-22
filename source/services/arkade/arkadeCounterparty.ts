@@ -110,6 +110,22 @@ export async function arkadeCounterparties(
   return result;
 }
 
+/**
+ * The Ark address of an output script (hex), encoded like `like` (the wallet's
+ * own address: its operator key and prefix), or null when it is not a taproot
+ * script. The names lookup matches it on its VTXO key (#1782).
+ */
+export function arkAddressForScript(script: string, like: string): string | null {
+  try {
+    const bytes = hex.decode(script.trim().toLowerCase());
+    if (bytes.length !== 34 || bytes[0] !== 0x51 || bytes[1] !== 0x20) return null;
+    const own = ArkAddress.decode(like.trim());
+    return new ArkAddress(own.serverPubKey, bytes.subarray(2), own.hrp).encode();
+  } catch {
+    return null;
+  }
+}
+
 /** The output script (hex) of an Ark address, or null when it is not one. */
 export function arkAddressScript(address: string): string | null {
   try {

@@ -16,6 +16,7 @@ import type { AddressTx } from "../../types/bitcoin";
 import { classifyTransaction } from "../../lib/bitcoin/convert";
 import { getBtcL2Provider, getBtcL2ProviderFor } from "./providers/registry";
 import { walletService } from "./WalletService";
+import { singleInputAddress } from "../../lib/activityNames";
 import type { BtcL2GetTransactionsResult } from "./BtcL2Provider";
 
 export type BitcoinTransactionSource = "legacy" | "arkade";
@@ -33,6 +34,12 @@ export type BitcoinTransaction = {
   isMigrationTx?: boolean;
   /** The other party's output scripts (hex), for naming a saved contact. */
   counterpartyScripts?: string[];
+  /** The other party's addresses, for the Nuri names lookup (#1782). */
+  counterpartyAddresses?: string[];
+  /** Arkade: an onchain deposit into Arkade (the SDK's boarding tag). */
+  boarding?: true;
+  /** Arkade: that deposit's onchain txid. */
+  boardingTxid?: string;
 };
 
 export type GetBitcoinTransactionsOptions = {
@@ -200,12 +207,16 @@ export async function getBitcoinTransactions(
   // once in the boarding address's on-chain history. The Arkade row carries no
   // txid to match on, so amount plus minute (± one, for clock skew) is the key.
   const arkadeReceivedKeys = new Set<string>();
+  // The boarding rows by their deposit's onchain txid: the only exact link
+  // between a folded onchain receive and the row that stays shown.
+  const boardingRowsByTxid = new Map<string, BitcoinTransaction>();
   for (const r of rows) {
     if (r.source === "arkade" && r.type === "received") {
       const tsMin = Math.floor(r.timestamp / 60_000);
       arkadeReceivedKeys.add(`${r.amountSats}|${tsMin}`);
       arkadeReceivedKeys.add(`${r.amountSats}|${tsMin - 1}`);
       arkadeReceivedKeys.add(`${r.amountSats}|${tsMin + 1}`);
+      if (r.boarding && r.boardingTxid) boardingRowsByTxid.set(r.boardingTxid.toLowerCase(), r);
     }
   }
 
@@ -240,7 +251,16 @@ export async function getBitcoinTransactions(
       seen.add(key);
       if (railAddress === address && row.type === "received") {
         const tsMin = Math.floor(row.timestamp / 60_000);
-        if (arkadeReceivedKeys.has(`${row.amountSats}|${tsMin}`)) continue;
+        if (arkadeReceivedKeys.has(`${row.amountSats}|${tsMin}`)) {
+          // The boarding row that stays shown keeps who paid it, for the Nuri
+          // names lookup (#1782); the onchain row is the only one that knows.
+          // Matched by the deposit's own txid, never by amount and time: two
+          // equal deposits a minute apart must not swap senders.
+          const boardingRow = boardingRowsByTxid.get(String(tx.txid || "").toLowerCase());
+          const sender = boardingRow ? singleInputAddress(tx.vin, railAddresses) : null;
+          if (boardingRow && sender) boardingRow.counterpartyAddresses = [sender];
+          continue;
+        }
       }
       rows.push(row);
       legacyFiltered.push({ tx, address: railAddress });

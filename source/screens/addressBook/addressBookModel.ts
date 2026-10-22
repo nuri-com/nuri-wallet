@@ -9,6 +9,7 @@ import {
   normalizeIban,
 } from "../../lib/addressBook/contact";
 import { isNuriLightningAddress } from "../../lib/pay/nuriUsername";
+import { settleAssetOfNetwork } from "../../lib/send/evmNetworks";
 import { isValidEvmAddress } from "../../lib/validation";
 
 /** Which existing send flow a destination opens in, and with what. */
@@ -16,6 +17,9 @@ export type SendRoute =
   | { kind: "bitcoin"; target: string; rail: "arkade" | "onchain" | "auto" }
   /** asset null: a general EVM address, paid from euro or dollar like a scanned 0x. */
   | { kind: "evm"; address: string; asset: "EURC" | "USDC" | null }
+  /** An address on another EVM network than Base (#1783, lib/send/evmNetworks),
+   * paid from euro or dollar swapped into that network's stable. */
+  | { kind: "evm-network"; address: string; network: string }
   | { kind: "sepa"; iban: string; bic: string; holder: string }
   | { kind: "card"; number: string; holder: string }
   | { kind: "unsupported"; reason: "network" | "rail" | "address" };
@@ -38,7 +42,9 @@ export function routeDestination(destination: Destination, contactLabel = ""): S
       if (
         (destination.network === "evm" && destination.asset === "ANY") ||
         (destination.network === "base" &&
-          (destination.asset === "EURC" || destination.asset === "USDC"))
+          (destination.asset === "EURC" ||
+            destination.asset === "USDC" ||
+            destination.asset === "ANY"))
       ) {
         // Same check the wallet send applies to a scan: a saved string that is
         // not an EVM address (the CLI/MCP stores any text) is not payable.
@@ -46,7 +52,15 @@ export function routeDestination(destination: Destination, contactLabel = ""): S
         return {
           kind: "evm",
           address: destination.raw.trim(),
-          asset: destination.network === "evm" ? null : (destination.asset as "EURC" | "USDC"),
+          asset: destination.asset === "ANY" ? null : (destination.asset as "EURC" | "USDC"),
+        };
+      }
+      if (destination.asset === "ANY" && settleAssetOfNetwork(destination.network)) {
+        if (!isValidEvmAddress(destination.raw)) return { kind: "unsupported", reason: "address" };
+        return {
+          kind: "evm-network",
+          address: destination.raw.trim(),
+          network: destination.network,
         };
       }
       return { kind: "unsupported", reason: "network" };
@@ -329,6 +343,9 @@ function destinationKindLabel(destination: Destination): string {
   switch (destination.type) {
     case "crypto": {
       if (destination.network === "evm") return "EVM";
+      if (destination.asset === "ANY") {
+        return `${destination.network.charAt(0).toUpperCase()}${destination.network.slice(1)}`;
+      }
       if (destination.network === "bitcoin") return destination.asset;
       const network =
         destination.network === "ark"

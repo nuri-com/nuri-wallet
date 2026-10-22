@@ -11,7 +11,12 @@ import { isValidEvmAddress } from "../../lib/validation";
 import { type SwapKitV2QuoteOption, quoteSwapKitV2 } from "./SwapKitV2Service";
 import { commitAndTrackV2Order } from "./SwapKitV2CommitFlow";
 import { readDirectSwapBalance } from "./SwapKitDirectEvmSwapService";
-import { baseStableToken, type BaseStableAssetId } from "./SwapKitStableAssets";
+import {
+  baseStableToken,
+  type BaseStableAssetId,
+  type DirectEvmSettleAssetId,
+  directEvmSettleToken,
+} from "./SwapKitStableAssets";
 import { settleBindingForOrder } from "./SwapKitV2EvmRouteBinding";
 import { standardEvmLoopOptions, SWAPKIT_V2_EVM_SOURCE_CAPABILITIES } from "./SwapKitV2Executors";
 
@@ -30,7 +35,7 @@ export type V2DirectEvmQuote = {
   /** Server quoteId of this option; the commit sends it back verbatim. */
   quoteId?: string;
   from: BaseStableAssetId;
-  to: BaseStableAssetId;
+  to: DirectEvmSettleAssetId;
   /** Deposit actually priced (clamped to the live balance). */
   sendAmount: number;
   receiveAmount: number;
@@ -53,14 +58,15 @@ export type V2DirectEvmQuote = {
  */
 export async function quoteV2DirectEvmSwaps(params: {
   from: BaseStableAssetId;
-  to: BaseStableAssetId;
+  to: DirectEvmSettleAssetId;
   amount: number;
   settleTarget?: string;
   /** Receive exactly this many of `to` (settle side); `amount` is then ignored. */
   exactReceive?: number;
 }): Promise<V2DirectEvmQuote[]> {
   const source = baseStableToken(params.from);
-  const target = baseStableToken(params.to);
+  // Another network's stable needs someone else's address to pay.
+  const target = directEvmSettleToken(params.to, Boolean(params.settleTarget?.trim()));
   if (source.asset === target.asset) throw new Error("A swap needs two different assets.");
   if (!Number.isFinite(params.amount) || params.amount <= 0) {
     throw new Error(`${source.symbol}→${target.symbol} swap requires a positive amount.`);
@@ -156,7 +162,7 @@ export async function executeV2DirectEvmSwap(params: {
       throw new Error("The quote has expired. Check the price again.");
     }
     const source = baseStableToken(quote.from);
-    const target = baseStableToken(quote.to);
+    const target = directEvmSettleToken(quote.to, params.destination === "external");
     // Base stable↔stable: the LI.FI route can carry an approval-bearing
     // execute_evm_call. Bound the allowance to the accepted deposit (the
     // server approves exactly that) and restrict EVM calls to the source chain, else the

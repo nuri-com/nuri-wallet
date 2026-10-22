@@ -530,6 +530,7 @@ export const es = {
     },
     SendRecipientSheet: {
       recipientLabel: "Destinatario",
+      needsNetwork: "No es un usuario de Nuri. Añade la red delante, como base:0x…",
     },
     WalletSendStablecoinModal: {
       headline: "Enviar %{asset}",

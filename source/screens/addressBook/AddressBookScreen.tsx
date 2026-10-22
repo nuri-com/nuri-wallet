@@ -169,7 +169,11 @@ type Props = {
    * when that flow can't take it right now (e.g. bank details not ready): the
    * contact stays open and says why.
    */
-  onPay: (route: Exclude<SendRoute, { kind: "unsupported" }>) => string | undefined;
+  onPay: (
+    route: Exclude<SendRoute, { kind: "unsupported" }>,
+    destination: Destination,
+    contact: Contact,
+  ) => string | undefined | Promise<string | undefined>;
   /** A just-paid recipient to save: opens the add form (or the existing contact) prefilled. */
   saveRequest?: SaveOffer | null;
   onSaveRequestHandled?: () => void;
@@ -480,7 +484,7 @@ const AddressBookScreen: React.FC<Props> = ({
   openRef.current = open;
 
   const payDestination = useCallback(
-    (destination: Destination, contact: Contact) => {
+    async (destination: Destination, contact: Contact) => {
       const route = routeDestination(destination, contact.label);
       if (route.kind === "unsupported") {
         setDetailMessage(
@@ -494,7 +498,15 @@ const AddressBookScreen: React.FC<Props> = ({
         );
         return;
       }
-      const refused = onPay(route);
+      // A plain 0x... is checked first (#1783): the contact stays open meanwhile.
+      setPayLookupBusy(true);
+      let refused: string | undefined;
+      try {
+        refused = await onPay(route, destination, contact);
+      } finally {
+        setPayLookupBusy(false);
+      }
+      if (openRef.current?.id !== contact.id) return;
       if (refused) {
         setDetailMessage(refused);
         return;
@@ -531,7 +543,7 @@ const AddressBookScreen: React.FC<Props> = ({
         (d) => routeDestination(d, contact.label).kind !== "unsupported",
       );
       if (payable.length === 0) setDetailMessage(t(`${K}.noRail`));
-      else if (payable.length === 1) payDestination(payable[0], contact);
+      else if (payable.length === 1) void payDestination(payable[0], contact);
       else setPayChoice({ ...contact, destinations: payable });
     },
     [payDestination],
@@ -819,7 +831,7 @@ const AddressBookScreen: React.FC<Props> = ({
           const contact = payChoice;
           setPayChoice(null);
           const destination = contact?.destinations[Number(key)];
-          if (contact && destination) payDestination(destination, contact);
+          if (contact && destination) void payDestination(destination, contact);
         }}
       />
 

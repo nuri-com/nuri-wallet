@@ -7,6 +7,8 @@ import { type Contact, type Destination, savedContactFor } from "../addressBook/
 import type { ZapRemitDestination } from "../remit/zapremitForm";
 import { routeDestination } from "../../screens/addressBook/addressBookModel";
 import { isValidBitcoinAddressMainnet } from "../bitcoin/address";
+import { isValidEvmAddress } from "../validation";
+import { settleAssetOfNetwork } from "./evmNetworks";
 
 /** Every balance a send can be paid from. */
 export type SendBalance = "wallet" | "dollar" | "arkade" | "onchain";
@@ -25,8 +27,15 @@ export type SendRoute =
   | { kind: "swap-to-bitcoin"; address: string }
   /** Bitcoin to a wallet address, or Euro/Dollar to an address that takes only
    * the other stable: swapped on the way. `asset` is the stable the recipient
-   * asked for, null when any stable will do. */
-  | { kind: "swap-to-stable"; address: string; asset: "EURC" | "USDC" | null };
+   * asked for, null when any stable will do. `settleAsset` is set for an
+   * address on another network than Base (#1783): the stable it is paid in
+   * there, e.g. "USDC_ARBITRUM". */
+  | {
+      kind: "swap-to-stable";
+      address: string;
+      asset: "EURC" | "USDC" | null;
+      settleAsset?: string;
+    };
 
 /** Who a send goes to: every address they can be paid at, as one recipient. */
 export type SendRecipient = {
@@ -57,6 +66,14 @@ function routed(destinations: Destination[]): Routed[] {
 const cashAsset = (balance: "wallet" | "dollar"): "EURC" | "USDC" =>
   balance === "dollar" ? "USDC" : "EURC";
 
+/** An address on another EVM network than Base, with the stable it is paid in there. */
+function otherNetworkOf({ destination }: Routed): { address: string; settleAsset: string } | null {
+  if (destination.type !== "crypto" || destination.asset !== "ANY") return null;
+  const settleAsset = settleAssetOfNetwork(destination.network);
+  const address = destination.raw.trim();
+  return settleAsset && isValidEvmAddress(address) ? { address, settleAsset } : null;
+}
+
 /** A plain onchain Bitcoin address (the only Bitcoin target a swap can settle to). */
 function bitcoinAddressOf({ destination, route }: Routed): string | null {
   if (route.kind !== "bitcoin" || destination.type !== "crypto") return null;
@@ -81,6 +98,17 @@ export function routeFor(balance: SendBalance, destinations: Destination[]): Sen
     const other = all.find(({ route }) => route.kind === "evm" && route.asset !== null);
     if (other && other.route.kind === "evm" && other.route.asset) {
       return { kind: "swap-to-stable", address: other.route.address, asset: other.route.asset };
+    }
+    // An address on another network: swapped into its stable there. Only Euro
+    // and Dollar reach other networks.
+    const network = all.map(otherNetworkOf).find((found) => found !== null);
+    if (network) {
+      return {
+        kind: "swap-to-stable",
+        address: network.address,
+        asset: null,
+        settleAsset: network.settleAsset,
+      };
     }
     // A saved Bitcoin address: the plain onchain one before the boarding one,
     // which only funds the recipient's Arkade balance.

@@ -52,7 +52,11 @@ const QrScannerModal: React.FC<Props> = ({
   // Opening the sheet starts the camera free, with no message. Closing keeps
   // it held: the camera stays mounted through the exit animation and must not
   // read the same code again.
+  // Each opening is its own session: an answer the caller gives after the
+  // scanner closed (or reopened) belongs to a scan that is over.
+  const sessionRef = useRef(0);
   useEffect(() => {
+    sessionRef.current += 1;
     if (visible) hold.reset();
     else hold.close();
     return () => hold.close();
@@ -108,7 +112,10 @@ const QrScannerModal: React.FC<Props> = ({
       if (parsed.type === "unknown") {
         // Give the caller one shot at raw formats parseQr does not model
         // (chain-prefixed URIs, bare base58) before the invalid toast.
-        if (onUnknown && (await onUnknown(value)) == null) {
+        const session = sessionRef.current;
+        const refused = onUnknown ? await onUnknown(value) : "unrecognized";
+        if (sessionRef.current !== session) return;
+        if (onUnknown && refused == null) {
           onClose();
           return;
         }
@@ -135,7 +142,9 @@ const QrScannerModal: React.FC<Props> = ({
       }
 
       if (onParsedResult) {
-        const errorMsg = onParsedResult(parsed);
+        const session = sessionRef.current;
+        const errorMsg = await onParsedResult(parsed);
+        if (sessionRef.current !== session) return;
         if (errorMsg) {
           console.log("[QrScannerModal] Rejected by caller", {
             type: parsed.type,
@@ -144,7 +153,8 @@ const QrScannerModal: React.FC<Props> = ({
           if (source === "paste") {
             rejectPaste();
           } else {
-            showTransientMessage(rejectMessage);
+            // The caller says why (e.g. "add the network in front").
+            showTransientMessage(errorMsg);
           }
           return;
         }

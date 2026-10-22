@@ -526,6 +526,7 @@ export const uk = {
     },
     SendRecipientSheet: {
       recipientLabel: "Отримувач",
+      needsNetwork: "Це не користувач Nuri. Додайте мережу на початку, наприклад base:0x…",
     },
     WalletSendStablecoinModal: {
       headline: "Надіслати %{asset}",

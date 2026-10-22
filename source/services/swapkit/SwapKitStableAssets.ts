@@ -54,9 +54,68 @@ const BASE_STABLES: Record<BaseStableAssetId, SwapKitStableToken> = {
   USDC_BASE: USDC_BASE_TOKEN,
 };
 
+// What a send to an address on another network settles in there (#1783,
+// lib/send/evmNetworks). Contracts as LI.FI's token registry names them, the
+// same registry the SwapKit server resolves its assets from; the route binding
+// checks a payout against them.
+const SEND_SETTLE_STABLES: Readonly<Record<string, SwapKitStableToken>> = {
+  USDC_ETH: {
+    chainId: 1,
+    asset: "USDC_ETH",
+    symbol: "USDC",
+    token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    decimals: 6,
+  },
+  USDC_POLYGON: {
+    chainId: 137,
+    asset: "USDC_POLYGON",
+    symbol: "USDC",
+    token: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+    decimals: 6,
+  },
+  USDC_OPTIMISM: {
+    chainId: 10,
+    asset: "USDC_OPTIMISM",
+    symbol: "USDC",
+    token: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+    decimals: 6,
+  },
+  EURE_GNOSIS: {
+    chainId: 100,
+    asset: "EURE_GNOSIS",
+    symbol: "EURe",
+    token: "0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430",
+    decimals: 18,
+  },
+  [USDC_ARBITRUM_TOKEN.asset]: USDC_ARBITRUM_TOKEN,
+};
+
+/** A stable a send can settle in on another network than Base, or null. */
+export function sendSettleStable(asset: string): SwapKitStableToken | null {
+  return SEND_SETTLE_STABLES[asset] ?? null;
+}
+
+/** What a direct swap settles in: a Base stable, or, for a send to an address
+ * on another network (#1783), that network's stable. */
+export type DirectEvmSettleAssetId = BaseStableAssetId | string;
+
+/**
+ * The token a direct swap settles in. Another network's stable only pays
+ * someone else's address: this wallet's own balances are on Base.
+ */
+export function directEvmSettleToken(
+  asset: DirectEvmSettleAssetId,
+  external: boolean,
+): SwapKitStableToken {
+  if (asset === "EURC_BASE" || asset === "USDC_BASE") return baseStableToken(asset);
+  const other = external ? sendSettleStable(asset) : null;
+  if (!other) throw new Error(`Unsupported settle asset: ${asset}`);
+  return other;
+}
+
 const STABLES_BY_ASSET: Readonly<Record<string, SwapKitStableToken>> = {
   ...BASE_STABLES,
-  [USDC_ARBITRUM_TOKEN.asset]: USDC_ARBITRUM_TOKEN,
+  ...SEND_SETTLE_STABLES,
 };
 
 export function baseStableToken(asset: BaseStableAssetId): SwapKitStableToken {

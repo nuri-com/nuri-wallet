@@ -1,4 +1,4 @@
-// Usernames for the addresses in the activity lists (#1708).
+// Usernames for the addresses in the activity lists (#1708; Bitcoin #1782).
 //
 // The server names an address only when exactly one Nuri user proved it, so a
 // name here is safe to show. Answers are remembered per address: a name for a
@@ -31,7 +31,8 @@ export type NuriNameStore = {
   version: () => number;
 };
 
-const EVM_ADDRESS = /^0x[0-9a-f]{40}$/;
+// What the server names (lowercase): EVM, and Arkade or Bitcoin since #1782.
+const NAMEABLE_ADDRESS = /^(0x[0-9a-f]{40}|(ark1|bc1)[02-9ac-hj-np-z]{20,200})$/;
 const USERNAME = /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/;
 
 export function createNuriNameStore(deps: NuriNameStoreDeps): NuriNameStore {
@@ -82,7 +83,9 @@ export function createNuriNameStore(deps: NuriNameStoreDeps): NuriNameStore {
     lookup: async (addresses) => {
       await ensureLoaded();
       const wanted = [
-        ...new Set(addresses.map((a) => a.trim().toLowerCase()).filter((a) => EVM_ADDRESS.test(a))),
+        ...new Set(
+          addresses.map((a) => a.trim().toLowerCase()).filter((a) => NAMEABLE_ADDRESS.test(a)),
+        ),
       ].filter((a) => !fresh(entries[a]) && !asking.has(a));
       if (wanted.length === 0) return;
       for (const a of wanted) asking.add(a);

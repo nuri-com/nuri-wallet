@@ -529,6 +529,7 @@ export const sw = {
     },
     SendRecipientSheet: {
       recipientLabel: "Mpokeaji",
+      needsNetwork: "Si mtumiaji wa Nuri. Ongeza mtandao mbele, kama base:0x…",
     },
     WalletSendStablecoinModal: {
       headline: "Tuma %{asset}",

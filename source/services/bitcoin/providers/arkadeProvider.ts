@@ -51,6 +51,9 @@ function unifiedArkadeRowToTransaction(atx: UnifiedTransaction): BitcoinTransact
     kind: atx.kind,
     isMigrationTx: atx.isMigrationTx,
     counterpartyScripts: atx.counterpartyScripts,
+    ...(atx.counterpartyAddresses ? { counterpartyAddresses: atx.counterpartyAddresses } : {}),
+    ...(atx.boarding ? { boarding: true as const } : {}),
+    ...(atx.boardingTxid ? { boardingTxid: atx.boardingTxid } : {}),
   };
 }
 

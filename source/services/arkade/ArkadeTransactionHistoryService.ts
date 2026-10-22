@@ -1,5 +1,10 @@
 import { readArkadePendingLnurlSwapsCache } from "./ArkadeReceiveOrchestrator";
-import { arkadeCounterparties, arkAddressScript, type Counterparty } from "./arkadeCounterparty";
+import {
+  arkadeCounterparties,
+  arkAddressForScript,
+  arkAddressScript,
+  type Counterparty,
+} from "./arkadeCounterparty";
 import { getOrCreateWallet } from "./internal/walletCache";
 import type { ArkadePendingLnurlSwap } from "./types/lnurl";
 
@@ -12,6 +17,8 @@ export type ArkadeRawTransaction = {
   settled?: boolean;
   /** An on-chain deposit into Arkade (the SDK's `key.boardingTxid`). */
   boarding?: boolean;
+  /** That deposit's onchain txid. */
+  boardingTxid?: string;
   /** The offchain transaction (the SDK's `key.arkTxid`). */
   arkTxid?: string;
   kind?: "offchain" | "boarding" | "exit" | "batch" | "lightning_receive" | "lightning_send";
@@ -29,6 +36,13 @@ export type UnifiedTransaction = {
   isMigrationTx?: boolean;
   /** The other party's output scripts (hex), for naming a saved contact. */
   counterpartyScripts?: string[];
+  /** The same as Ark addresses, for the Nuri names lookup (#1782). */
+  counterpartyAddresses?: string[];
+  /** An onchain deposit into Arkade (the SDK's `key.boardingTxid`). The SDK
+   * tags it, it sets no `kind`, so this is what says boarding. */
+  boarding?: true;
+  /** That deposit's onchain txid: the one onchain receive this row is. */
+  boardingTxid?: string;
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -52,6 +66,10 @@ function coerceRawTx(v: unknown): ArkadeRawTransaction {
     settled: typeof r.settled === "boolean" ? r.settled : undefined,
     boarding:
       isRecord(r.key) && typeof r.key.boardingTxid === "string" && r.key.boardingTxid !== "",
+    boardingTxid:
+      isRecord(r.key) && typeof r.key.boardingTxid === "string" && r.key.boardingTxid
+        ? r.key.boardingTxid.toLowerCase()
+        : undefined,
     arkTxid:
       isRecord(r.key) && typeof r.key.arkTxid === "string" && r.key.arkTxid
         ? r.key.arkTxid
@@ -116,19 +134,26 @@ export function getArkadePendingLnurlSwapsSnapshot(): ArkadePendingLnurlSwap[] {
   return readArkadePendingLnurlSwapsCache().map((row) => ({ ...row }));
 }
 
-/** Both sides of each offchain payment, keyed by arkTxid; empty on any failure. */
+/**
+ * Both sides of each offchain payment, keyed by arkTxid, and the wallet's own
+ * Ark address (to write the other side's scripts as addresses); empty on any
+ * failure.
+ */
 async function counterpartiesOf(
   history: ArkadeRawTransaction[],
-): Promise<Map<string, Counterparty>> {
+): Promise<{ parties: Map<string, Counterparty>; ownAddress: string }> {
+  const none = { parties: new Map<string, Counterparty>(), ownAddress: "" };
   const txids = history.flatMap((tx) => (tx.arkTxid ? [tx.arkTxid] : []));
-  if (txids.length === 0) return new Map();
+  if (txids.length === 0) return none;
   try {
     const wallet = await getOrCreateWallet();
-    const own = arkAddressScript(await wallet.getAddress());
-    if (!own) return new Map();
-    return await arkadeCounterparties(wallet.indexerProvider, txids, new Set([own]));
+    const ownAddress = String((await wallet.getAddress()) || "");
+    const own = arkAddressScript(ownAddress);
+    if (!own) return none;
+    const parties = await arkadeCounterparties(wallet.indexerProvider, txids, new Set([own]));
+    return { parties, ownAddress };
   } catch {
-    return new Map();
+    return none;
   }
 }
 
@@ -148,8 +173,13 @@ export async function getUnifiedTransactionHistory(opts: {
 
   try {
     const arkHistory = await getArkadeTransactionHistory();
-    const parties = await counterpartiesOf(arkHistory);
+    const { parties, ownAddress } = await counterpartiesOf(arkHistory);
     for (const [index, tx] of arkHistory.entries()) {
+      const scripts = counterpartyFor(tx, parties);
+      const addresses = (scripts ?? []).flatMap((script) => {
+        const address = arkAddressForScript(script, ownAddress);
+        return address ? [address] : [];
+      });
       results.push({
         // The index keeps the fallback unique. `ark-${createdAt}` alone collides
         // whenever two Arkade rows share a timestamp — seen live as a duplicate
@@ -177,7 +207,10 @@ export async function getUnifiedTransactionHistory(opts: {
         txid: tx.txid,
         isMigrationTx: false,
         // A receive is named by who paid, a send by who got paid.
-        counterpartyScripts: counterpartyFor(tx, parties),
+        ...(tx.boarding ? { boarding: true as const } : {}),
+        ...(tx.boardingTxid ? { boardingTxid: tx.boardingTxid } : {}),
+        counterpartyScripts: scripts,
+        ...(addresses.length > 0 ? { counterpartyAddresses: addresses } : {}),
       });
     }
   } catch {}

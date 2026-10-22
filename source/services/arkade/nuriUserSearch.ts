@@ -3,17 +3,17 @@
 
 import { useEffect, useState } from "react";
 import { nuriSearchPrefix } from "../../lib/send/nuriUserSearch";
+import { authStateManager } from "../auth/AuthStateService";
 import { arkadeLnurlSearch } from "./ArkadeApiService";
-import { getArkadeLnurlAssertion } from "./internal/identity";
 
 /** One question per typing pause, not per key. */
 const SEARCH_DEBOUNCE_MS = 250;
 
 /**
- * Usernames for what is typed while `active`, with the prefix they answer.
- * Never a passkey prompt for a suggestion: without a cached login, none. A
- * failed or late answer leaves the list as it was; the caller filters it
- * against the current prefix.
+ * Usernames for what is typed while `active`, with the prefix they answer,
+ * never the user's own. The search needs no login, so it never prompts and
+ * works however long ago the passkey was used. A failed or late answer leaves
+ * the list as it was; the caller filters it against the current prefix.
  */
 export function useNuriUserSearch(
   typed: string,
@@ -31,10 +31,11 @@ export function useNuriUserSearch(
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          const assertion = await getArkadeLnurlAssertion("lnurl_search", false);
-          if (!assertion || cancelled) return;
-          const answer = await arkadeLnurlSearch(assertion, prefix);
-          if (!cancelled) setUsernames(Array.isArray(answer.usernames) ? answer.usernames : []);
+          const answer = await arkadeLnurlSearch(prefix);
+          if (cancelled) return;
+          const own = (authStateManager.getState().walletUsername ?? "").toLowerCase();
+          const names = Array.isArray(answer.usernames) ? answer.usernames : [];
+          setUsernames(names.filter((name) => name.toLowerCase() !== own));
         } catch {
           // Offline or refused: no suggestions, the field still works.
         }

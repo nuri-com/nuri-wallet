@@ -117,8 +117,16 @@ import SendRecipientSheet from "../../components/send/SendRecipientSheet";
 import type { SendBalanceOption } from "../../components/send/SendFromRow";
 import { useAddressBookContacts } from "../../components/AddressBookSuggestions";
 import { contactAvatar } from "../../lib/addressBook/petAvatar";
+import type { Contact, Destination } from "../../lib/addressBook/contact";
+import { checkEvmRecipient } from "../../lib/send/evmRecipientCheck";
+import { scannedSend } from "../../lib/send/scannedSend";
+import { namesEvmNetwork, networkOfChainId, networkOfPrefix } from "../../lib/send/evmNetworks";
+import { evmRecipientLookup } from "../../services/pay/evmRecipientLookup";
+import { resolveEnsName } from "../../lib/qr/resolveEns";
 import {
   ark as arkDestination,
+  baseEvm as baseDestination,
+  namedEvm as namedEvmDestination,
   bitcoin as bitcoinDestination,
   evm as evmDestination,
   lightning as lightningDestination,
@@ -786,6 +794,14 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // The app has one scanner. The home's scan button and a euro/dollar screen's
   // Send both open it, and it routes on what the code is, never on the page.
   const closeScanner = useCallback(() => setScanVisible(false), []);
+  // Each opening and closing of the scanner is a new session: a scan whose
+  // recipient check outlives its session is dropped (#1783).
+  const scanSessionRef = useRef(0);
+  useEffect(() => {
+    scanSessionRef.current += 1;
+  }, [scanVisible]);
+  const addressBookOpenRef = useRef(addressBookOpen);
+  addressBookOpenRef.current = addressBookOpen;
 
   // Home includes every rail, even before its address/account is ready.
   const homeRails: Rail[] = useMemo(() => {
@@ -1103,12 +1119,18 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     }
     // Paid in a currency the recipient has no address for: swapped on the way,
     // into Bitcoin, or into the stable they asked for (else the main currency).
+    // An address on another network is paid in that network's stable (#1783).
+    const settleAsset = route.kind === "swap-to-stable" ? route.settleAsset : undefined;
     const fiat: "EUR" | "USD" | null =
       route.kind === "swap-to-bitcoin"
         ? null
-        : route.asset === "USDC" || (route.asset === null && home === "USD")
-          ? "USD"
-          : "EUR";
+        : settleAsset
+          ? settleAsset.startsWith("EUR")
+            ? "EUR"
+            : "USD"
+          : route.asset === "USDC" || (route.asset === null && home === "USD")
+            ? "USD"
+            : "EUR";
     // A request that names its amount is received exactly, whatever pays it.
     const requested = Number(fiat === null ? recipient.amountSats : recipient.amountStable);
     setSendSwap({
@@ -1119,9 +1141,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       asset:
         fiat === null
           ? BTC_ONCHAIN_ASSET
-          : fiat === "USD"
-            ? USDC_BASE_TOKEN.asset
-            : EURC_BASE_TOKEN.asset,
+          : (settleAsset ?? (fiat === "USD" ? USDC_BASE_TOKEN.asset : EURC_BASE_TOKEN.asset)),
     });
     setMoveLock("to");
     setSwapFrom(balance);
@@ -1130,27 +1150,44 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     return true;
   };
 
+  // An address that belongs to a saved contact is that person.
+  const nameSendRecipient = (input: SendRecipient): SendRecipient => {
+    if (input.person || input.payout) return input;
+    // A code naming its token, network or amount keeps exactly its addresses.
+    const exact = Boolean(
+      input.amountSats || input.amountStable || input.destinations.some(namesEvmNetwork),
+    );
+    return {
+      ...recipientFromDestinations(sendContacts, input.destinations, exact),
+      ...(input.amountSats ? { amountSats: input.amountSats } : {}),
+      ...(input.amountStable ? { amountStable: input.amountStable } : {}),
+    };
+  };
+
+  // The recipient a send may pay (#1783): a plain 0x... only as the Nuri user
+  // it belongs to, otherwise it must name its network. A message when refused.
+  // The recipient step runs the same check itself before routeSend.
+  const checkSendRecipient = async (input: SendRecipient): Promise<SendRecipient | string> => {
+    try {
+      const checked = await checkEvmRecipient(
+        nameSendRecipient(input),
+        evmRecipientLookup(sendContacts),
+      );
+      return checked ?? t("screen.SendRecipientSheet.needsNetwork");
+    } catch {
+      return t("screen.WalletSendStablecoinModal.lookupFailed");
+    }
+  };
+
   // Any recipient, from anywhere (recipient step, scan, contact, Send again):
   // the balance it starts on is the card Send was pressed on when that can pay.
+  // Plain 0x... recipients go through checkSendRecipient first.
   const routeSend = (
     input: SendRecipient,
     started: readonly SendBalance[] = sendStartRef.current,
   ): boolean => {
     sendStartRef.current = [];
-    // A code naming its token or amount keeps exactly its addresses.
-    const exact = Boolean(
-      input.amountSats ||
-        input.amountStable ||
-        input.destinations.some((d) => d.type === "crypto" && d.network === "base"),
-    );
-    const recipient: SendRecipient =
-      input.person || input.payout
-        ? input
-        : {
-            ...recipientFromDestinations(sendContacts, input.destinations, exact),
-            ...(input.amountSats ? { amountSats: input.amountSats } : {}),
-            ...(input.amountStable ? { amountStable: input.amountStable } : {}),
-          };
+    const recipient = nameSendRecipient(input);
     const balance = defaultSendBalance({
       recipient,
       order: sendBalances,
@@ -1179,6 +1216,8 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // For callbacks handed to other screens: always the current routeSend.
   const routeSendRef = useRef(routeSend);
   routeSendRef.current = routeSend;
+  const checkSendRecipientRef = useRef(checkSendRecipient);
+  checkSendRecipientRef.current = checkSendRecipient;
 
   // Another balance picked on an amount screen: that balance's screen opens on
   // top, and the one it replaces closes underneath once it is covered. The
@@ -1207,13 +1246,22 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
 
   // A scanned recipient: the amount screen opens over the scanner, which then
   // closes underneath it.
-  const sendScanned = (
-    recipient: SendRecipient,
+  // The recipient, or how to find it (a scanned ENS name): every wait runs in
+  // the scanner session the scan started in, so a scan whose scanner closed or
+  // reopened meanwhile routes nothing (lib/send/scannedSend).
+  const sendScanned = async (
+    input: SendRecipient | (() => Promise<SendRecipient | string>),
     started?: readonly SendBalance[],
-  ): string | undefined => {
-    if (!routeSend(recipient, started ?? sendStartRef.current)) {
-      return t("screen.HomeScreen.scanNothingToSend");
-    }
+  ): Promise<string | undefined> => {
+    const from = started ?? sendStartRef.current;
+    const result = await scannedSend(input, {
+      session: () => scanSessionRef.current,
+      check: checkSendRecipient,
+      route: (recipient) => routeSend(recipient, from),
+    });
+    if (result.kind === "stale") return undefined;
+    if (result.kind === "refused") return result.message;
+    if (result.kind === "unroutable") return t("screen.HomeScreen.scanNothingToSend");
     setTimeout(closeScanner, SEND_SCREEN_HANDOVER_MS);
     return undefined;
   };
@@ -1746,7 +1794,8 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     (address: string) => {
       const rail = historyRail === "dollar" ? "dollar" : "wallet";
       setHistoryRail(null);
-      routeSendRef.current({ destinations: [evmDestination(address)], person: null }, [rail]);
+      // A Cash row is a Base transfer: the network is known.
+      routeSendRef.current({ destinations: [baseDestination(address)], person: null }, [rail]);
     },
     [historyRail],
   );
@@ -1754,7 +1803,11 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // Paying a saved contact: close Address book and Settings, then hand the
   // destination to the flow a scan of it would open. Nothing new is sent here.
   const payFromAddressBook = useCallback(
-    (route: Exclude<SendRoute, { kind: "unsupported" }>): string | undefined => {
+    async (
+      route: Exclude<SendRoute, { kind: "unsupported" }>,
+      destination: Destination,
+      contact: Contact,
+    ): Promise<string | undefined> => {
       // Same gate as a scanned IBAN: without a ready Wirex bank account the
       // transfer would reach its confirmation with no account to debit.
       if ((route.kind === "sepa" || route.kind === "card") && !wirexBankReady) {
@@ -1764,24 +1817,41 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       if (route.kind === "evm" && !isValidEvmAddress(route.address)) {
         return t("screen.AddressBook.invalidAddress");
       }
+      // The contact is the recipient, with every address they have: the same
+      // checked send as any other, on the balance that pays them best.
+      let recipient: SendRecipient | null = null;
+      if (route.kind === "bitcoin" || route.kind === "evm" || route.kind === "evm-network") {
+        const parsed = route.kind === "bitcoin" ? parseRecipientInput(route.target) : null;
+        const destinations =
+          route.kind === "evm-network"
+            ? [namedEvmDestination(route.address, route.network)]
+            : route.kind === "evm"
+              ? [
+                  destination.type === "crypto" && destination.network === "evm"
+                    ? evmDestination(route.address)
+                    : baseDestination(route.address),
+                ]
+              : parsed?.kind === "destinations"
+                ? parsed.destinations
+                : [];
+        if (destinations.length === 0) return undefined;
+        const person = contact.nuriUsername
+          ? { name: contact.label, nuriUsername: contact.nuriUsername }
+          : null;
+        const checked = await checkSendRecipientRef.current({ destinations, person });
+        // Address book closed meanwhile: nothing opens.
+        if (!addressBookOpenRef.current) return undefined;
+        if (typeof checked === "string") return checked;
+        recipient = checked;
+      }
       setAddressBookOpen(false);
       closeSettings();
       setTimeout(() => {
         switch (route.kind) {
-          // The contact is the recipient, with every address they have: the
-          // same send flow as any other, on the balance that pays them best.
-          case "bitcoin": {
-            const parsed = parseRecipientInput(route.target);
-            if (parsed?.kind === "destinations") {
-              routeSendRef.current({ destinations: parsed.destinations, person: null }, []);
-            }
-            return;
-          }
+          case "bitcoin":
           case "evm":
-            routeSendRef.current(
-              { destinations: [evmDestination(route.address)], person: null },
-              [],
-            );
+          case "evm-network":
+            if (recipient) routeSendRef.current(recipient, []);
             return;
           case "sepa": {
             const parts = route.holder.trim() ? route.holder.trim().split(/\s+/) : [];
@@ -2720,14 +2790,29 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         visible={scanVisible}
         onClose={closeScanner}
         onResult={() => {}}
-        onUnknown={(raw) => {
+        onUnknown={async (raw) => {
           // A TanQR merchant code: paid from the arkade balance through the
           // payout rail, the same as picking that merchant by hand.
           const payout = tanQrDestination(raw);
-          if (!payout) return "unrecognized";
-          return sendScanned({ destinations: [], person: null, payout });
+          if (payout) return sendScanned({ destinations: [], person: null, payout });
+          // An address or ENS name with its network named, like base:0x...
+          const prefix = raw.trim().match(/^([a-z][a-z0-9]{1,11}):/i)?.[1];
+          const named = prefix && networkOfPrefix(prefix) ? parseRecipientInput(raw) : null;
+          if (named?.kind === "destinations" && named.destinations.length > 0) {
+            return sendScanned({ destinations: named.destinations, person: null });
+          }
+          if (named?.kind === "ens" && named.network) {
+            const network = named.network;
+            // Resolved inside the scan's session: closing the scanner meanwhile ends it.
+            return sendScanned(async () => {
+              const address = await resolveEnsName(named.name).catch((): null => null);
+              if (!address || !isValidEvmAddress(address)) return "unrecognized";
+              return { destinations: [namedEvmDestination(address, network)], person: null };
+            });
+          }
+          return "unrecognized";
         }}
-        onParsedResult={(result) => {
+        onParsedResult={async (result) => {
           // What the code IS decides the recipient; which balance pays is the
           // send flow's, the same as for a typed or picked recipient.
           const amountSats =
@@ -2778,15 +2863,39 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                   person: null,
                 });
               }
+              if (result.namespace !== "eip155") return t("screen.HomeScreen.scanUnsupported");
               if (!isValidEvmAddress(result.address)) {
                 return t("screen.HomeScreen.scanNothingToSend");
               }
-              return sendScanned({ destinations: [evmDestination(result.address)], person: null });
+              // A network a send reaches (lib/send/evmNetworks), else refused.
+              const network = networkOfChainId(Number(result.chainRef));
+              if (!network) return t("screen.HomeScreen.scanUnsupported");
+              return sendScanned({
+                destinations: [namedEvmDestination(result.address, network)],
+                person: null,
+              });
             }
             case "evm": {
               // An EIP-681 URI can name a chain, a function and an amount. Only
               // a plain send or an ERC-20 transfer of a token this wallet holds,
               // on the chain it holds it on, is something this app can pay.
+              // A plain address on another network a send reaches is paid in
+              // that network's stable (#1783); a token or native-coin request
+              // there is refused rather than paid in another asset.
+              const network = result.chainId != null ? networkOfChainId(result.chainId) : null;
+              if (network && network !== "base") {
+                const plain =
+                  !result.functionName &&
+                  result.transferRecipient == null &&
+                  !(result.value != null && result.value > 0n);
+                if (!plain || !isValidEvmAddress(result.address)) {
+                  return t("screen.HomeScreen.scanUnsupported");
+                }
+                return sendScanned({
+                  destinations: [namedEvmDestination(result.address, network)],
+                  person: null,
+                });
+              }
               const wrongChain = result.chainId != null && result.chainId !== BASE_CHAIN_ID;
               const isTransfer = result.functionName === "transfer";
               const knownToken =
@@ -2809,13 +2918,16 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                 isTransfer && result.tokenAmount != null
                   ? formatUnits(result.tokenAmount, usdc ? BASE_USDC.decimals : BASE_EURC.decimals)
                   : undefined;
-              // A token transfer pays only in that token.
+              // A token transfer pays only in that token. A link naming Base
+              // names the network; one naming none is a plain 0x... (#1783).
               return sendScanned(
                 {
                   destinations: [
                     knownToken
                       ? tokenDestination(address, usdc ? "USDC" : "EURC")
-                      : evmDestination(address),
+                      : result.chainId === BASE_CHAIN_ID
+                        ? baseDestination(address)
+                        : evmDestination(address),
                   ],
                   person: null,
                   ...(amountStable ? { amountStable } : {}),

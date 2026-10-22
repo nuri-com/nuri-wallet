@@ -28,6 +28,8 @@ import {
   BTC_ONCHAIN_ASSET,
   baseStableToken,
   type BaseStableAssetId,
+  directEvmSettleToken,
+  sendSettleStable,
   type SwapKitStableToken,
 } from "./SwapKitStableAssets";
 
@@ -219,16 +221,22 @@ type DirectEvmDetail = { quote: V2DirectEvmQuote };
 
 const directEvmEngine: SwapEngine = {
   id: "direct-evm",
-  supports: (request) => isBaseStable(request.from) && isBaseStable(request.to),
+  // Base stable to Base stable, or to another network's stable when it pays
+  // someone else's address there (a send, #1783).
+  supports: (request) =>
+    isBaseStable(request.from) &&
+    (isBaseStable(request.to) ||
+      (request.destination === "external" && sendSettleStable(request.to) !== null)),
   limitPairs: (request) => [{ from: request.from, to: request.to }],
   async quote(request) {
+    const external = request.destination === "external";
     const source = baseStableToken(request.from as BaseStableAssetId);
-    const target = baseStableToken(request.to as BaseStableAssetId);
+    const target = directEvmSettleToken(request.to, external);
     if (source.asset === target.asset) throw new Error("A swap needs two different assets.");
-    if (request.destination === "external") externalEvmTarget(request.settleTarget);
+    if (external) externalEvmTarget(request.settleTarget);
     const quotes = await quoteV2DirectEvmSwaps({
       from: request.from as BaseStableAssetId,
-      to: request.to as BaseStableAssetId,
+      to: request.to,
       amount: request.amount,
       ...(request.settleTarget ? { settleTarget: request.settleTarget } : {}),
       ...(request.exactReceive !== undefined ? { exactReceive: request.exactReceive } : {}),

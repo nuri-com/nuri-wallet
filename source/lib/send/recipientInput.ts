@@ -12,12 +12,14 @@ import { isEnsName } from "../qr/resolveEns";
 import { normalizeKenyanMobileNumber } from "../remit/kenyaPhone";
 import { normalizeTanzanianMobileNumber } from "../remit/tanzaniaPhone";
 import { isValidEvmAddress } from "../validation";
+import { networkOfPrefix } from "./evmNetworks";
 import { isLnurlPaymentInput, normalizeLightningInput } from "../../services/bitcoin/LnurlService";
 
 export type RecipientInput =
   | { kind: "destinations"; destinations: Destination[]; amountSats?: string }
   | { kind: "nuri-user"; username: string }
-  | { kind: "ens"; name: string };
+  /** `network` is set when the input named it (`base:name.eth`). */
+  | { kind: "ens"; name: string; network?: string };
 
 export const evm = (raw: string): Destination => ({
   type: "crypto",
@@ -25,6 +27,16 @@ export const evm = (raw: string): Destination => ({
   network: "evm",
   asset: "ANY",
 });
+// An address whose network the input named (`base:0x...`, `arb1:0x...`):
+// payable whoever owns it. A plain `0x...` (network "evm") names no network and
+// is paid only when it belongs to a Nuri user (#1783, lib/send/evmRecipientCheck).
+export const namedEvm = (raw: string, network: string): Destination => ({
+  type: "crypto",
+  raw,
+  network,
+  asset: "ANY",
+});
+export const baseEvm = (raw: string): Destination => namedEvm(raw, "base");
 export const bitcoin = (raw: string): Destination => ({
   type: "crypto",
   raw,
@@ -45,6 +57,17 @@ export const lightning = (raw: string): Destination => ({ type: "lightning", raw
 export function parseRecipientInput(input: string): RecipientInput | null {
   const raw = String(input || "").trim();
   if (!raw) return null;
+  // The network named in front (ERC-3770 style, lib/send/evmNetworks).
+  const prefixed = raw.match(/^([a-z][a-z0-9]{1,11}):(.+)$/i);
+  const network = prefixed ? networkOfPrefix(prefixed[1]) : null;
+  if (prefixed && network) {
+    const target = prefixed[2].trim();
+    if (isValidEvmAddress(target)) {
+      return { kind: "destinations", destinations: [namedEvm(target, network)] };
+    }
+    if (isEnsName(target)) return { kind: "ens", name: target, network };
+    return null;
+  }
   if (isValidEvmAddress(raw)) return { kind: "destinations", destinations: [evm(raw)] };
 
   const uri = parseBitcoinUri(raw);

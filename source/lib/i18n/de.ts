@@ -539,6 +539,7 @@ export const de = {
     },
     SendRecipientSheet: {
       recipientLabel: "Empfänger",
+      needsNetwork: "Kein Nuri-Nutzer. Schreib das Netzwerk davor, z. B. base:0x…",
     },
     WalletSendStablecoinModal: {
       headline: "%{asset} senden",

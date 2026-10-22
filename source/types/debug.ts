@@ -103,7 +103,9 @@ export type QrScannerProps = {
   /** Called with the full parsed result when acceptTypes is set and the type matches.
    *  Return a string to show as an error message on the scanner (scanner stays open).
    *  Return undefined/void to close the scanner and proceed. */
-  onParsedResult?: (result: import("../lib/qr/types").QrParseResult) => string | undefined;
+  onParsedResult?: (
+    result: import("../lib/qr/types").QrParseResult,
+  ) => string | undefined | Promise<string | undefined>;
   /** Last chance for raw formats parseQr does not model (chain-prefixed URIs,
    * ENS, bare base58). Return null/undefined = handled (modal closes); a string
    * = reject with the invalid toast. Async resolution is supported. */

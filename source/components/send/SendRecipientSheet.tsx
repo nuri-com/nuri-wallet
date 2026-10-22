@@ -35,10 +35,17 @@ import PayoutAbroadSheet from "../PayoutAbroadSheet";
 import { petAvatar } from "../../lib/addressBook/petAvatar";
 import { t } from "../../lib/i18n";
 import { createRecipientStepGate } from "../../lib/send/recipientStepGate";
-import { resolvePayRecipient } from "../../lib/pay/resolvePayRecipient";
+import type { Contact } from "../../lib/addressBook/contact";
 import { resolveEnsName } from "../../lib/qr/resolveEns";
+import { checkEvmRecipient } from "../../lib/send/evmRecipientCheck";
+import { namesEvmNetwork } from "../../lib/send/evmNetworks";
+import {
+  evm,
+  namedEvm,
+  parseRecipientInput,
+  type RecipientInput,
+} from "../../lib/send/recipientInput";
 import { unsavedNuriUsers } from "../../lib/send/nuriUserSearch";
-import { parseRecipientInput, type RecipientInput } from "../../lib/send/recipientInput";
 import {
   isSendableDestination,
   recipientFromContact,
@@ -46,7 +53,7 @@ import {
   type SendRecipient,
 } from "../../lib/send/sendRouting";
 import { isValidEvmAddress } from "../../lib/validation";
-import { destinationsFromNuriUser } from "../../screens/addressBook/addressBookModel";
+import { evmRecipientLookup } from "../../services/pay/evmRecipientLookup";
 import { useNuriUserSearch } from "../../services/arkade/nuriUserSearch";
 
 type Props = {
@@ -72,6 +79,8 @@ export default function SendRecipientSheet({
   const [notFound, setNotFound] = useState(false);
   // The lookup could not be reached: retryable, and not "no such name".
   const [lookupFailed, setLookupFailed] = useState(false);
+  // A plain 0x... or ENS name of someone outside Nuri: the network must be named.
+  const [needsNetwork, setNeedsNetwork] = useState(false);
   const [abroadOpen, setAbroadOpen] = useState(false);
   const stepGate = useRef(createRecipientStepGate());
   // The step's one completion: a pick, a typed recipient or a payout abroad.
@@ -97,6 +106,7 @@ export default function SendRecipientSheet({
     setResolving(false);
     setNotFound(false);
     setLookupFailed(false);
+    setNeedsNetwork(false);
     setAbroadOpen(false);
   }, [visible]);
 
@@ -115,6 +125,7 @@ export default function SendRecipientSheet({
     setResolving(false);
     setNotFound(false);
     setLookupFailed(false);
+    setNeedsNetwork(false);
   };
 
   const paste = async () => {
@@ -132,7 +143,12 @@ export default function SendRecipientSheet({
     amountSats?: string,
   ): SendRecipient => ({
     // A request naming its amount keeps its own address; the contact names the person.
-    ...recipientFromDestinations(contacts, destinations, Boolean(amountSats)),
+    // So does an address whose network was named (`base:0x...`).
+    ...recipientFromDestinations(
+      contacts,
+      destinations,
+      Boolean(amountSats) || destinations.some(namesEvmNetwork),
+    ),
     ...(amountSats ? { amountSats } : {}),
   });
 
@@ -148,17 +164,15 @@ export default function SendRecipientSheet({
   const next = () => {
     if (!parsed) return;
     Keyboard.dismiss();
-    if (parsed.kind === "destinations") {
-      finish(recipientFor(parsed.destinations, parsed.amountSats));
-      return;
-    }
     void lookUp(parsed, typed);
   };
 
-  // A name is looked up when the step continues: a Nuri user is paid at the
-  // addresses their username has now, never at ones saved for them (#1770).
+  // Every recipient is checked when the step continues: a name is looked up (a
+  // Nuri user is paid at the addresses their username has now, never at ones
+  // saved for them, #1770), and a plain 0x... is paid only as the Nuri user it
+  // belongs to (#1783).
   const lookUp = async (
-    parsed: Exclude<RecipientInput, { kind: "destinations" }>,
+    input: RecipientInput | { kind: "contact"; contact: Contact },
     typed: string,
   ) => {
     const ticket = stepGate.current.beginLookup(typed);
@@ -166,32 +180,37 @@ export default function SendRecipientSheet({
     setResolving(true);
     setNotFound(false);
     setLookupFailed(false);
+    setNeedsNetwork(false);
     try {
-      if (parsed.kind === "nuri-user") {
-        const rails = await resolvePayRecipient(parsed.username);
-        if (!stillCurrent()) return;
-        const destinations = rails ? destinationsFromNuriUser(rails) : [];
-        if (destinations.length === 0) {
-          setNotFound(true);
-          return;
-        }
-        const saved = contacts.find(
-          (c) => !c.deleted && c.nuriUsername?.toLowerCase() === parsed.username,
-        );
-        finish(
-          saved
-            ? { ...recipientFromContact(saved), destinations }
-            : { destinations, person: { name: parsed.username, nuriUsername: parsed.username } },
-        );
-        return;
+      const lookup = evmRecipientLookup(contacts);
+      let recipient: SendRecipient | null;
+      if (input.kind === "nuri-user") {
+        recipient = await lookup.nuriUser(input.username);
+      } else if (input.kind === "ens") {
+        const address = await resolveEnsName(input.name);
+        recipient =
+          address && isValidEvmAddress(address)
+            ? recipientFor([input.network ? namedEvm(address, input.network) : evm(address)])
+            : null;
+      } else if (input.kind === "contact") {
+        recipient = recipientFromContact(input.contact);
+      } else {
+        recipient = recipientFor(input.destinations, input.amountSats);
       }
-      const address = await resolveEnsName(parsed.name);
       if (!stillCurrent()) return;
-      if (!address || !isValidEvmAddress(address)) {
+      if (!recipient) {
         setNotFound(true);
         return;
       }
-      finish(recipientFor([{ type: "crypto", raw: address, network: "evm", asset: "ANY" }]));
+      // A username was just looked up: its addresses are current already.
+      const checked =
+        input.kind === "nuri-user" ? recipient : await checkEvmRecipient(recipient, lookup);
+      if (!stillCurrent()) return;
+      if (!checked) {
+        setNeedsNetwork(true);
+        return;
+      }
+      finish(checked);
     } catch {
       if (stillCurrent()) setLookupFailed(true);
     } finally {
@@ -201,11 +220,13 @@ export default function SendRecipientSheet({
 
   const hint = lookupFailed
     ? t("screen.WalletSendStablecoinModal.lookupFailed")
-    : notFound
-      ? t("screen.WalletSendStablecoinModal.ensNotFound")
-      : typed.length > 0 && !parsed
-        ? t("screen.WalletSendStablecoinModal.invalidAddressError")
-        : null;
+    : needsNetwork
+      ? t("screen.SendRecipientSheet.needsNetwork")
+      : notFound
+        ? t("screen.WalletSendStablecoinModal.ensNotFound")
+        : typed.length > 0 && !parsed
+          ? t("screen.WalletSendStablecoinModal.invalidAddressError")
+          : null;
 
   return (
     <>
@@ -297,7 +318,7 @@ export default function SendRecipientSheet({
               onPick={({ contact, username }) => {
                 if (!username) {
                   Keyboard.dismiss();
-                  finish(recipientFromContact(contact));
+                  void lookUp({ kind: "contact", contact }, entryRef.current);
                   return;
                 }
                 pickUsername(username);

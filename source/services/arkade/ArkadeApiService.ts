@@ -277,7 +277,7 @@ export type ArkadeLnurlNamesResponse = {
 
 export type ArkadeLnurlSearchResponse = {
   ok: boolean;
-  /** Up to 8 usernames starting with the query, shortest first, never the caller's own. */
+  /** Up to 8 usernames starting with the query, shortest first. */
   usernames: string[];
 };
 
@@ -958,14 +958,12 @@ export async function arkadeLnurlNames(
 }
 
 // Usernames starting with what the user typed (see the server's /arkade/lnurl/search).
-export async function arkadeLnurlSearch(
-  assertion: AssertionFields,
-  query: string,
-): Promise<ArkadeLnurlSearchResponse> {
+// No login: like the other by-name lookups, limited per address by the server.
+export async function arkadeLnurlSearch(query: string): Promise<ArkadeLnurlSearchResponse> {
   const res = await fetchWithTimeout("lnurlSearch", buildSignerUrl("/arkade/lnurl/search"), {
     method: "POST",
     headers: buildHeaders(true),
-    body: JSON.stringify(toRequestBody(assertion, { query })),
+    body: JSON.stringify({ query }),
   });
   return parseJsonResponse<ArkadeLnurlSearchResponse>("lnurlSearch", res);
 }

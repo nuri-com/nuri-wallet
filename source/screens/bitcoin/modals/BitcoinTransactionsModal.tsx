@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Linking } from "react-native";
 import { mempoolTxUrl } from "../../../config/endpoints";
 import { formatActivityTime } from "../../../lib/transactionRowUtils";
+import { singleInputAddress } from "../../../lib/activityNames";
 import { shareCsvFile } from "../../../lib/csvExport";
 import { csvDocument, csvFileName } from "../../../lib/csv";
 import {
@@ -130,6 +131,9 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
             txid: row.txid,
             isMigrationTx: row.isMigrationTx,
             counterpartyScripts: row.counterpartyScripts,
+            ...(row.counterpartyAddresses
+              ? { counterpartyAddresses: row.counterpartyAddresses }
+              : {}),
           });
         }
         // A refresh that fetched nothing never replaces what is already shown.
@@ -387,6 +391,9 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
           createdAt: _createdAt,
           incoming: isIncoming,
           counterpartyScripts: atx.counterpartyScripts,
+          ...(atx.counterpartyAddresses
+            ? { counterpartyAddresses: atx.counterpartyAddresses }
+            : {}),
         });
       }
     }
@@ -447,6 +454,10 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
       // A swap's deposit address is the swap, never someone to save.
       const swap = swapRow(swapLegs, t.txid, isIncoming);
       const recipient = paidTo.length === 1 && !swap ? paidTo[0] : null;
+      // Who paid a receive: the one address its inputs came from, when it is
+      // not this wallet's own. The names lookup may know them (#1782).
+      const sender =
+        isIncoming && !swap ? singleInputAddress(t.vin, [txAddress, ...railAddresses]) : null;
       return {
         // Address-scoped: a transfer between the two on-chain rails appears in
         // both histories, once as a send and once as a receive.
@@ -461,6 +472,7 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
         saveOffer: recipient
           ? { destination: { type: "crypto", raw: recipient, network: "bitcoin", asset: "BTC" } }
           : null,
+        ...(sender ? { counterpartyAddress: sender } : {}),
         amount: `${sign}BTC ${amountSats}`,
         amountSecondary: fiatLine ?? `${homeSym} —`,
         pending: isPending,

@@ -29,7 +29,8 @@ import type { ActivityPerson } from "../lib/activityDetail";
 import { arkAddressScript } from "../services/arkade/arkadeCounterparty";
 import { useNuriNames } from "../services/arkade/nuriNames";
 import { rememberNuriPayment } from "../services/addressBook/nuriContactSync";
-import { evmDestination, nuriActivityPayments } from "../lib/addressBook/nuriContacts";
+import { nuriActivityPayments } from "../lib/addressBook/nuriContacts";
+import { nameableAddresses, seenDestination } from "../lib/activityNames";
 import { resolvePayRecipient } from "../lib/pay/resolvePayRecipient";
 import { createRecipientLookupGate } from "../lib/pay/recipientLookupGate";
 import { lookUpSendAgain } from "../lib/activitySendAgain";
@@ -93,6 +94,8 @@ export type ActivityItem = {
   counterpartyScripts?: string[];
   /** The other party's address (a sender, for money in), matched against saved contacts. */
   counterpartyAddress?: string;
+  /** Arkade: the other party's addresses, rebuilt from its scripts, for the names lookup. */
+  counterpartyAddresses?: string[];
   /** A swap leg: its details show what was sold and bought, never an address. */
   swap?: SwapSides;
   /** Pending rows sort into a leading "Pending" section. */
@@ -156,7 +159,7 @@ function buildSections(items: ActivityItem[]): Section[] {
   return sections.filter((section) => section.items.length > 0);
 }
 
-/** The other side's EVM address, the one the Nuri directory can name. */
+/** The other side's EVM address: a Send again looks its Nuri user up. */
 function evmOf(item: ActivityItem): string | undefined {
   const address = item.saveOffer?.destination.raw ?? item.counterpartyAddress;
   return address && isValidEvmAddress(address) ? address : undefined;
@@ -206,36 +209,61 @@ const ActivitySheet: React.FC<Props> = ({
         if (contact) return contact;
       }
       const address = item.saveOffer?.destination.raw ?? item.counterpartyAddress;
-      return address ? savedContactFor(contacts, address, () => true) : null;
+      const direct = address ? savedContactFor(contacts, address, () => true) : null;
+      if (direct) return direct;
+      // A boarding deposit's sender, handed over from its onchain row (#1782).
+      for (const other of item.counterpartyAddresses ?? []) {
+        const contact = savedContactFor(contacts, other, () => true);
+        if (contact) return contact;
+      }
+      return null;
     },
     [contacts, contactByScript],
   );
-  // EVM addresses of the other sides nobody saved: the server may know them.
+  // Addresses of the other sides nobody saved (EVM, Arkade, Bitcoin): the
+  // server may know them.
   const unsavedAddresses = useMemo(
     () =>
-      items.flatMap((item) => {
-        const address = evmOf(item);
-        return address && !contactOf(item) ? [address.toLowerCase()] : [];
-      }),
+      items.flatMap((item) =>
+        contactOf(item) ? [] : nameableAddresses(item).map((a) => a.toLowerCase()),
+      ),
     [items, contactOf],
   );
-  const nameOf = useNuriNames(unsavedAddresses, visible);
+  const lookupName = useNuriNames(unsavedAddresses, visible);
+  // The row's Nuri user and the address that named them, if the server knows one.
+  const namedOf = useCallback(
+    (item: ActivityItem): { address: string; username: string } | null => {
+      for (const address of nameableAddresses(item)) {
+        const username = lookupName(address.toLowerCase());
+        if (username) return { address, username };
+      }
+      return null;
+    },
+    [lookupName],
+  );
   // A Nuri user the server names joins the address book by themselves, with
   // the addresses of their payments, newest first (#1770). Once saved, the
   // rows read as the contact; a list whose newest payments are saved writes nothing.
   useEffect(() => {
     if (!visible) return;
     const rows = items.flatMap((item) => {
-      const address = evmOf(item);
-      if (!address) return [];
+      const addresses = nameableAddresses(item);
+      if (addresses.length === 0) return [];
       const contact = contactOf(item);
-      const username = contact ? (contact.nuriUsername ?? null) : nameOf(address);
-      return [{ address, username, saved: contact !== null }];
+      if (contact) {
+        return [{ address: addresses[0], username: contact.nuriUsername ?? null, saved: true }];
+      }
+      const named = namedOf(item);
+      return [
+        named
+          ? { address: named.address, username: named.username, saved: false }
+          : { address: addresses[0], username: null, saved: false },
+      ];
     });
     for (const [username, addresses] of nuriActivityPayments(rows)) {
-      void rememberNuriPayment(username, addresses.map(evmDestination)).catch(() => {});
+      void rememberNuriPayment(username, addresses.map(seenDestination)).catch(() => {});
     }
-  }, [visible, items, contactOf, nameOf]);
+  }, [visible, items, contactOf, namedOf]);
   // Who the other side is: a saved contact first, else the Nuri user the
   // server names for the address.
   const personOf = useCallback(
@@ -247,7 +275,7 @@ const ActivitySheet: React.FC<Props> = ({
           avatar: contactAvatar(contact),
         };
       }
-      const username = nameOf(evmOf(item));
+      const username = namedOf(item)?.username;
       return username
         ? {
             person: { name: `@${username}`, username },
@@ -255,7 +283,7 @@ const ActivitySheet: React.FC<Props> = ({
           }
         : null;
     },
-    [contactOf, nameOf],
+    [contactOf, namedOf],
   );
   // Send again to a Nuri user: their username is looked up now, so the send
   // goes to the address it has today, never one saved from this payment.
