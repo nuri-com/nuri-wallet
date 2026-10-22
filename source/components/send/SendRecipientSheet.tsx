@@ -1,0 +1,329 @@
+// @screen send.recipient
+// The first step of every send: who it goes to. Saved contacts, a typed or
+// pasted address, name or invoice, a scanned code, or an account abroad. The
+// recipient comes back as every address they can be paid at; which balance
+// pays, and whether that needs a swap, is the amount step's business.
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Keyboard } from "react-native";
+import * as Clipboard from "expo-clipboard";
+
+import {
+  Button,
+  ButtonText,
+  Footer,
+  Header,
+  IconButton,
+  List,
+  ListAction,
+  ListActionLeadingAvatar,
+  ListActionText,
+  Scroll,
+  Text,
+  TextField,
+  TextFieldButton,
+  TextFieldLabel,
+  Topbar,
+  TopbarTitle,
+  TopbarTrailing,
+  View,
+} from "@ds";
+
+import AddressBookSuggestions, { useAddressBookContacts } from "../AddressBookSuggestions";
+import DsSheetHost from "../DsSheetHost";
+import PayoutAbroadSheet from "../PayoutAbroadSheet";
+import { t } from "../../lib/i18n";
+import { createRecipientStepGate } from "../../lib/send/recipientStepGate";
+import { resolvePayRecipient } from "../../lib/pay/resolvePayRecipient";
+import { resolveEnsName } from "../../lib/qr/resolveEns";
+import { parseRecipientInput, type RecipientInput } from "../../lib/send/recipientInput";
+import {
+  isSendableDestination,
+  recipientFromContact,
+  recipientFromDestinations,
+  type SendRecipient,
+} from "../../lib/send/sendRouting";
+import { isValidEvmAddress } from "../../lib/validation";
+import { destinationsFromNuriUser } from "../../screens/addressBook/addressBookModel";
+
+type Props = {
+  visible: boolean;
+  onClose: () => void;
+  /** False when no balance can pay this recipient (the step stays open). */
+  onRecipient: (recipient: SendRecipient) => boolean;
+  /** The scanner; its result comes back into the same flow. */
+  onScan: () => void;
+  /** A move between the user's own balances instead. */
+  onMoveToBalances: () => void;
+};
+
+export default function SendRecipientSheet({
+  visible,
+  onClose,
+  onRecipient,
+  onScan,
+  onMoveToBalances,
+}: Props) {
+  const [entry, setEntry] = useState("");
+  const [resolving, setResolving] = useState(false);
+  const [notFound, setNotFound] = useState(false);
+  // The lookup could not be reached: retryable, and not "no such name".
+  const [lookupFailed, setLookupFailed] = useState(false);
+  const [abroadOpen, setAbroadOpen] = useState(false);
+  const stepGate = useRef(createRecipientStepGate());
+  // The step's one completion: a pick, a typed recipient or a payout abroad.
+  // Whichever comes first wins and retires any lookup still running.
+  const finish = (recipient: SendRecipient) => {
+    if (!stepGate.current.complete()) return;
+    // Nothing can pay it: the step stays open for another recipient.
+    if (!onRecipient(recipient)) stepGate.current.reset();
+  };
+  const entryRef = useRef(entry);
+  entryRef.current = entry;
+  const contacts = useAddressBookContacts(visible);
+
+  // Every open starts empty.
+  useEffect(() => {
+    if (!visible) {
+      // Closed: nothing may complete it any more.
+      stepGate.current.complete();
+      return;
+    }
+    stepGate.current.reset();
+    setEntry("");
+    setResolving(false);
+    setNotFound(false);
+    setLookupFailed(false);
+    setAbroadOpen(false);
+  }, [visible]);
+
+  const typed = entry.trim();
+  const parsed = useMemo(() => parseRecipientInput(typed), [typed]);
+
+  const edit = (next: string) => {
+    stepGate.current.edit();
+    setEntry(next);
+    setResolving(false);
+    setNotFound(false);
+    setLookupFailed(false);
+  };
+
+  const paste = async () => {
+    try {
+      const clip = (await Clipboard.getStringAsync()).trim();
+      if (clip) edit(clip);
+    } catch {
+      // Clipboard refused (permission, empty): the field stays typable.
+    }
+  };
+
+  // A typed or pasted address that belongs to a saved contact is that person.
+  const recipientFor = (
+    destinations: SendRecipient["destinations"],
+    amountSats?: string,
+  ): SendRecipient => ({
+    // A request naming its amount keeps its own address; the contact names the person.
+    ...recipientFromDestinations(contacts, destinations, Boolean(amountSats)),
+    ...(amountSats ? { amountSats } : {}),
+  });
+
+  const next = () => {
+    if (!parsed) return;
+    Keyboard.dismiss();
+    if (parsed.kind === "destinations") {
+      finish(recipientFor(parsed.destinations, parsed.amountSats));
+      return;
+    }
+    void lookUp(parsed, typed);
+  };
+
+  // A name is looked up when the step continues: a Nuri user is paid at the
+  // addresses their username has now, never at ones saved for them (#1770).
+  const lookUp = async (
+    parsed: Exclude<RecipientInput, { kind: "destinations" }>,
+    typed: string,
+  ) => {
+    const ticket = stepGate.current.beginLookup(typed);
+    const stillCurrent = () => stepGate.current.lookupIsCurrent(ticket, entryRef.current);
+    setResolving(true);
+    setNotFound(false);
+    setLookupFailed(false);
+    try {
+      if (parsed.kind === "nuri-user") {
+        const rails = await resolvePayRecipient(parsed.username);
+        if (!stillCurrent()) return;
+        const destinations = rails ? destinationsFromNuriUser(rails) : [];
+        if (destinations.length === 0) {
+          setNotFound(true);
+          return;
+        }
+        const saved = contacts.find(
+          (c) => !c.deleted && c.nuriUsername?.toLowerCase() === parsed.username,
+        );
+        finish(
+          saved
+            ? { ...recipientFromContact(saved), destinations }
+            : { destinations, person: { name: parsed.username, nuriUsername: parsed.username } },
+        );
+        return;
+      }
+      const address = await resolveEnsName(parsed.name);
+      if (!stillCurrent()) return;
+      if (!address || !isValidEvmAddress(address)) {
+        setNotFound(true);
+        return;
+      }
+      finish(recipientFor([{ type: "crypto", raw: address, network: "evm", asset: "ANY" }]));
+    } catch {
+      if (stillCurrent()) setLookupFailed(true);
+    } finally {
+      if (stillCurrent()) setResolving(false);
+    }
+  };
+
+  const hint = lookupFailed
+    ? t("screen.WalletSendStablecoinModal.lookupFailed")
+    : notFound
+      ? t("screen.WalletSendStablecoinModal.ensNotFound")
+      : typed.length > 0 && !parsed
+        ? t("screen.WalletSendStablecoinModal.invalidAddressError")
+        : null;
+
+  return (
+    <>
+      <DsSheetHost visible={visible} onClose={onClose} mode="full">
+        <Header safeAreaTop chrome="canvas">
+          <Topbar surface="transparent" layout="fluid">
+            <TopbarTitle>{t("actions.send")}</TopbarTitle>
+            <TopbarTrailing>
+              <IconButton
+                icon="cross"
+                variant="soft"
+                accessibilityLabel={t("common.close")}
+                onPress={onClose}
+              />
+            </TopbarTrailing>
+          </Topbar>
+        </Header>
+
+        <Scroll>
+          <View
+            direction="column"
+            align="stretch"
+            gap="sm"
+            paddingX="lg"
+            paddingBottom="lg"
+            fill="grow"
+          >
+            <TextField
+              value={entry}
+              onChangeText={edit}
+              autoCapitalize="none"
+              accessibilityLabel={t("screen.SendRecipientSheet.recipientLabel")}
+            >
+              <TextFieldLabel>{t("screen.SendRecipientSheet.recipientLabel")}</TextFieldLabel>
+              <TextFieldButton accessibilityLabel={t("common.paste")} onPress={() => void paste()}>
+                {t("common.paste")}
+              </TextFieldButton>
+            </TextField>
+            {hint ? (
+              <Text size="md" muted align="center">
+                {hint}
+              </Text>
+            ) : null}
+            {/* Every other way to send, as rows above the contacts. The abroad
+                row is a bank or mobile money account, paid over Bitcoin or, in
+                Tanzania, from Euro or Dollar. */}
+            {typed.length === 0 ? (
+              <List>
+                <ListAction
+                  accessibilityLabel={t("screen.HomeScreen.scanA11yLabel")}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    onScan();
+                  }}
+                >
+                  <ListActionLeadingAvatar name="qr-scan" variant="soft" accent="lilac" />
+                  <ListActionText>{t("screen.QrScannerModal.title")}</ListActionText>
+                </ListAction>
+                <ListAction
+                  accessibilityLabel={t("screen.HomeScreen.sendToBalances")}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    onMoveToBalances();
+                  }}
+                >
+                  <ListActionLeadingAvatar name="transfer-vertical" variant="soft" accent="lilac" />
+                  <ListActionText>{t("screen.HomeScreen.sendToBalances")}</ListActionText>
+                </ListAction>
+                <ListAction
+                  accessibilityLabel={t("screen.BitcoinSendScreen.ctaPayAbroad")}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setAbroadOpen(true);
+                  }}
+                >
+                  <ListActionLeadingAvatar name="bank" variant="soft" accent="lilac" />
+                  <ListActionText>{t("screen.BitcoinSendScreen.ctaPayAbroad")}</ListActionText>
+                </ListAction>
+              </List>
+            ) : null}
+            {/* Every contact some balance can pay, then the ones matching what
+                is typed. A pick is the whole person: all their addresses. */}
+            <AddressBookSuggestions
+              active={visible}
+              query={entry}
+              accepts={isSendableDestination}
+              cost={() => 0}
+              payUsername
+              onPick={({ contact, username }) => {
+                Keyboard.dismiss();
+                if (!username) {
+                  finish(recipientFromContact(contact));
+                  return;
+                }
+                // A Nuri contact: their username, looked up now.
+                const handle = `@${username}`;
+                edit(handle);
+                entryRef.current = handle;
+                void lookUp({ kind: "nuri-user", username }, handle);
+              }}
+            />
+          </View>
+        </Scroll>
+
+        <Footer
+          safeAreaBottom
+          direction="column"
+          align="stretch"
+          paddingBottom="sm"
+          paddingX="lg"
+          gap="sm"
+        >
+          <Button
+            size="lg"
+            variant="solid"
+            accent="lilac"
+            disabled={!parsed || resolving}
+            onPress={next}
+            accessibilityLabel={t("screen.WalletSendStablecoinModal.ctaNext")}
+          >
+            <ButtonText>
+              {resolving
+                ? t("screen.WalletSendStablecoinModal.loadingLabel")
+                : t("screen.WalletSendStablecoinModal.ctaNext")}
+            </ButtonText>
+          </Button>
+        </Footer>
+      </DsSheetHost>
+      <PayoutAbroadSheet
+        visible={visible && abroadOpen}
+        payWith="bitcoin"
+        onClose={() => setAbroadOpen(false)}
+        onDone={(payout) => {
+          setAbroadOpen(false);
+          finish({ destinations: [], person: null, payout });
+        }}
+      />
+    </>
+  );
+}

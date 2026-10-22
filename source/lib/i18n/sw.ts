@@ -527,6 +527,9 @@ export const sw = {
       evmAddressLabel: "Anwani ya pochi ya Base",
       receiveNotReady: "Pochi yako inaandaliwa. Tafadhali jaribu tena baada ya muda mfupi.",
     },
+    SendRecipientSheet: {
+      recipientLabel: "Mpokeaji",
+    },
     WalletSendStablecoinModal: {
       headline: "Tuma %{asset}",
       headlineWithBalance: "Tuma %{asset} (%{amount})",

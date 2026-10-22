@@ -528,6 +528,9 @@ export const es = {
       evmAddressLabel: "Dirección de la cartera Base",
       receiveNotReady: "Tu cartera se está preparando. Inténtalo de nuevo en un momento.",
     },
+    SendRecipientSheet: {
+      recipientLabel: "Destinatario",
+    },
     WalletSendStablecoinModal: {
       headline: "Enviar %{asset}",
       headlineWithBalance: "Enviar %{asset} (%{amount})",

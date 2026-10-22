@@ -530,6 +530,9 @@ export const fr = {
       evmAddressLabel: "Adresse du portefeuille Base",
       receiveNotReady: "Ton portefeuille se prépare. Réessaie dans un instant.",
     },
+    SendRecipientSheet: {
+      recipientLabel: "Destinataire",
+    },
     WalletSendStablecoinModal: {
       headline: "Envoyer en %{asset}",
       headlineWithBalance: "Envoyer en %{asset} (%{amount})",

@@ -31,8 +31,14 @@
 // (the Wirex account) is a plain transfer, not an exchange, and is handed back
 // to the caller.
 import type React from "react";
-import { Fragment, useEffect, useState } from "react";
-import { LayoutAnimation, Platform, View as RNView, UIManager } from "react-native";
+import { Fragment, useEffect, useRef, useState } from "react";
+import {
+  type ImageSourcePropType,
+  LayoutAnimation,
+  Platform,
+  View as RNView,
+  UIManager,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Bleed,
@@ -78,8 +84,9 @@ import { swapBoundBlock } from "../../services/swapkit/SwapAmountBounds";
 export type SwapRail = {
   key: string;
   label: string;
-  /** The rail's own logo — every rail has one, so no rail draws an icon. */
-  image: number;
+  /** The rail's own logo — every rail has one, so no rail draws an icon.
+   * A send's recipient carries their avatar. */
+  image: ImageSourcePropType;
   /** This rail's balance, formatted. */
   amount: string;
   /**
@@ -119,7 +126,7 @@ export type SwapRail = {
    * The address alone tells the durable order nothing about whose figure needs
    * correcting when it finally settles.
    */
-  settleKind?: "card";
+  settleKind?: "card" | "external";
 };
 
 type Side = "from" | "to";
@@ -185,6 +192,12 @@ type Props = {
   onExecuted?: (result: MoveSwapExecuted) => void;
   /** The end fixed by the caller: stated, not picked, and the flip is not offered. */
   locked?: Side | null;
+  /**
+   * A payment request: the destination must receive exactly this, in its own
+   * unit. The amount is fixed (no keypad), priced on the settle side, and the
+   * prices state what the source pays for it.
+   */
+  exactReceive?: number;
 };
 
 // Both ends are always seeded with a real rail, so there is no unknown state to
@@ -236,6 +249,7 @@ const MoveSheet: React.FC<Props> = ({
   onConfirm,
   onExecuted,
   locked = null,
+  exactReceive,
 }) => {
   const insets = useSafeAreaInsets();
   // Which side the keypad is typing into. The other side shows its value small
@@ -305,10 +319,22 @@ const MoveSheet: React.FC<Props> = ({
     }
   }, [visible, setAmount, resetSwap]);
 
+  // A payment request opens on the destination's fixed amount, priced at once:
+  // there is nothing for the user to type.
+  const requestKey = `${fromKey}>${toKey}:${exactReceive}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: priced once per opening and pair
+  useEffect(() => {
+    if (!visible || exactReceive === undefined) return;
+    setFocus("to");
+    setAmount(carriedAmountText(exactReceive, to?.whole === true));
+  }, [visible, requestKey]);
+
   // A price is a price for ONE move, so every edit to the move withdraws it.
   // These are the only ways the move can change, which is why they wrap the
   // change instead of an effect watching the result of one.
   const changeAmount = (text: string) => {
+    // A payment request's amount is the request's, not the user's to change.
+    if (exactReceive !== undefined) return;
     setTransfer("idle");
     // Editing the move retires the failed one: its retained amount must not
     // outlive it and be replayed into a different transfer.
@@ -332,6 +358,11 @@ const MoveSheet: React.FC<Props> = ({
   // The unfocused half shows the SAME amount expressed on its own side, not its
   // balance: that is what makes the two fields one control.
   const counter = counterAmount(parsedAmount, focus) ?? "";
+  // A payment request prices what the source pays: that is the figure once known.
+  const quotedFrom =
+    exactReceive !== undefined && swap.selectedQuote && from
+      ? railAmount(swap.selectedQuote.sendAmount, from.key)
+      : null;
 
   // The typed amount is an amount of MONEY. Anything that changes which rail the
   // focused half points at — moving the focus, or flipping the pair — has to
@@ -354,7 +385,7 @@ const MoveSheet: React.FC<Props> = ({
   };
 
   const focusSide = (side: Side) => {
-    if (side === focus) return;
+    if (side === focus || exactReceive !== undefined) return;
     carryAmountThrough(() => setFocus(side));
   };
 
@@ -441,7 +472,11 @@ const MoveSheet: React.FC<Props> = ({
 
   const routeChoices = (swap.quotes ?? []).map((quote) => ({
     id: quote.id,
-    label: onRail(quote.receiveAmount),
+    // A payment request receives the same everywhere; what differs is the cost.
+    label:
+      exactReceive !== undefined && from
+        ? railAmount(quote.sendAmount, from.key)
+        : onRail(quote.receiveAmount),
     sublabel: swapRouteCardDetail({
       path: quote.path,
       providers: quote.providers,
@@ -511,12 +546,28 @@ const MoveSheet: React.FC<Props> = ({
     void swap.requestQuotes({
       from: from.asset,
       to: to.asset,
-      amount: sourceAmount,
+      // For a payment request the source amount is only an estimate.
+      amount: sourceAmount > 0 ? sourceAmount : (exactReceive ?? 0),
+      ...(exactReceive !== undefined ? { exactReceive } : {}),
       ...(from.sendSource ? { sendSource: from.sendSource } : {}),
       ...(to.settleAddress ? { settleTarget: to.settleAddress } : {}),
       ...(to.settleKind ? { destination: to.settleKind } : {}),
     });
   };
+
+  // ...and priced once it is in, without a press: a request has no amount to type.
+  const autoQuotedRef = useRef<string | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: next() reads the current move
+  useEffect(() => {
+    if (!visible) {
+      autoQuotedRef.current = null;
+      return;
+    }
+    if (exactReceive === undefined || !pairChosen || !(parsedAmount > 0)) return;
+    if (autoQuotedRef.current === requestKey || swap.quotes || swap.busy) return;
+    autoQuotedRef.current = requestKey;
+    next();
+  }, [visible, exactReceive, pairChosen, parsedAmount, requestKey, swap.quotes, swap.busy]);
 
   // A named bound replaces the generic line: "Minimum 10 000 sats" tells the
   // user what to change, "No route right now" does not.
@@ -615,7 +666,11 @@ const MoveSheet: React.FC<Props> = ({
           <View direction="row" justify="between" align="center">
             {trigger}
             <Text size="md" emphasis>
-              {side === "to" && quotedTo ? quotedTo : counter}
+              {side === "to" && quotedTo
+                ? quotedTo
+                : side === "from" && quotedFrom
+                  ? quotedFrom
+                  : counter}
             </Text>
           </View>
         </Pressable>

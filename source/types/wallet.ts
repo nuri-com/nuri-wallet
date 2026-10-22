@@ -1,3 +1,5 @@
+import type { SendBalanceOption } from "../components/send/SendFromRow";
+import type { SendBalance } from "../lib/send/sendRouting";
 // Centralized types for wallet domain — extracted from screen files
 import type { ZapRemitDestination } from "../lib/remit/zapremitForm";
 
@@ -74,6 +76,14 @@ export type WalletSendStablecoinProps = {
     code: string;
   };
   onSuccess?: (payload: { amount: number; txHash?: string | null; confirmed: boolean }) => void;
+  /** The recipient as a person (contact, Nuri user): shown by name, not address. */
+  person?: { name: string; nuriUsername?: string } | null;
+  /** Every balance that can pay this recipient, for the "From" picker. */
+  balanceOptions?: SendBalanceOption[];
+  /** The balance this screen pays from. */
+  balance?: SendBalance;
+  /** Another balance picked: the host opens the screen that pays from it. */
+  onPickBalance?: (key: SendBalance) => void;
 };
 
 export type WalletIbanRecipientProps = {

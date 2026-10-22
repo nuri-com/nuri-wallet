@@ -38,6 +38,9 @@ export type V2DirectEvmQuote = {
   provider: string | null;
   settleTarget: string;
   owner: string;
+  /** Set when the recipient must receive exactly this (a payment request):
+   * the order is committed on the settle side for that amount. */
+  exactReceive?: number;
   etaSeconds?: number;
   quotedAt: number;
   expiresAt: number;
@@ -53,6 +56,8 @@ export async function quoteV2DirectEvmSwaps(params: {
   to: BaseStableAssetId;
   amount: number;
   settleTarget?: string;
+  /** Receive exactly this many of `to` (settle side); `amount` is then ignored. */
+  exactReceive?: number;
 }): Promise<V2DirectEvmQuote[]> {
   const source = baseStableToken(params.from);
   const target = baseStableToken(params.to);
@@ -64,15 +69,19 @@ export async function quoteV2DirectEvmSwaps(params: {
   if (!eoa || !isValidEvmAddress(eoa)) throw new Error("Ethereum wallet address not available.");
   const settleTarget = params.settleTarget?.trim() || eoa;
 
-  const balance = await readDirectSwapBalance(source, eoa);
-  const requested = Math.min(balance, params.amount);
-  if (requested < 1 / 10 ** source.decimals) return [];
+  const exact = params.exactReceive;
+  let requested = exact ?? 0;
+  if (exact === undefined) {
+    const balance = await readDirectSwapBalance(source, eoa);
+    requested = Math.min(balance, params.amount);
+    if (requested < 1 / 10 ** source.decimals) return [];
+  }
 
   const response = await quoteSwapKitV2({
     from: source.asset,
     to: target.asset,
     amount: String(requested),
-    side: "deposit",
+    side: exact === undefined ? "deposit" : "settle",
     owner: eoa,
     settleTarget,
     refundAddress: eoa,
@@ -91,6 +100,9 @@ export async function quoteV2DirectEvmSwaps(params: {
     // Same for the deposit: the server's term or no option, never the amount
     // that was asked for standing in for one it did not price.
     if (!Number.isFinite(send) || send <= 0) return [];
+    // A payment request is met exactly or not at all: an option settling
+    // more or less than asked is not one.
+    if (exact !== undefined && receive !== exact) return [];
     return [
       {
         optionId: option.optionId,
@@ -103,6 +115,7 @@ export async function quoteV2DirectEvmSwaps(params: {
         provider: option.optionId.split(":")[0] || null,
         settleTarget,
         owner: eoa,
+        ...(exact !== undefined ? { exactReceive: exact } : {}),
         ...(option.expectedSettlement?.p50Seconds
           ? { etaSeconds: Number(option.expectedSettlement.p50Seconds) }
           : {}),
@@ -126,8 +139,9 @@ export type V2DirectEvmResult = {
  */
 export async function executeV2DirectEvmSwap(params: {
   quote: V2DirectEvmQuote;
-  /** "card" when the quote settles to the card account. */
-  destination?: "card";
+  /** "card" when the quote settles to the card account; "external" when it
+   * pays someone else's address (a send). */
+  destination?: "card" | "external";
   op?: { scope: string; action: string };
   onOrderId?: (orderId: string) => void;
 }): Promise<V2DirectEvmResult> {
@@ -163,8 +177,10 @@ export async function executeV2DirectEvmSwap(params: {
       owner: quote.owner,
       from: source.asset,
       to: target.asset,
-      amount: String(quote.sendAmount),
-      side: "deposit",
+      // The request the quote was made for: a payment request is committed
+      // on the settle side, for exactly what the recipient must receive.
+      amount: String(quote.exactReceive ?? quote.sendAmount),
+      side: quote.exactReceive === undefined ? "deposit" : "settle",
       settleTarget: quote.settleTarget,
       refundAddress: quote.owner,
       acceptedDepositAmount: String(quote.sendAmount),
@@ -209,18 +225,23 @@ export async function executeV2DirectEvmSwap(params: {
             createdAt: new Date().toISOString(),
           },
         },
-        {
-          event: "wallet:pendingTransfer",
-          payload: {
-            amountFiat: quote.receiveAmount,
-            fiat: target.asset === "USDC_BASE" ? "USD" : "EUR",
-            direction: "in",
-            txHash: null,
-            orderId: id,
-            source: "swapkit",
-            createdAt: new Date().toISOString(),
-          },
-        },
+        // Nothing arrives on this wallet when it pays someone else.
+        ...(params.destination === "external"
+          ? []
+          : [
+              {
+                event: "wallet:pendingTransfer",
+                payload: {
+                  amountFiat: quote.receiveAmount,
+                  fiat: target.asset === "USDC_BASE" ? "USD" : "EUR",
+                  direction: "in",
+                  txHash: null,
+                  orderId: id,
+                  source: "swapkit",
+                  createdAt: new Date().toISOString(),
+                },
+              },
+            ]),
       ],
     });
 

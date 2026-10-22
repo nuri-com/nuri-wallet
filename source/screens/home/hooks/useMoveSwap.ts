@@ -33,8 +33,11 @@ export type MoveSwapRequest = {
   sendSource?: "arkade" | "onchain";
   /** Where the receive side settles, when the rail names its own address. */
   settleTarget?: string;
-  /** Which of the app's own balances that address IS, when it is one of them. */
-  destination?: "card";
+  /** Which of the app's own balances that address IS, when it is one of them;
+   * "external" when it is someone else's (a send that swaps on the way). */
+  destination?: "card" | "external";
+  /** A payment request: the destination receives exactly this (its own unit). */
+  exactReceive?: number;
 };
 
 /** Which fullscreen wait the sheet is showing, if any. Pricing only: accepting
@@ -176,14 +179,22 @@ export function useMoveSwap(options: {
       // figures currently on screen. The terminal event applies both legs from
       // it, so the numbers move the instant the order completes rather than
       // when some later refetch catches up.
+      // A send to someone else credits nothing here: only the source moves.
+      const external = accepted.destination === "external";
+      const settleTarget = external ? lastRequestRef.current?.settleTarget : undefined;
       noteV2MoveBaseline({
         orderId,
         from: accepted.from,
-        to: accepted.to,
+        to: external ? "" : accepted.to,
         sendAmount: accepted.sendAmount,
         receiveAmount: accepted.receiveAmount,
       });
-      noteV2MoveCommitted({ orderId, from: accepted.from, to: accepted.to });
+      noteV2MoveCommitted({
+        orderId,
+        from: accepted.from,
+        to: accepted.to,
+        ...(settleTarget ? { settleTarget } : {}),
+      });
       failedQuoteIdRef.current = null;
       reset();
       // The order id is what the home books a card credit against (and what

@@ -531,6 +531,9 @@ export const pl = {
       evmAddressLabel: "Adres portfela Base",
       receiveNotReady: "Twój portfel się przygotowuje. Spróbuj ponownie za chwilę.",
     },
+    SendRecipientSheet: {
+      recipientLabel: "Odbiorca",
+    },
     WalletSendStablecoinModal: {
       headline: "Wyślij %{asset}",
       headlineWithBalance: "Wyślij %{asset} (%{amount})",

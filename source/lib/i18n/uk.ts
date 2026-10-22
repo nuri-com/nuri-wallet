@@ -524,6 +524,9 @@ export const uk = {
       evmAddressLabel: "Адреса гаманця Base",
       receiveNotReady: "Твій гаманець готується. Спробуй ще раз за мить.",
     },
+    SendRecipientSheet: {
+      recipientLabel: "Отримувач",
+    },
     WalletSendStablecoinModal: {
       headline: "Надіслати %{asset}",
       headlineWithBalance: "Надіслати %{asset} (%{amount})",

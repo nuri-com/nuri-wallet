@@ -479,10 +479,3 @@ export function savedContactFor(
     ) ?? null
   );
 }
-
-/** "Emin (0xd353…4e02)": the saved name, with enough address to verify it. */
-export function recipientWithName(name: string, address: string): string {
-  const a = address.trim();
-  const short = a.length > 14 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a;
-  return `${name} (${short})`;
-}

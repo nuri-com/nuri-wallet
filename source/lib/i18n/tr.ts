@@ -521,6 +521,9 @@ export const tr = {
       evmAddressLabel: "Base cüzdan adresi",
       receiveNotReady: "Cüzdanın hazırlanıyor. Lütfen birazdan tekrar dene.",
     },
+    SendRecipientSheet: {
+      recipientLabel: "Alıcı",
+    },
     WalletSendStablecoinModal: {
       headline: "%{asset} gönder",
       headlineWithBalance: "%{asset} gönder (%{amount})",

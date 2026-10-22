@@ -529,6 +529,9 @@ export const nl = {
       evmAddressLabel: "Adres van Base-wallet",
       receiveNotReady: "Je wallet wordt klaargemaakt. Probeer het zo opnieuw.",
     },
+    SendRecipientSheet: {
+      recipientLabel: "Ontvanger",
+    },
     WalletSendStablecoinModal: {
       headline: "%{asset} versturen",
       headlineWithBalance: "%{asset} versturen (%{amount})",

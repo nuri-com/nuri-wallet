@@ -1,3 +1,5 @@
+import type { SendBalanceOption } from "../components/send/SendFromRow";
+import type { SendBalance } from "../lib/send/sendRouting";
 // Centralized types for bitcoin domain — extracted from screen files
 import type { ZapRemitDestination } from "../lib/remit/zapremitForm";
 
@@ -62,4 +64,10 @@ export type BitcoinSendProps = {
   sendSource?: "arkade" | "onchain";
   onClose: () => void;
   onSendSuccess?: (payload: { txId: string }) => void;
+  /** The recipient as a person (contact, Nuri user): shown by name, not address. */
+  person?: { name: string; nuriUsername?: string } | null;
+  /** Every balance that can pay this recipient, for the "From" picker. */
+  balanceOptions?: SendBalanceOption[];
+  /** Another balance picked: the host opens the screen that pays from it. */
+  onPickBalance?: (key: SendBalance) => void;
 };

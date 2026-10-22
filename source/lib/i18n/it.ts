@@ -528,6 +528,9 @@ export const it = {
       evmAddressLabel: "Indirizzo del wallet Base",
       receiveNotReady: "Il tuo wallet si sta preparando. Riprova tra poco.",
     },
+    SendRecipientSheet: {
+      recipientLabel: "Destinatario",
+    },
     WalletSendStablecoinModal: {
       headline: "Invia %{asset}",
       headlineWithBalance: "Invia %{asset} (%{amount})",

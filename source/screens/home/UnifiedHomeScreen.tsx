@@ -19,7 +19,7 @@ import React, {
   useState,
   useSyncExternalStore,
 } from "react";
-import { Platform, StyleSheet, View as RNView } from "react-native";
+import { type ImageSourcePropType, Platform, StyleSheet, View as RNView } from "react-native";
 import { formatUnits } from "viem";
 import {
   type Accent,
@@ -113,6 +113,29 @@ import { hydrateMusig2Address } from "../../services/bitcoin/BitcoinBootstrapSer
 import { EventBus } from "../../services/events/AppEventBusService";
 import { useWirexCard } from "../wirex/hooks/useWirexCard";
 import { useWalletSendFlow } from "../wallet/hooks/useWalletSendFlow";
+import SendRecipientSheet from "../../components/send/SendRecipientSheet";
+import type { SendBalanceOption } from "../../components/send/SendFromRow";
+import { useAddressBookContacts } from "../../components/AddressBookSuggestions";
+import { contactAvatar } from "../../lib/addressBook/petAvatar";
+import {
+  ark as arkDestination,
+  bitcoin as bitcoinDestination,
+  evm as evmDestination,
+  lightning as lightningDestination,
+  parseRecipientInput,
+} from "../../lib/send/recipientInput";
+import {
+  SEND_BALANCES,
+  type SendBalance,
+  type SendRecipient,
+  defaultSendBalance,
+  isBitcoinBalance,
+  isSwapRoute,
+  recipientFromDestinations,
+  recipientRoute,
+  routeFor,
+  tokenDestination,
+} from "../../lib/send/sendRouting";
 import WalletSendStablecoinModal from "../wallet/modals/WalletSendStablecoinModal";
 import QrScannerModal from "../../components/QrScannerModal";
 import { tanQrDestination, type ZapRemitDestination } from "../../lib/remit/zapremitForm";
@@ -273,6 +296,34 @@ const railFiat = (key: string | null | undefined, home: FiatCode): FiatCode =>
 // The Wirex account, whichever face names it.
 const isCardRail = (key: string | null | undefined) => key === "iban" || key === "visa";
 const isBtcRail = (key: string | null | undefined) => key === "arkade" || key === "onchain";
+
+// A send that swaps on the way: the Move card with the recipient as its fixed
+// destination. `fiat` is what they receive, null for Bitcoin.
+const SEND_RECIPIENT_RAIL = "recipient";
+type SendSwapTarget = {
+  recipient: SendRecipient;
+  address: string;
+  fiat: "EUR" | "USD" | null;
+  asset: SwapAssetId;
+  /** A payment request: exactly this arrives (sats for Bitcoin). */
+  exactReceive?: number;
+};
+// How long an amount screen takes to cover the screen it opened over, before
+// that one closes underneath it (the sheet's entering animation).
+const SEND_SCREEN_HANDOVER_MS = 400;
+/** Which amount screen pays a recipient from a balance. */
+const sendScreenOf = (
+  balance: SendBalance,
+  recipient: SendRecipient,
+): "wallet" | "bitcoin" | "move" => {
+  const route = recipientRoute(balance, recipient);
+  if (route?.kind === "payout-direct") return isBitcoinBalance(balance) ? "bitcoin" : "wallet";
+  if (route?.kind === "evm-direct") return "wallet";
+  if (route?.kind === "bitcoin-direct") return "bitcoin";
+  return "move";
+};
+const shortAddress = (address: string) =>
+  address.length > 14 ? `${address.slice(0, 6)}\u2026${address.slice(-4)}` : address;
 
 const RAIL_SWAP_ASSET: Partial<Record<RailKey, SwapAssetId>> = {
   wallet: EURC_BASE_TOKEN.asset,
@@ -453,16 +504,18 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // the user to an empty keypad to guess what they owe.
   const [btcSendAmountSats, setBtcSendAmountSats] = useState<string | undefined>(undefined);
   const [scanVisible, setScanVisible] = useState(false);
-  // A scanned recipient that more than one rail can pay. Null whenever the code
-  // determines its own rail — then nothing is asked.
-  // Which stable a scanned recipient is being paid in. A rail opened from a row
-  // says it itself; a scan has to be asked when both balances exist.
-
-  const [scanChoice, setScanChoice] = useState<
-    | { kind: "bitcoin"; address: string }
-    | { kind: "evm"; address: string; amount: string | null }
-    | null
-  >(null);
+  // The one send flow: the recipient step, then the amount screen of the
+  // balance that pays. `send` is who it goes to and which balance pays, for
+  // as long as one of its screens is open; the balances a Send started from
+  // (its card) are preferred when they can pay.
+  const [recipientSheetOpen, setRecipientSheetOpen] = useState(false);
+  const [scanFromSend, setScanFromSend] = useState(false);
+  const [send, setSend] = useState<{ recipient: SendRecipient; balance: SendBalance } | null>(null);
+  const sendStartRef = useRef<readonly SendBalance[]>([]);
+  // A send that swaps on the way runs on the Move card, with the recipient as
+  // its fixed destination.
+  const [sendSwap, setSendSwap] = useState<SendSwapTarget | null>(null);
+  const sendContacts = useAddressBookContacts(true);
   const [swapVisible, setSwapVisible] = useState(false);
   const [swapFrom, setSwapFrom] = useState<RailKey | null>(null);
   const [swapTo, setSwapTo] = useState<RailKey | null>(null);
@@ -490,16 +543,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     (id: number) => setTopUp((current) => (current?.id === id ? null : current)),
     [],
   );
-  // Cash with money in both currencies: Send asks which one first; the pick
-  // lives until the Cash card closes.
-  const [cashChoice, setCashChoice] = useState(false);
-  const [cashPick, setCashPick] = useState<"wallet" | "dollar" | null>(null);
-  const [btcChoice, setBtcChoice] = useState(false);
-  const [btcPick, setBtcPick] = useState<"onchain" | "arkade" | null>(null);
-  useEffect(() => {
-    if (openRail !== "wallet") setCashPick(null);
-    if (openRail !== "onchain") setBtcPick(null);
-  }, [openRail]);
   const [onchainToArkadeAvailableSats, setOnchainToArkadeAvailableSats] = useState<number | null>(
     null,
   );
@@ -742,40 +785,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
 
   // The app has one scanner. The home's scan button and a euro/dollar screen's
   // Send both open it, and it routes on what the code is, never on the page.
-  const closeScanner = useCallback(() => {
-    setScanVisible(false);
-    walletSend.setShowWalletScan(false);
-  }, [walletSend.setShowWalletScan]);
-
-  // One EVM recipient, two balances that can pay it. Ask only when BOTH hold
-  // something; otherwise name the one that does — defaulting to euro left a
-  // dollar-only wallet in a euro send sheet with nothing to spend.
-  const openEvmSend = useCallback(
-    (address: string, amount: string | null): string | undefined => {
-      const hasUsd = (usdcBalance ?? 0) > 0;
-      // Send on Cash already asked which currency pays; its scan keeps that pick.
-      const picked = walletSend.showWalletScan ? cashPick : null;
-      if (walletEur > 0 && hasUsd && !picked) {
-        setScanChoice({ kind: "evm", address, amount });
-        return undefined;
-      }
-      // A rejected recipient is said on the scanner, and nothing opens.
-      return walletSend.handleWalletScanResult(
-        address,
-        amount,
-        picked ?? (hasUsd && walletEur <= 0 ? "dollar" : "wallet"),
-      )
-        ? undefined
-        : t("screen.HomeScreen.scanNothingToSend");
-    },
-    [
-      usdcBalance,
-      walletEur,
-      walletSend.showWalletScan,
-      cashPick,
-      walletSend.handleWalletScanResult,
-    ],
-  );
+  const closeScanner = useCallback(() => setScanVisible(false), []);
 
   // Home includes every rail, even before its address/account is ready.
   const homeRails: Rail[] = useMemo(() => {
@@ -922,18 +932,13 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     cash: t("screen.HomeScreen.groupCash"),
     banking: t("screen.HomeScreen.groupCardBanking"),
   };
-  // Which stable a Send or Move from Cash spends. With money in both, the user
-  // picks it in a sheet; with money in one, that one; with none, the main one.
-  const cashBoth = walletEur > 0 && (usdcBalance ?? 0) > 0;
+  // Which stable a Move from Cash spends: with money in one, that one; else the
+  // main one.
   const cashOnly: "wallet" | "dollar" =
     walletEur > 0 ? "wallet" : (usdcBalance ?? 0) > 0 ? "dollar" : cardSettleWalletRail(home);
-  const cashRail: "wallet" | "dollar" = cashPick ?? cashOnly;
-  // Which bitcoin rail a Send or Move from Bitcoin spends, as Send does today.
-  // Which bitcoin rail a Send from Bitcoin spends: with money on both, the user
-  // picks it in a sheet (lives until the Bitcoin card closes); else the funded one.
-  const btcBoth = onchainActive && onchainSats > 0 && arkadeSats > 0;
-  const btcRail: "onchain" | "arkade" =
-    btcPick ?? (onchainActive && onchainSats > 0 ? "onchain" : "arkade");
+  const cashRail: "wallet" | "dollar" = cashOnly;
+  // Which bitcoin rail a Move from Bitcoin spends: the funded one.
+  const btcRail: "onchain" | "arkade" = onchainActive && onchainSats > 0 ? "onchain" : "arkade";
   const overviewImages = { bitcoin: BTC_LOGO, cash: EUR_FLAG, banking: VISA_LOGO };
   const total = formatFiat(sumKnown(overviewGroups.map((group) => group.amountHome)), home, {
     style: "glyph",
@@ -1010,10 +1015,208 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     [moneyInFlight, pendingVtxoSats, satsStr, heldStr, homeStr, satsToHome, fiatToSats],
   );
 
-  // The transfer sheet is reached from a rail row or from a scan. A scan that
-  // opened the sheet decided for itself, and that decision lives and dies with
-  // the sheet; otherwise the open row names the currency.
+  // The transfer sheet is opened with the balance that pays (a send, a scan,
+  // Send again); that decision lives and dies with the sheet.
   const sendTokenRail = walletSend.sendToWalletRail ?? cashRail;
+
+  // ── The one send flow ──────────────────────────────────────────────────
+  // Balances a send can be paid from, in the order a tie is broken.
+  const sendBalances = useMemo(
+    () => SEND_BALANCES.filter((balance) => balance !== "onchain" || onchainActive),
+    [onchainActive],
+  );
+  const sendHeld: Record<SendBalance, number> = {
+    wallet: walletEur,
+    dollar: usdcBalance ?? 0,
+    arkade: arkadeSats,
+    onchain: onchainActive ? onchainSats : 0,
+  };
+  const sendBalanceLook: Record<
+    SendBalance,
+    { label: string; image: ImageSourcePropType; held: string }
+  > = {
+    wallet: {
+      label: t("screen.HomeScreen.railEuro"),
+      image: EUR_FLAG,
+      held: heldStr(walletEur, "EUR"),
+    },
+    dollar: {
+      label: t("screen.HomeScreen.railDollar"),
+      image: USD_FLAG,
+      held: heldStr(usdcBalance ?? 0, "USD"),
+    },
+    arkade: {
+      label: t("screen.HomeScreen.railBitcoinLightning"),
+      image: LIGHTNING_LOGO,
+      held: satsStr(arkadeSats),
+    },
+    onchain: {
+      label: t("screen.HomeScreen.railBitcoin"),
+      image: BTC_LOGO,
+      held: satsStr(onchainSats),
+    },
+  };
+  // Only the balances that can pay this recipient; the rest are not offered.
+  const sendBalanceOptions = (recipient: SendRecipient): SendBalanceOption[] =>
+    sendBalances
+      .filter((balance) => recipientRoute(balance, recipient) !== null)
+      .map((balance) => ({
+        key: balance,
+        label: sendBalanceLook[balance].label,
+        sublabel: sendBalanceLook[balance].held,
+        image: sendBalanceLook[balance].image,
+      }));
+
+  // The amount screen that pays `recipient` from `balance`: the transfer sheet,
+  // the Bitcoin send, or the Move card when it swaps on the way.
+  const openSend = (recipient: SendRecipient, balance: SendBalance): boolean => {
+    const route = recipientRoute(balance, recipient);
+    if (!route) return false;
+    setSend({ recipient, balance });
+    if (route.kind === "payout-direct") {
+      if (!recipient.payout) return false;
+      if (isBitcoinBalance(balance)) {
+        setBtcSendPrefill(undefined);
+        setBtcSendAmountSats(undefined);
+        setBtcSendPayout(recipient.payout);
+        setBtcSendSource(balance);
+      } else {
+        walletSend.open({ payout: recipient.payout, rail: balance });
+      }
+      return true;
+    }
+    if (route.kind === "evm-direct") {
+      if (isBitcoinBalance(balance)) return false;
+      return walletSend.open({
+        address: route.address,
+        amount: recipient.amountStable ?? null,
+        rail: balance,
+      });
+    }
+    if (route.kind === "bitcoin-direct") {
+      if (!isBitcoinBalance(balance)) return false;
+      setBtcSendPayout(undefined);
+      setBtcSendPrefill(route.target);
+      setBtcSendAmountSats(recipient.amountSats);
+      setBtcSendSource(balance);
+      return true;
+    }
+    // Paid in a currency the recipient has no address for: swapped on the way,
+    // into Bitcoin, or into the stable they asked for (else the main currency).
+    const fiat: "EUR" | "USD" | null =
+      route.kind === "swap-to-bitcoin"
+        ? null
+        : route.asset === "USDC" || (route.asset === null && home === "USD")
+          ? "USD"
+          : "EUR";
+    // A request that names its amount is received exactly, whatever pays it.
+    const requested = Number(fiat === null ? recipient.amountSats : recipient.amountStable);
+    setSendSwap({
+      recipient,
+      address: route.address,
+      ...(Number.isFinite(requested) && requested > 0 ? { exactReceive: requested } : {}),
+      fiat,
+      asset:
+        fiat === null
+          ? BTC_ONCHAIN_ASSET
+          : fiat === "USD"
+            ? USDC_BASE_TOKEN.asset
+            : EURC_BASE_TOKEN.asset,
+    });
+    setMoveLock("to");
+    setSwapFrom(balance);
+    setSwapTo(SEND_RECIPIENT_RAIL as RailKey);
+    setSwapVisible(true);
+    return true;
+  };
+
+  // Any recipient, from anywhere (recipient step, scan, contact, Send again):
+  // the balance it starts on is the card Send was pressed on when that can pay.
+  const routeSend = (
+    input: SendRecipient,
+    started: readonly SendBalance[] = sendStartRef.current,
+  ): boolean => {
+    sendStartRef.current = [];
+    // A code naming its token or amount keeps exactly its addresses.
+    const exact = Boolean(
+      input.amountSats ||
+        input.amountStable ||
+        input.destinations.some((d) => d.type === "crypto" && d.network === "base"),
+    );
+    const recipient: SendRecipient =
+      input.person || input.payout
+        ? input
+        : {
+            ...recipientFromDestinations(sendContacts, input.destinations, exact),
+            ...(input.amountSats ? { amountSats: input.amountSats } : {}),
+            ...(input.amountStable ? { amountStable: input.amountStable } : {}),
+          };
+    const balance = defaultSendBalance({
+      recipient,
+      order: sendBalances,
+      held: sendHeld,
+      started,
+    });
+    return balance ? openSend(recipient, balance) : false;
+  };
+
+  // The amount screen a balance switch is about to close underneath the new one.
+  const sendHandoverRef = useRef<{
+    screen: "wallet" | "bitcoin" | "move";
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+  const closeSendScreen = (screen: "wallet" | "bitcoin" | "move") => {
+    if (screen === "wallet") walletSend.setIsSendToWalletVisible(false);
+    else if (screen === "move") setSwapVisible(false);
+    else {
+      setBtcSendPrefill(undefined);
+      setBtcSendPayout(undefined);
+      setBtcSendAmountSats(undefined);
+      setBtcSendSource(null);
+    }
+  };
+
+  // For callbacks handed to other screens: always the current routeSend.
+  const routeSendRef = useRef(routeSend);
+  routeSendRef.current = routeSend;
+
+  // Another balance picked on an amount screen: that balance's screen opens on
+  // top, and the one it replaces closes underneath once it is covered. The
+  // same screen just changes balance.
+  const switchSendBalance = (balance: SendBalance) => {
+    const current = send;
+    if (!current || current.balance === balance) return;
+    const before = sendScreenOf(current.balance, current.recipient);
+    if (!openSend(current.recipient, balance)) return;
+    const after = sendScreenOf(balance, current.recipient);
+    // A switch inside the previous one's handover: its pending close is
+    // settled now, and never closes the screen that is opening.
+    const pending = sendHandoverRef.current;
+    if (pending) {
+      clearTimeout(pending.timer);
+      sendHandoverRef.current = null;
+      if (pending.screen !== after) closeSendScreen(pending.screen);
+    }
+    if (before === after) return;
+    const timer = setTimeout(() => {
+      sendHandoverRef.current = null;
+      closeSendScreen(before);
+    }, SEND_SCREEN_HANDOVER_MS);
+    sendHandoverRef.current = { screen: before, timer };
+  };
+
+  // A scanned recipient: the amount screen opens over the scanner, which then
+  // closes underneath it.
+  const sendScanned = (
+    recipient: SendRecipient,
+    started?: readonly SendBalance[],
+  ): string | undefined => {
+    if (!routeSend(recipient, started ?? sendStartRef.current)) {
+      return t("screen.HomeScreen.scanNothingToSend");
+    }
+    setTimeout(closeScanner, SEND_SCREEN_HANDOVER_MS);
+    return undefined;
+  };
 
   // What the open home card holds, one row per rail: Bitcoin = Onchain and
   // Lightning, Cash = euro and dollar, Visa & Banking = the money on the card in
@@ -1444,8 +1647,8 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           setSwapVisible(false);
           setCardSheet(null);
           setCardPickFor(null);
-          setCashChoice(false);
-          setBtcChoice(false);
+          setRecipientSheetOpen(false);
+          setSend(null);
           setTopUp(null);
           setBtcSendSource(null);
           setBtcSendPrefill(undefined);
@@ -1453,7 +1656,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           setSweepResult(null);
           setCardFoundVisible(false);
           setDetailsChoiceVisible(false);
-          setScanChoice(null);
           // A link parked for a home that never opened it must not fire after the
           // takeover that just asked everything to close.
           clearPendingHomeRail();
@@ -1544,9 +1746,9 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     (address: string) => {
       const rail = historyRail === "dollar" ? "dollar" : "wallet";
       setHistoryRail(null);
-      walletSend.handleWalletScanResult(address, null, rail);
+      routeSendRef.current({ destinations: [evmDestination(address)], person: null }, [rail]);
     },
-    [historyRail, walletSend.handleWalletScanResult],
+    [historyRail],
   );
 
   // Paying a saved contact: close Address book and Settings, then hand the
@@ -1566,31 +1768,19 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       closeSettings();
       setTimeout(() => {
         switch (route.kind) {
+          // The contact is the recipient, with every address they have: the
+          // same send flow as any other, on the balance that pays them best.
           case "bitcoin": {
-            setBtcSendPrefill(route.target);
-            setBtcSendAmountSats(undefined);
-            if (route.rail === "auto") {
-              if (onchainActive && onchainSats > 0 && arkadeSats > 0) {
-                setScanChoice({ kind: "bitcoin", address: route.target });
-                return;
-              }
-              setBtcSendSource(onchainActive && onchainSats > 0 ? "onchain" : "arkade");
-              return;
+            const parsed = parseRecipientInput(route.target);
+            if (parsed?.kind === "destinations") {
+              routeSendRef.current({ destinations: parsed.destinations, person: null }, []);
             }
-            setBtcSendSource(route.rail);
             return;
           }
           case "evm":
-            // A general EVM address pays like a scanned 0x: euro or dollar,
-            // asking only when both hold money.
-            if (route.asset === null) {
-              openEvmSend(route.address, null);
-              return;
-            }
-            walletSend.handleWalletScanResult(
-              route.address,
-              null,
-              route.asset === "USDC" ? "dollar" : "wallet",
+            routeSendRef.current(
+              { destinations: [evmDestination(route.address)], person: null },
+              [],
             );
             return;
           case "sepa": {
@@ -1610,16 +1800,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       }, MODAL_HANDOFF_DELAY_MS);
       return undefined;
     },
-    [
-      arkadeSats,
-      onchainActive,
-      onchainSats,
-      walletSend.handleWalletScanResult,
-      wirexBankReady,
-      wirexSend.startSepaTo,
-      openEvmSend,
-      cardPayout.startWith,
-    ],
+    [wirexBankReady, wirexSend.startSepaTo, cardPayout.startWith],
   );
 
   // "Add to address book" on an activity row: close the history and open the
@@ -1641,19 +1822,31 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // rate, euros and dollars through FX, straight between the two rails' own
   // currencies — the display currency is not a leg of it. Null when a rate is
   // missing, so the field stays blank rather than showing a made-up number.
+  // A send's recipient is a rail of the Move card too, counted in what they get.
+  const railIsBtc = useCallback(
+    (key: string | null | undefined) =>
+      key === SEND_RECIPIENT_RAIL ? sendSwap?.fiat === null : isBtcRail(key),
+    [sendSwap],
+  );
+  const railFiatOf = useCallback(
+    (key: string | null | undefined): FiatCode =>
+      key === SEND_RECIPIENT_RAIL ? (sendSwap?.fiat ?? home) : railFiat(key, home),
+    [sendSwap, home],
+  );
   const swapCounterValue = useCallback(
     (typed: number, focus: "from" | "to"): number | null => {
       const source = focus === "from" ? swapFrom : swapTo;
       const target = focus === "from" ? swapTo : swapFrom;
       if (!source || !target || !Number.isFinite(typed)) return null;
-      const fiatOf = (rail: RailKey): FiatCode => railFiat(rail, home);
-      if (isBtcRail(source)) {
-        return isBtcRail(target) ? typed : satsToFiatIn(typed, fiatOf(target), btcQuote, fxRates);
+      if (railIsBtc(source)) {
+        return railIsBtc(target)
+          ? typed
+          : satsToFiatIn(typed, railFiatOf(target), btcQuote, fxRates);
       }
-      if (isBtcRail(target)) return fiatToSats(typed, fiatOf(source));
-      return convertFiat(typed, fiatOf(source), fiatOf(target), fxRates);
+      if (railIsBtc(target)) return fiatToSats(typed, railFiatOf(source));
+      return convertFiat(typed, railFiatOf(source), railFiatOf(target), fxRates);
     },
-    [swapFrom, swapTo, btcQuote, fxRates, fiatToSats, home],
+    [swapFrom, swapTo, btcQuote, fxRates, fiatToSats, railIsBtc, railFiatOf],
   );
 
   // The same number, formatted for the unfocused half.
@@ -1662,10 +1855,10 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // moments, so they cannot each bring their own grouping and rounding.
   const swapRailAmount = useCallback(
     (value: number, railKey: string): string => {
-      if (isBtcRail(railKey)) return satsGlyph(value);
-      return heldGlyph(value, railFiat(railKey, home));
+      if (railIsBtc(railKey)) return satsGlyph(value);
+      return heldGlyph(value, railFiatOf(railKey));
     },
-    [satsGlyph, heldGlyph, home],
+    [satsGlyph, heldGlyph, railIsBtc, railFiatOf],
   );
 
   const swapCounterAmount = useCallback(
@@ -1717,6 +1910,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       // counterparty a bitcoin move defaults to, and row order is the product's
       // to change without moving that default onto the dollar.
       const target = isBtc(source) ? "wallet" : (rails.find((r) => isBtc(r.key))?.key ?? "arkade");
+      setSendSwap(null);
       setMoveLock(null);
       setMovePair(source, target);
       setSwapVisible(true);
@@ -1731,6 +1925,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       cancelMoveHandoff();
       moveHandoffTimerRef.current = setTimeout(() => {
         moveHandoffTimerRef.current = null;
+        setSendSwap(null);
         setMoveLock(lock);
         setMovePair(from, to);
         setSwapVisible(true);
@@ -1740,21 +1935,32 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   );
 
   const settleWallet = cardSettleWalletRail(home);
-  // The two buttons on a card. Send on Cash with money in both currencies asks
-  // which one first.
+  // The two buttons on a card. Send on Cash or Bitcoin is the one send flow:
+  // its recipient step first, and the card's own balances preferred to pay.
   const openCardSheet = useCallback(
     (kind: "add" | "send", card: HomeCard) => {
-      if (kind === "send" && card === "wallet" && cashBoth) return setCashChoice(true);
-      if (kind === "send" && card === "wallet") setCashPick(null);
-      if (kind === "send" && card === "onchain" && btcBoth) return setBtcChoice(true);
-      if (kind === "send" && card === "onchain") setBtcPick(null);
+      if (kind === "send" && (card === "wallet" || card === "onchain")) {
+        sendStartRef.current =
+          card === "wallet"
+            ? settleWallet === "dollar"
+              ? ["dollar", "wallet"]
+              : ["wallet", "dollar"]
+            : [btcRail, btcRail === "onchain" ? "arkade" : "onchain"];
+        return handOff(() => setRecipientSheetOpen(true));
+      }
       setCardSheet({ kind, card });
     },
-    [cashBoth, btcBoth],
+    [settleWallet, btcRail, handOff],
   );
   const onCardButton = useCallback(
     (kind: "add" | "send") => {
       const card = carouselRailKey as HomeCard | null;
+      // Send from the total goes straight to the recipient: the balance that
+      // pays is picked on the amount screen.
+      if (!card && kind === "send") {
+        sendStartRef.current = [];
+        return setRecipientSheetOpen(true);
+      }
       if (!card) return setCardPickFor(kind);
       openCardSheet(kind, card);
     },
@@ -1862,16 +2068,10 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     }
   };
 
-  const onSend = (card: HomeCard, key: string) => {
+  // Send on Visa & Banking: Cash and Bitcoin go through the one send flow.
+  const onSend = (key: string) => {
     setCardSheet(null);
-    if (key === "balances") {
-      const from: RailKey = card === "onchain" ? btcRail : card === "wallet" ? cashRail : "visa";
-      const to: RailKey =
-        card === "onchain" ? "wallet" : card === "wallet" ? "arkade" : settleWallet;
-      return openLockedMove(from, to, "from");
-    }
-    if (card === "onchain") return handOff(() => setBtcSendSource(btcRail));
-    if (card === "wallet") return walletSend.startRecipientScan();
+    if (key === "balances") return openLockedMove("visa", settleWallet, "from");
     if (key === "card") return void cardPayout.start();
     return wirexSend.startSepa();
   };
@@ -2031,6 +2231,38 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     ],
   );
 
+  // A home rail as the Move card states it.
+  const toMoveRail = (rail: Rail) => {
+    const btc = isBtcRail(rail.key);
+    const cardTarget = cardSwapTargetOf(rail.key);
+    return {
+      key: rail.key,
+      label: rail.label,
+      image: rail.image,
+      accent: rail.accent,
+      amount: rail.amount,
+      ...(rail.available != null ? { available: rail.available } : {}),
+      unit: btc ? BTC_GLYPH : CURRENCIES[railFiat(rail.key, home)].fiatSymbol,
+      whole: btc,
+      ...(RAIL_SWAP_ASSET[rail.key] ? { asset: RAIL_SWAP_ASSET[rail.key] } : {}),
+      ...(cardTarget ?? {}),
+      // Both bitcoin rails are one asset to SwapKit, so the rail has to
+      // say which wallet pays — and, as a destination, which one receives.
+      // Without either, the swap silently uses the arkade wallet.
+      ...(rail.key === "onchain" || rail.key === "arkade"
+        ? { sendSource: rail.key === "onchain" ? ("onchain" as const) : ("arkade" as const) }
+        : {}),
+      // Every bitcoin rail states where a swap into it settles. Nothing
+      // downstream may fall back to "the other one".
+      ...(rail.key === "onchain" && addressSnapshot.musig2Address
+        ? { settleAddress: addressSnapshot.musig2Address }
+        : {}),
+      ...(rail.key === "arkade" && addressSnapshot.currentAddress
+        ? { settleAddress: addressSnapshot.currentAddress }
+        : {}),
+    };
+  };
+
   const [logoutConfirmVisible, setLogoutConfirmVisible] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
   const handleLogout = useCallback(async () => {
@@ -2066,7 +2298,11 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                   icon="qr-scan"
                   variant="soft"
                   accessibilityLabel={t("screen.HomeScreen.scanA11yLabel")}
-                  onPress={() => setScanVisible(true)}
+                  onPress={() => {
+                    sendStartRef.current = [];
+                    setScanFromSend(false);
+                    setScanVisible(true);
+                  }}
                 />
               </TopbarTrailing>
             </Topbar>
@@ -2227,6 +2463,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         visible={esimOpen}
         onClose={() => setEsimOpen(false)}
         onPayInvoice={(invoice, amountSats) => {
+          setSend(null);
           setBtcSendPrefill(invoice);
           setBtcSendAmountSats(amountSats > 0 ? String(Math.trunc(amountSats)) : undefined);
           setBtcSendSource("arkade");
@@ -2293,44 +2530,63 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         visible={swapVisible}
         onClose={() => setSwapVisible(false)}
         onReopenOnFailure={() => setSwapVisible(true)}
-        rails={moveRails.map((rail) => {
-          const btc = isBtcRail(rail.key);
-          const cardTarget = cardSwapTargetOf(rail.key);
-          return {
-            key: rail.key,
-            label: rail.label,
-            image: rail.image,
-            accent: rail.accent,
-            amount: rail.amount,
-            ...(rail.available != null ? { available: rail.available } : {}),
-            unit: btc ? BTC_GLYPH : CURRENCIES[railFiat(rail.key, home)].fiatSymbol,
-            whole: btc,
-            ...(RAIL_SWAP_ASSET[rail.key] ? { asset: RAIL_SWAP_ASSET[rail.key] } : {}),
-            ...(cardTarget ?? {}),
-            // Both bitcoin rails are one asset to SwapKit, so the rail has to
-            // say which wallet pays — and, as a destination, which one receives.
-            // Without either, the swap silently uses the arkade wallet.
-            ...(rail.key === "onchain" || rail.key === "arkade"
-              ? { sendSource: rail.key === "onchain" ? ("onchain" as const) : ("arkade" as const) }
-              : {}),
-            // Every bitcoin rail states where a swap into it settles. Nothing
-            // downstream may fall back to "the other one".
-            ...(rail.key === "onchain" && addressSnapshot.musig2Address
-              ? { settleAddress: addressSnapshot.musig2Address }
-              : {}),
-            ...(rail.key === "arkade" && addressSnapshot.currentAddress
-              ? { settleAddress: addressSnapshot.currentAddress }
-              : {}),
-          };
-        })}
-        destinationsFor={(key: string) => moveDestinationsForKey(key, home)}
+        rails={
+          sendSwap
+            ? [
+                // The balances that can pay this recipient, and the recipient.
+                ...moveRails
+                  .filter((rail) =>
+                    sendBalanceOptions(sendSwap.recipient).some(
+                      (option) => option.key === rail.key,
+                    ),
+                  )
+                  .map(toMoveRail),
+                {
+                  key: SEND_RECIPIENT_RAIL,
+                  label: sendSwap.recipient.person?.name ?? shortAddress(sendSwap.address),
+                  image: sendSwap.recipient.person
+                    ? contactAvatar({
+                        label: sendSwap.recipient.person.name,
+                        nuriUsername: sendSwap.recipient.person.nuriUsername,
+                      })
+                    : sendSwap.fiat === null
+                      ? BTC_LOGO
+                      : sendSwap.fiat === "USD"
+                        ? USD_FLAG
+                        : EUR_FLAG,
+                  amount: "",
+                  unit: sendSwap.fiat === null ? BTC_GLYPH : CURRENCIES[sendSwap.fiat].fiatSymbol,
+                  whole: sendSwap.fiat === null,
+                  asset: sendSwap.asset,
+                  settleAddress: sendSwap.address,
+                  settleKind: "external" as const,
+                },
+              ]
+            : moveRails.map(toMoveRail)
+        }
+        destinationsFor={(key: string) =>
+          sendSwap ? [SEND_RECIPIENT_RAIL] : moveDestinationsForKey(key, home)
+        }
         locked={moveLock}
+        {...(sendSwap?.exactReceive !== undefined ? { exactReceive: sendSwap.exactReceive } : {})}
         fromKey={swapFrom}
         toKey={swapTo}
         // Any source may be picked: the destination stays when the new pair is
         // open, else moves to the source's own default — never an impossible
         // pair. A destination pick is only handed over when it is reachable.
         onPickFrom={(key: string) => {
+          // A send: another balance that swaps stays on this card; one that
+          // pays the recipient directly opens its own amount screen.
+          if (sendSwap) {
+            const balance = key as SendBalance;
+            if (isSwapRoute(routeFor(balance, sendSwap.recipient.destinations))) {
+              setSwapFrom(balance);
+              setSend({ recipient: sendSwap.recipient, balance });
+            } else {
+              switchSendBalance(balance);
+            }
+            return;
+          }
           // Add money: the card stays the destination; only the source changes.
           if (moveLock === "to") {
             if (key !== swapTo) setSwapFrom(key as RailKey);
@@ -2461,7 +2717,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           no destination here are refused inline instead of walking the user into
           a screen that would reject them. */}
       <QrScannerModal
-        visible={scanVisible || walletSend.showWalletScan}
+        visible={scanVisible}
         onClose={closeScanner}
         onResult={() => {}}
         onUnknown={(raw) => {
@@ -2469,111 +2725,64 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           // payout rail, the same as picking that merchant by hand.
           const payout = tanQrDestination(raw);
           if (!payout) return "unrecognized";
-          if (walletSend.showWalletScan) {
-            // Opened from Cash Send: the balance picked there pays, never arkade.
-            const hasUsd = (usdcBalance ?? 0) > 0;
-            walletSend.handleWalletPayoutScan(
-              payout,
-              cashPick ?? (hasUsd && walletEur <= 0 ? "dollar" : "wallet"),
-            );
-            return undefined;
-          }
-          closeScanner();
-          setBtcSendPayout(payout);
-          setBtcSendSource("arkade");
-          return undefined;
+          return sendScanned({ destinations: [], person: null, payout });
         }}
         onParsedResult={(result) => {
+          // What the code IS decides the recipient; which balance pays is the
+          // send flow's, the same as for a typed or picked recipient.
+          const amountSats =
+            "amountSats" in result && result.amountSats && result.amountSats > 0
+              ? String(Math.trunc(result.amountSats))
+              : undefined;
           switch (result.type) {
-            // A BIP-21 code may carry an ark address alongside the on-chain one;
-            // prefer it so the arkade rail settles instantly.
             case "bitcoin": {
-              // A BIP-21 code states what is owed; carry it into the keypad.
-              setBtcSendAmountSats(
-                result.amountSats && result.amountSats > 0
-                  ? String(Math.trunc(result.amountSats))
-                  : undefined,
-              );
-              // An ark address in a BIP-21 code settles instantly and only the
-              // arkade rail can pay it — no choice to make.
+              // An ark= or lightning= alternative settles instantly; prefer it.
               const ark = result.ark?.trim();
-              if (ark) {
-                closeScanner();
-                setBtcSendPrefill(ark);
-                setBtcSendSource("arkade");
-                return undefined;
-              }
-              // A unified code's `lightning=` fallback settles over the arkade
-              // rail, which only the arkade balance can pay — same reasoning as
-              // the ark branch above.
               const lightning = result.lightning?.trim();
-              if (lightning) {
-                closeScanner();
-                setBtcSendPrefill(lightning);
-                setBtcSendSource("arkade");
-                return undefined;
-              }
-              if (!result.address) return t("screen.HomeScreen.scanNothingToSend");
-              closeScanner();
-              // A mainnet address can be paid from either bitcoin rail when both
-              // hold funds; ask only then.
-              if (onchainActive && onchainSats > 0 && arkadeSats > 0) {
-                setScanChoice({ kind: "bitcoin", address: result.address });
-                return undefined;
-              }
-              setBtcSendPrefill(result.address);
-              setBtcSendSource(onchainActive && onchainSats > 0 ? "onchain" : "arkade");
-              return undefined;
+              const destinations = ark
+                ? [arkDestination(ark)]
+                : lightning
+                  ? [lightningDestination(lightning)]
+                  : result.address
+                    ? [bitcoinDestination(result.address)]
+                    : [];
+              if (destinations.length === 0) return t("screen.HomeScreen.scanNothingToSend");
+              return sendScanned({ destinations, person: null, amountSats });
             }
             case "ark":
-              closeScanner();
-              setBtcSendPrefill(result.address);
-              setBtcSendAmountSats(
-                result.amountSats && result.amountSats > 0
-                  ? String(Math.trunc(result.amountSats))
-                  : undefined,
-              );
-              setBtcSendSource("arkade");
-              return undefined;
-            // Lightning targets are paid over the arkade rail's send corridor,
-            // so they carry no rail choice: the invoice states its own amount
-            // and an address/LNURL asks for one on the keypad.
-            case "lightning-invoice": {
-              closeScanner();
-              setBtcSendPrefill(result.invoice);
-              setBtcSendAmountSats(
-                result.amountSats && result.amountSats > 0
-                  ? String(Math.trunc(result.amountSats))
-                  : undefined,
-              );
-              setBtcSendSource("arkade");
-              return undefined;
-            }
+              return sendScanned({
+                destinations: [arkDestination(result.address)],
+                person: null,
+                amountSats,
+              });
+            case "lightning-invoice":
+              return sendScanned({
+                destinations: [lightningDestination(result.invoice)],
+                person: null,
+                amountSats,
+              });
             case "lightning-address":
-            case "lnurl": {
-              closeScanner();
-              setBtcSendPrefill(result.type === "lnurl" ? result.url : result.address);
-              setBtcSendAmountSats(undefined);
-              setBtcSendSource("arkade");
-              return undefined;
-            }
-            // CAIP-10 names its chain, and a bitcoin one is a bitcoin payment —
-            // handing it to the EVM sheet only got the address rejected there.
+            case "lnurl":
+              return sendScanned({
+                destinations: [
+                  lightningDestination(result.type === "lnurl" ? result.url : result.address),
+                ],
+                person: null,
+              });
+            // CAIP-10 names its chain, and a bitcoin one is a bitcoin payment.
             case "caip10": {
-              if (result.namespace === "bip122") {
-                closeScanner();
-                setBtcSendPrefill(result.address);
-                setBtcSendAmountSats(undefined);
-                setBtcSendSource(onchainActive && onchainSats > 0 ? "onchain" : "arkade");
-                return undefined;
-              }
               if (!result.address) return t("screen.HomeScreen.scanNothingToSend");
-              // No closeScanner() before the recipient is checked: a rejected one
-              // is said on the scanner, and the modal closes itself on success.
-              return openEvmSend(result.address, null);
+              if (result.namespace === "bip122") {
+                return sendScanned({
+                  destinations: [bitcoinDestination(result.address)],
+                  person: null,
+                });
+              }
+              if (!isValidEvmAddress(result.address)) {
+                return t("screen.HomeScreen.scanNothingToSend");
+              }
+              return sendScanned({ destinations: [evmDestination(result.address)], person: null });
             }
-            // An EVM address is a euro/dollar recipient: the wallet's transfer
-            // sheet owns that send, including its ERC-20 handling.
             case "evm": {
               // An EIP-681 URI can name a chain, a function and an amount. Only
               // a plain send or an ERC-20 transfer of a token this wallet holds,
@@ -2589,29 +2798,30 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                 return t("screen.HomeScreen.scanUnsupported");
               }
               const address = isTransfer ? result.transferRecipient : result.address;
-              if (!address) return t("screen.HomeScreen.scanNothingToSend");
-              // A transfer URI states the amount in the token's own units.
-              const decimals =
-                isTransfer && result.address.toLowerCase() === BASE_USDC.address.toLowerCase()
-                  ? BASE_USDC.decimals
-                  : BASE_EURC.decimals;
-              const amount =
-                isTransfer && result.tokenAmount != null
-                  ? formatUnits(result.tokenAmount, decimals)
-                  : null;
-              // A token URI also names WHICH balance pays.
-              if (knownToken) {
-                return walletSend.handleWalletScanResult(
-                  address,
-                  amount,
-                  result.address.toLowerCase() === BASE_USDC.address.toLowerCase()
-                    ? "dollar"
-                    : "wallet",
-                )
-                  ? undefined
-                  : t("screen.HomeScreen.scanNothingToSend");
+              if (!address || !isValidEvmAddress(address)) {
+                return t("screen.HomeScreen.scanNothingToSend");
               }
-              return openEvmSend(address, amount);
+              const usdc =
+                isTransfer && result.address.toLowerCase() === BASE_USDC.address.toLowerCase();
+              // A transfer URI states the amount in the token's own units, and
+              // names the balance that pays it first.
+              const amountStable =
+                isTransfer && result.tokenAmount != null
+                  ? formatUnits(result.tokenAmount, usdc ? BASE_USDC.decimals : BASE_EURC.decimals)
+                  : undefined;
+              // A token transfer pays only in that token.
+              return sendScanned(
+                {
+                  destinations: [
+                    knownToken
+                      ? tokenDestination(address, usdc ? "USDC" : "EURC")
+                      : evmDestination(address),
+                  ],
+                  person: null,
+                  ...(amountStable ? { amountStable } : {}),
+                },
+                knownToken ? [usdc ? "dollar" : "wallet"] : undefined,
+              );
             }
             // A bank code goes to the SEPA recipient step with what it carried.
             case "sepa":
@@ -2654,20 +2864,38 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         ]}
         title={t("screen.HomeScreen.scanTitle")}
         pasteLabel={t("screen.HomeScreen.scanPasteLabel")}
-        // Opened from a euro/dollar screen's Send: no code in hand means the
-        // transfer sheet's own recipient step, the same as before this scanner
-        // was shared. The home has no single sheet to fall back to.
+        // Opened from the recipient step: no code in hand goes back to it.
         onManualEntry={
-          walletSend.showWalletScan
+          scanFromSend
             ? () => {
-                walletSend.setShowWalletScan(false);
-                walletSend.setSendToWalletRail(null);
-                walletSend.setSendToWalletAddress(null);
-                walletSend.setSendToWalletPayout(null);
-                walletSend.setIsSendToWalletVisible(true);
+                closeScanner();
+                handOff(() => setRecipientSheetOpen(true));
               }
             : undefined
         }
+      />
+
+      <SendRecipientSheet
+        visible={recipientSheetOpen}
+        onClose={() => setRecipientSheetOpen(false)}
+        // The amount screen opens over the recipient step, which then closes
+        // underneath it: the home never shows in between.
+        onRecipient={(recipient) => {
+          if (!routeSend(recipient)) return false;
+          setTimeout(() => setRecipientSheetOpen(false), SEND_SCREEN_HANDOVER_MS);
+          return true;
+        }}
+        onScan={() => {
+          setRecipientSheetOpen(false);
+          setScanFromSend(true);
+          handOff(() => setScanVisible(true));
+        }}
+        onMoveToBalances={() => {
+          setRecipientSheetOpen(false);
+          const from = sendStartRef.current[0] ?? cashRail;
+          sendStartRef.current = [];
+          openLockedMove(from, isBitcoinBalance(from) ? "wallet" : "arkade", "from");
+        }}
       />
 
       <LogoutConfirmSheet
@@ -2741,7 +2969,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         onSelect={(key: string) => {
           if (!cardSheet) return;
           if (cardSheet.kind === "add") onAddMoney(cardSheet.card, key);
-          else onSend(cardSheet.card, key);
+          else onSend(key);
         }}
       />
 
@@ -2757,118 +2985,17 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         />
       ) : null}
 
-      {/* Bitcoin on both rails: which one this Send spends. */}
-      <ChoiceSheet
-        visible={btcChoice}
-        onClose={() => setBtcChoice(false)}
-        title={t("actions.send")}
-        items={[
-          {
-            key: "arkade",
-            image: LIGHTNING_LOGO,
-            label: t("screen.HomeScreen.railBitcoinLightning"),
-            sublabel: satsStr(arkadeSats),
-          },
-          {
-            key: "onchain",
-            image: BTC_LOGO,
-            label: t("screen.HomeScreen.railBitcoin"),
-            sublabel: satsStr(onchainSats),
-          },
-        ]}
-        onSelect={(key: string) => {
-          setBtcChoice(false);
-          setBtcPick(key === "onchain" ? "onchain" : "arkade");
-          handOff(() => setCardSheet({ kind: "send", card: "onchain" }));
-        }}
-      />
-
-      {/* Cash holds both currencies: which one this Send spends. */}
-      <ChoiceSheet
-        visible={cashChoice}
-        onClose={() => setCashChoice(false)}
-        title={t("actions.send")}
-        items={[
-          {
-            key: "wallet",
-            image: EUR_FLAG,
-            label: t("screen.HomeScreen.railEuro"),
-            sublabel: heldStr(walletEur, "EUR"),
-          },
-          {
-            key: "dollar",
-            image: USD_FLAG,
-            label: t("screen.HomeScreen.railDollar"),
-            sublabel: heldStr(usdcBalance ?? 0, "USD"),
-          },
-        ]}
-        onSelect={(key: string) => {
-          setCashChoice(false);
-          setCashPick(key === "dollar" ? "dollar" : "wallet");
-          handOff(() => setCardSheet({ kind: "send", card: "wallet" }));
-        }}
-      />
-
-      {/* Only ever shown when the scan genuinely left a choice open. */}
-      <ChoiceSheet
-        visible={scanChoice !== null}
-        onClose={() => setScanChoice(null)}
-        title={t("screen.HomeScreen.scanChoiceTitle")}
-        items={
-          scanChoice?.kind === "bitcoin"
-            ? [
-                {
-                  key: "arkade",
-                  image: LIGHTNING_LOGO,
-                  label: t("screen.HomeScreen.railBitcoinLightning"),
-                  sublabel: satsStr(arkadeSats),
-                },
-                {
-                  key: "onchain",
-                  image: BTC_LOGO,
-                  label: t("screen.HomeScreen.railBitcoin"),
-                  sublabel: satsStr(onchainSats),
-                },
-              ]
-            : [
-                {
-                  key: "wallet",
-                  image: EUR_FLAG,
-                  label: t("screen.HomeScreen.railEuro"),
-                  sublabel: heldStr(walletEur, "EUR"),
-                },
-                {
-                  key: "dollar",
-                  image: USD_FLAG,
-                  label: t("screen.HomeScreen.railDollar"),
-                  sublabel: heldStr(usdcBalance ?? 0, "USD"),
-                },
-              ]
-        }
-        onSelect={(key: string) => {
-          const choice = scanChoice;
-          setScanChoice(null);
-          if (!choice) return;
-          if (choice.kind === "bitcoin") {
-            setBtcSendPrefill(choice.address);
-            setBtcSendSource(key === "onchain" ? "onchain" : "arkade");
-            return;
-          }
-          walletSend.handleWalletScanResult(
-            choice.address,
-            choice.amount,
-            key === "dollar" ? "dollar" : "wallet",
-          );
-        }}
-      />
-
       <BitcoinSendScreen
         visible={btcSendSource !== null}
         sendSource={btcSendSource ?? undefined}
         presetAddress={btcSendPrefill}
         presetPayout={btcSendPayout}
         presetAmountSats={btcSendAmountSats}
+        person={send?.recipient.person ?? null}
+        balanceOptions={send ? sendBalanceOptions(send.recipient) : undefined}
+        onPickBalance={switchSendBalance}
         onClose={() => {
+          setSend(null);
           setBtcSendSource(null);
           setBtcSendPrefill(undefined);
           setBtcSendPayout(undefined);
@@ -2876,6 +3003,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         }}
         onSendSuccess={() => {
           // The send's own status pill reports it.
+          setSend(null);
           setBtcSendSource(null);
           setBtcSendPrefill(undefined);
           setBtcSendPayout(undefined);
@@ -2927,6 +3055,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       <WalletSendStablecoinModal
         visible={walletSend.isSendToWalletVisible}
         onClose={() => {
+          setSend(null);
           walletSend.setIsSendToWalletVisible(false);
           walletSend.setSendToWalletRail(null);
           walletSend.setSendToWalletPayout(null);
@@ -2936,6 +3065,10 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         presetPayout={walletSend.sendToWalletPayout}
         maxStablecoinAvailable={sendTokenRail === "dollar" ? (usdcBalance ?? 0) : walletEur}
         toCard={walletSend.sendToWalletIsCard}
+        person={send?.recipient.person ?? null}
+        balanceOptions={send ? sendBalanceOptions(send.recipient) : undefined}
+        balance={sendTokenRail}
+        onPickBalance={switchSendBalance}
         token={
           sendTokenRail === "dollar"
             ? {

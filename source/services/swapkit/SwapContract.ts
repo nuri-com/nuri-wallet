@@ -1,6 +1,7 @@
 import { SATS_PER_BTC } from "../../lib/bitcoin/convert";
 import { paymentTimed, paymentTimingStart } from "../../lib/paymentTiming";
 import { getEthereumAddress } from "../../lib/secureKeyStorage";
+import { isValidEvmAddress } from "../../lib/validation";
 import { type SwapAmountBounds, foldSwapAmountBounds } from "./SwapAmountBounds";
 import { type SwapKitV2LimitsResponse, getSwapKitV2Limits } from "./SwapKitV2Service";
 import {
@@ -81,8 +82,18 @@ export type SwapQuoteRequest = {
    * the user's EOA. Travels with the quote so the execution can write it into
    * the durable order — a balance credited optimistically needs the settlement
    * to find its way back to it, including after a restart.
+   *
+   * "external": someone else's address (a send that swaps on the way). The
+   * swap settles to `settleTarget` as given and books nothing to this wallet.
    */
-  destination?: "card";
+  destination?: "card" | "external";
+  /**
+   * A payment request: the recipient must receive exactly this, in the TO
+   * asset's own unit (sats for Bitcoin, whole tokens for the stables). The
+   * swap is priced and committed on the settle side and only options that
+   * settle exactly this are offered; `amount` is then only an estimate.
+   */
+  exactReceive?: number;
 };
 
 /**
@@ -138,8 +149,9 @@ export type SwapQuote = {
   expiresAt: number | null;
   /** Engine-private. Hand the quote back to `executeSwap` unchanged. */
   detail: unknown;
-  /** Carried from the request, for the engine that executes this quote. */
-  destination?: "card";
+  /** Carried from the request, for the engine that executes this quote.
+   * "external": it pays someone else, so nothing lands on this wallet. */
+  destination?: "card" | "external";
   /**
    * WHICH bitcoin wallet this quote spends, for a quote that spends one. The
    * two rails are one asset id, so the caller's own bookkeeping — the outgoing
@@ -213,11 +225,13 @@ const directEvmEngine: SwapEngine = {
     const source = baseStableToken(request.from as BaseStableAssetId);
     const target = baseStableToken(request.to as BaseStableAssetId);
     if (source.asset === target.asset) throw new Error("A swap needs two different assets.");
+    if (request.destination === "external") externalEvmTarget(request.settleTarget);
     const quotes = await quoteV2DirectEvmSwaps({
       from: request.from as BaseStableAssetId,
       to: request.to as BaseStableAssetId,
       amount: request.amount,
       ...(request.settleTarget ? { settleTarget: request.settleTarget } : {}),
+      ...(request.exactReceive !== undefined ? { exactReceive: request.exactReceive } : {}),
     });
     // Below dust: there is no swap to offer, which is an empty list rather than
     // an error — the same answer as a pair with no route.
@@ -247,7 +261,7 @@ const directEvmEngine: SwapEngine = {
     const { quote: accepted } = quote.detail as DirectEvmDetail;
     const result = await executeV2DirectEvmSwap({
       quote: accepted,
-      ...(quote.destination === "card" ? { destination: "card" as const } : {}),
+      ...(quote.destination ? { destination: quote.destination } : {}),
       op: { scope: "SwapContract", action: "executeSwap" },
       ...(options.onOrderId ? { onOrderId: options.onOrderId } : {}),
     });
@@ -278,6 +292,8 @@ type StableToBtcDetail = {
   quotedSettleAmount: number;
   stablecoinWalletAddress: string;
   settleTarget: string | null;
+  /** A payment request: committed on the settle side for exactly the quote's settlement. */
+  exactSettle?: boolean;
 };
 
 const stableToBtcEngine: SwapEngine = {
@@ -298,11 +314,14 @@ const stableToBtcEngine: SwapEngine = {
       to: SwapAssetId;
       settleTarget: string;
     }): Promise<SwapQuote[]> => {
+      // A payment request is priced on the settle side, in decimal BTC.
+      const exactBtc =
+        request.exactReceive !== undefined ? request.exactReceive / SATS_PER_BTC : undefined;
       const { options } = await quoteV2StableToBtc({
         fromAsset,
         to: destination.to,
-        amount: request.amount,
-        side: "deposit",
+        amount: exactBtc ?? request.amount,
+        side: exactBtc === undefined ? "deposit" : "settle",
         owner: eoa,
         settleTarget: destination.settleTarget,
       }).catch(() => ({ options: [] as V2StableToBtcQuote[] }));
@@ -319,6 +338,8 @@ const stableToBtcEngine: SwapEngine = {
         const settle = positive(option.settleAmount);
         if (settle === null) return [];
         const receive = isBtc(destination.to) ? satsFromBtc(settle) : settle;
+        // A payment request is met exactly or not at all.
+        if (request.exactReceive !== undefined && receive !== request.exactReceive) return [];
         return [
           {
             id: `stable-to-btc:${option.optionId}`,
@@ -341,6 +362,7 @@ const stableToBtcEngine: SwapEngine = {
               { field: "settleTarget", required: true, asset: destination.to },
             ] as const,
             expiresAt: null as number | null,
+            ...(request.destination === "external" ? { destination: "external" as const } : {}),
             detail: {
               fromAsset,
               toAsset: destination.to,
@@ -350,6 +372,7 @@ const stableToBtcEngine: SwapEngine = {
               quotedSettleAmount: settle,
               stablecoinWalletAddress: eoa,
               settleTarget: destination.settleTarget,
+              ...(exactBtc !== undefined ? { exactSettle: true } : {}),
             } satisfies StableToBtcDetail,
           },
         ];
@@ -371,8 +394,9 @@ const stableToBtcEngine: SwapEngine = {
     const result = await executeV2StableToBtc({
       fromAsset: detail.fromAsset,
       to: detail.toAsset,
-      amount: detail.quotedSpendEurc,
-      side: "deposit",
+      // The request the quote was made for.
+      amount: detail.exactSettle ? detail.quotedSettleAmount : detail.quotedSpendEurc,
+      side: detail.exactSettle ? "settle" : "deposit",
       optionId: detail.optionId,
       ...(detail.quoteId ? { quoteId: detail.quoteId } : {}),
       quotedDeposit: detail.quotedSpendEurc,
@@ -425,8 +449,10 @@ type BtcToStableDetail = {
   /** The wallet or the card: which EVM address receives. The rails and their
    * offers are identical for both; only the settle target differs, and it is
    * bound at quote time so execute pays exactly the account the user saw. */
-  destination: "wallet" | "card";
+  destination: "wallet" | "card" | "external";
   settleTarget: string;
+  /** A payment request: the exact stable amount committed on the settle side. */
+  settleExact?: string;
 };
 
 const btcToStableEngine: SwapEngine = {
@@ -447,12 +473,20 @@ const btcToStableEngine: SwapEngine = {
     const stable = baseStableToken(toStable);
     const owner = await getEthereumAddress();
     if (!owner) return [];
-    const destination: "wallet" | "card" = request.destination === "card" ? "card" : "wallet";
+    const destination: "wallet" | "card" | "external" =
+      request.destination === "card" || request.destination === "external"
+        ? request.destination
+        : "wallet";
     // Resolved ONCE, before anything is priced: a card that cannot receive
     // this stable (another token, or no card account yet) throws here, so no
     // route is ever shown for it, and the quote and the commit bind the same
     // account.
-    const settleTarget = await resolveCardSettleTarget(destination, owner, toStable);
+    // Someone else's address is paid exactly as the send stated it; only this
+    // wallet's own accounts are resolved here.
+    const settleTarget =
+      destination === "external"
+        ? externalEvmTarget(request.settleTarget)
+        : await resolveCardSettleTarget(destination, owner, toStable);
     // The sheet names the card account it showed the user; the resolution is
     // the authority. A mismatch means the screen is stale — price nothing
     // rather than pay an address the user did not see.
@@ -481,6 +515,10 @@ const btcToStableEngine: SwapEngine = {
           owner,
           settleTarget,
           refundAddress,
+          // A payment request is priced on the settle side.
+          ...(request.exactReceive !== undefined
+            ? { settleExact: String(request.exactReceive) }
+            : {}),
         })
           .then((result) => ({ rail, options: result.options }))
           .catch(() => ({ rail, options: [] as V2BtcToStableQuote[] }));
@@ -489,6 +527,10 @@ const btcToStableEngine: SwapEngine = {
     const quotes: SwapQuote[] = [];
     for (const { rail, options } of perRail) {
       for (const option of options) {
+        // A payment request is met exactly or not at all.
+        if (request.exactReceive !== undefined && option.settleAmount !== request.exactReceive) {
+          continue;
+        }
         // Present EVERY option the server priced — no client-side provider
         // filter. A pure send_asset offboard or a Lightning route carries no
         // hub-USDC leg; that is not a reason to hide it. The user chooses.
@@ -536,10 +578,13 @@ const btcToStableEngine: SwapEngine = {
             stable,
             destination,
             settleTarget,
+            ...(request.exactReceive !== undefined
+              ? { settleExact: String(request.exactReceive) }
+              : {}),
           } satisfies BtcToStableDetail,
           // Carried so the executed move is booked to the balance that
-          // receives it: the card's, not the wallet's.
-          ...(destination === "card" ? { destination: "card" as const } : {}),
+          // receives it: the card's, not the wallet's, and nothing for a send.
+          ...(destination === "card" || destination === "external" ? { destination } : {}),
         });
       }
     }
@@ -564,6 +609,7 @@ const btcToStableEngine: SwapEngine = {
       settleTarget: detail.settleTarget,
       destination: detail.destination,
       sendSource: detail.sendSource,
+      ...(detail.settleExact ? { settleExact: detail.settleExact } : {}),
       ...(options.onStatus ? { onStatus: options.onStatus } : {}),
       ...(options.onOrderId ? { onOrderId: options.onOrderId } : {}),
     });
@@ -577,6 +623,13 @@ const btcToStableEngine: SwapEngine = {
     };
   },
 };
+
+/** A send's recipient on the stable side: a real EVM address, never a default. */
+function externalEvmTarget(settleTarget: string | undefined): string {
+  const target = settleTarget?.trim() ?? "";
+  if (!isValidEvmAddress(target)) throw new Error("A wallet address is required.");
+  return target;
+}
 
 const ENGINES: readonly SwapEngine[] = [directEvmEngine, stableToBtcEngine, btcToStableEngine];
 

@@ -1,7 +1,6 @@
 // @screen wallet.send
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Keyboard } from "react-native";
-import * as Clipboard from "expo-clipboard";
+import React, { useEffect, useMemo, useState } from "react";
+import { Keyboard, View as RNView, StyleSheet } from "react-native";
 
 import {
   Button,
@@ -9,48 +8,42 @@ import {
   Footer,
   Header,
   IconButton,
+  NuriScope,
   Scroll,
   Text,
-  TextField,
-  TextFieldButton,
-  TextFieldLabel,
   Topbar,
   TopbarTitle,
   TopbarTrailing,
   View,
 } from "@ds";
 
-import AmountDisplay, { EUR_FLAG, USD_FLAG } from "../../../components/AmountDisplay";
+import { EUR_FLAG, USD_FLAG } from "../../../components/AmountDisplay";
+import { groupCount } from "../../../lib/formatting";
 import AmountKeypad from "../../../components/AmountKeypad";
 import { useKeypadFit } from "../../../lib/useKeypadFit";
 import DsSheetHost from "../../../components/DsSheetHost";
+import SendFromRow from "../../../components/send/SendFromRow";
 import { BASE_EURC } from "../../../config/network";
 import { STABLECOIN_MIN_SEND_AMOUNT } from "../../../config/constants";
 import { t } from "../../../lib/i18n";
-import { isEnsName, resolveEnsName } from "../../../lib/qr/resolveEns";
-import { toNuriUsername } from "../../../lib/pay/nuriUsername";
 import { evmDestination } from "../../../lib/addressBook/nuriContacts";
 import { rememberNuriPayment } from "../../../services/addressBook/nuriContactSync";
-import { resolvePayRecipient } from "../../../lib/pay/resolvePayRecipient";
-import { createRecipientLookupGate } from "../../../lib/pay/recipientLookupGate";
 import { isValidEvmAddress } from "../../../lib/validation";
 import { scannedAmountPrefill } from "../../../lib/amounts";
 import { useFiatAmountInput } from "../../../lib/useFiatAmountInput";
+import { type BoundTzOffer, tzOfferFor } from "../../../lib/remit/tzOfferBinding";
 import { sendTokenOnBase } from "../../../services/base/BaseTokenTransferService";
 import { EventBus } from "../../../services/events/AppEventBusService";
 import { sendEuroToCard } from "../../../services/wallet/CardTransferService";
 import { startCardTopUpInFlight, startSendInFlight } from "../../../services/money/announce";
 
 import type { WalletSendStablecoinProps } from "../../../types/wallet";
-import AddressBookSuggestions, {
-  useAddressBookContacts,
-} from "../../../components/AddressBookSuggestions";
-import { recipientWithName, savedContactFor } from "../../../lib/addressBook/contact";
+import { useAddressBookContacts } from "../../../components/AddressBookSuggestions";
+import { savedContactFor } from "../../../lib/addressBook/contact";
+import SendRecipientContact from "../../../components/SendRecipientContact";
 import { acceptsWalletSend } from "../../addressBook/addressBookModel";
 import { startMovePill } from "../../../services/wallet/CardTransferPill";
 import { reportErrorToSupport } from "../../../lib/support/reportErrorToSupport";
-import PayoutAbroadSheet from "../../../components/PayoutAbroadSheet";
-import { flagForIso2 } from "../../../lib/countryFlags";
 import { TZ_METHODS, type ZapRemitDestination } from "../../../lib/remit/zapremitForm";
 import {
   createTzOrder,
@@ -71,6 +64,10 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   toCard = false,
   token,
   onSuccess,
+  person,
+  balanceOptions,
+  balance,
+  onPickBalance,
 }) => {
   const {
     amount,
@@ -85,41 +82,24 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
     minAmount: STABLECOIN_MIN_SEND_AMOUNT,
   });
   const [isRequesting, setIsRequesting] = useState(false);
-  // A short screen compacts the keypad before it scrolls.
-  const keypadFit = useKeypadFit();
   // A failed transfer used to only reach console.warn: the spinner stopped and
   // the user was left unable to tell "sent", "failed" and "still going" apart
   // (issue #893). On a money screen that silence is the worst of the three.
   // The failure is carried by the CTA alone — the raw error (an RPC rejection,
   // a revert string) is diagnostics, not something a user can act on.
   const [sendFailed, setSendFailed] = useState(false);
-  // Opened without an address (the scanner's "enter address" path), this sheet
-  // starts on its own recipient step — the same shape the Bitcoin send has:
-  // "Who are you sending to?", one field with Paste, then the amount. A scanned
-  // address and a card top-up skip it, they already know the recipient.
-  const [manualRecipient, setManualRecipient] = useState("");
-  const [recipientConfirmed, setRecipientConfirmed] = useState(false);
-  // An ENS name typed here resolves on Next, the same way the scanner resolves
-  // one it reads. `resolvedRecipient` holds the 0x it mapped to, so the send
-  // uses the address while the field keeps showing what the user typed.
-  const [resolvedRecipient, setResolvedRecipient] = useState<string | null>(null);
-  const [resolvingRecipient, setResolvingRecipient] = useState(false);
-  const [recipientUnresolvable, setRecipientUnresolvable] = useState(false);
-  // The lookup itself failed (directory/RPC unreachable) — retryable, and not
-  // the same as "no such name".
-  const [recipientLookupFailed, setRecipientLookupFailed] = useState(false);
-  const lookupGate = useRef(createRecipientLookupGate());
-  const recipientFieldRef = useRef<React.ComponentRef<typeof TextField>>(null);
   // A Tanzanian bank, Lipa Namba or TanQR paid from this balance: the amount
   // is typed in shillings, the order then states the exact stable amount and
   // the address, and a second press sends exactly that.
   const [payout, setPayout] = useState<ZapRemitDestination | null>(null);
-  const [payoutOpen, setPayoutOpen] = useState(false);
   const [tzsDigits, setTzsDigits] = useState("");
   const [tzEstimate, setTzEstimate] = useState<number | null>(null);
-  const [tzPayment, setTzPayment] = useState<TzStablePayment | null>(null);
+  // The order's offer for the stable it was priced in; another balance paying
+  // retires it (a new order is fetched), it is never relabelled.
+  const [tzBound, setTzBound] = useState<BoundTzOffer | null>(null);
   const stableCode = token?.code === "USD" ? "USDC" : "EURC";
   const tzsAmount = Number(tzsDigits) || 0;
+  const tzPayment = tzOfferFor(tzBound, stableCode);
   const tzMethod = payout ? TZ_METHODS.find((m) => m.code === payout.methodCode) : undefined;
   const tzOutOfBand =
     !!tzMethod && tzsAmount > 0 && (tzsAmount < tzMethod.min || tzsAmount > tzMethod.max);
@@ -128,13 +108,11 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
     tzStableAmount != null &&
     maxStablecoinAvailable != null &&
     tzStableAmount > maxStablecoinAvailable;
-  const typedRecipient = manualRecipient.trim();
-  // What the field holds right now, for a lookup that lands long after it began.
-  const typedRecipientRef = useRef(typedRecipient);
-  typedRecipientRef.current = typedRecipient;
-  const recipient = (prefilledAddress || resolvedRecipient || typedRecipient).trim();
-  const manualEntry = !prefilledAddress && !toCard;
-  const onRecipientStep = manualEntry && !recipientConfirmed;
+  // Every send reaches this screen with its recipient decided (the recipient
+  // sheet, a scan, a contact, Send again) or as a card top-up.
+  const recipient = (prefilledAddress ?? "").trim();
+  // A short screen compacts the keypad before it scrolls.
+  const keypadFit = useKeypadFit();
   // Exact scanned amount (full token precision). The input DISPLAYS at most
   // 2 decimals, but this exact string is what gets sent — display-capped,
   // never rounded or truncated in the background. Cleared the moment the
@@ -154,24 +132,15 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   // amountEditable: the CTA toggles isRequesting (=> amountEditable), which would
   // re-fire this and blank the field mid-transfer.
   useEffect(() => {
-    // Opening or closing the sheet abandons any lookup still in flight.
-    lookupGate.current.invalidate();
     if (!visible) return;
     // A failure belongs to the attempt that produced it — reopening the sheet
     // must not greet the user with a stale "Try again".
     setSendFailed(false);
-    setManualRecipient("");
-    setRecipientConfirmed(false);
-    setResolvedRecipient(null);
-    setResolvingRecipient(false);
-    setRecipientUnresolvable(false);
-    setRecipientLookupFailed(false);
     // A scanned TanQR opens straight on the shilling amount for that merchant.
     setPayout(presetPayout ?? null);
-    setPayoutOpen(false);
     setTzsDigits("");
     setTzEstimate(null);
-    setTzPayment(null);
+    setTzBound(null);
     // A scanned amount is always kept, even above the balance (#1486): the
     // field shows what the QR asked for and the CTA stays blocked with the
     // "exceeds balance" hint, instead of silently emptying the field.
@@ -215,7 +184,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   // Any edit to the shillings drops an order already priced for the old amount.
   const editTzs = (next: string) => {
     if (isRequesting) return;
-    setTzPayment(null);
+    setTzBound(null);
     setSendFailed(false);
     setTzsDigits(next.replace(/^0+/, "").slice(0, 9));
   };
@@ -230,7 +199,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
       const order = await createTzOrder(tzsAmount, payout.recipient);
       const offer = stableCode === "USDC" ? order.usdc : order.eurc;
       if (!offer) throw new Error(`no ${stableCode} offer`);
-      setTzPayment(offer);
+      setTzBound({ stable: stableCode, offer });
     } catch (err) {
       setSendFailed(true);
       void reportErrorToSupport({ error: err, userMessage: "Tanzania payout order failed" }).catch(
@@ -362,10 +331,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
       }
 
       // Paid a Nuri user by username: they join the address book (#1770).
-      const paidUsername =
-        !exact && resolvedRecipient && resolvedRecipient.trim() === addr
-          ? toNuriUsername(typedRecipient)
-          : null;
+      const paidUsername = !exact && !toCard ? person?.nuriUsername : undefined;
       if (paidUsername) {
         void rememberNuriPayment(paidUsername, [evmDestination(addr)]).catch(() => {});
       }
@@ -394,78 +360,9 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
     }
   };
 
-  const confirmRecipient = async () => {
-    if (validAddress) {
-      setRecipientConfirmed(true);
-      return;
-    }
-    // `lennard`, `lennard.nuri.eth` and `lennard@nuri.com` are one Nuri user:
-    // read their EVM address from the Nuri directory. Any other `.eth` name is
-    // an ordinary ENS lookup.
-    const nuriUsername = toNuriUsername(typedRecipient);
-    if (!nuriUsername && !isEnsName(typedRecipient)) return;
-    const submitted = typedRecipient;
-    const ticket = lookupGate.current.begin(submitted);
-    // Apply nothing unless this is still the lookup for what is on screen.
-    const stillCurrent = () => lookupGate.current.isCurrent(ticket, typedRecipientRef.current);
-    setResolvingRecipient(true);
-    setRecipientUnresolvable(false);
-    setRecipientLookupFailed(false);
-    try {
-      const address = nuriUsername
-        ? ((await resolvePayRecipient(nuriUsername))?.evmAddress ?? null)
-        : await resolveEnsName(submitted);
-      if (!stillCurrent()) return;
-      if (!address || !isValidEvmAddress(address)) {
-        setRecipientUnresolvable(true);
-        return;
-      }
-      setResolvedRecipient(address);
-      setRecipientConfirmed(true);
-    } catch {
-      // The directory or RPC could not be reached: that says nothing about
-      // whether the user exists, so it must not read as "no such name".
-      if (stillCurrent()) setRecipientLookupFailed(true);
-    } finally {
-      if (stillCurrent()) setResolvingRecipient(false);
-    }
-  };
-
-  // Any edit to the recipient abandons a lookup still in flight for the old one.
-  const resetRecipientLookup = () => {
-    lookupGate.current.invalidate();
-    setResolvedRecipient(null);
-    setResolvingRecipient(false);
-    setRecipientUnresolvable(false);
-    setRecipientLookupFailed(false);
-  };
-
-  const handlePasteRecipient = async () => {
-    // Invalidate before awaiting the clipboard: a lookup landing during that
-    // wait must not advance the sheet for the recipient being replaced.
-    lookupGate.current.invalidate();
-    setResolvingRecipient(false);
-    try {
-      const clip = (await Clipboard.getStringAsync()).trim();
-      if (clip) {
-        setManualRecipient(clip);
-        resetRecipientLookup();
-      }
-    } catch {
-      // Clipboard refused (permission, empty) — the field stays typable.
-    }
-  };
-
-  // An ENS name or a Nuri username is a legitimate recipient here: Next
-  // resolves it. Only a value that is none of those blocks the step.
-  const recipientEntryUsable =
-    validAddress || isEnsName(typedRecipient) || toNuriUsername(typedRecipient) !== null;
-
   const isCtaDisabled = payout
     ? isRequesting || tzsAmount <= 0 || tzOutOfBand || tzOverBalance
-    : onRecipientStep
-      ? !recipientEntryUsable || resolvingRecipient
-      : isRequesting || !validAddress || parsedAmount <= 0 || overBalance || isBelowMinimum;
+    : isRequesting || !validAddress || parsedAmount <= 0 || overBalance || isBelowMinimum;
 
   // The token decides the code: a USDC send must not render "EUR". No token is
   // the euro send (BASE_EURC), stated in the currency it moves — never the
@@ -475,6 +372,23 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   const assetLabel = t(
     token?.code === "USD" ? "screen.HomeScreen.railDollar" : "screen.HomeScreen.railEuro",
   );
+  const sourceFlag = token?.code === "USD" ? USD_FLAG : EUR_FLAG;
+  const currencyGlyph = token?.code === "USD" ? "$" : "\u20ac";
+  const onCardAmountStep = !toCard;
+  const recipientPerson =
+    person ??
+    (savedRecipient
+      ? { name: savedRecipient.label, nuriUsername: savedRecipient.nuriUsername }
+      : null);
+  const liftRecipient = onCardAmountStep && recipientPerson !== null;
+  const closeButton = (
+    <IconButton
+      icon="cross"
+      variant="soft"
+      accessibilityLabel={t("common.close")}
+      onPress={onClose}
+    />
+  );
   const availableAmountLabel = availableDisplay == null ? null : availableDisplay.toFixed(2);
   const headerTitle = availableAmountLabel
     ? t("screen.WalletSendStablecoinModal.headlineWithBalance", {
@@ -482,16 +396,6 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
         amount: availableAmountLabel,
       })
     : t("screen.WalletSendStablecoinModal.headline", { asset: assetLabel });
-
-  // No below-minimum hint here: the CTA label carries the exact same
-  // "Minimum €X" text (minimumLabel) whenever that state is active.
-  const recipientHint = recipientLookupFailed
-    ? t("screen.WalletSendStablecoinModal.lookupFailed")
-    : recipientUnresolvable
-      ? t("screen.WalletSendStablecoinModal.ensNotFound")
-      : typedRecipient.length > 0 && !recipientEntryUsable
-        ? t("screen.WalletSendStablecoinModal.invalidAddressError")
-        : null;
 
   // Amount-step only. The recipient step has its own hint (recipientHint) and
   // owns the address message — carrying it here too printed it twice.
@@ -508,7 +412,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
           : null;
   const amountHint = overBalance
     ? t("screen.WalletSendStablecoinModal.exceedsBalanceHint")
-    : !onRecipientStep && recipient.length > 0 && !validAddress
+    : recipient.length > 0 && !validAddress
       ? t("screen.WalletSendStablecoinModal.invalidAddressError")
       : null;
 
@@ -522,46 +426,41 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
         : tzPayment
           ? t("screen.BitcoinSendScreen.remitConfirmTo", { name: payout.summary })
           : t("component.PayoutAbroadSheet.continue")
-    : onRecipientStep
-      ? resolvingRecipient
-        ? t("screen.WalletSendStablecoinModal.loadingLabel")
-        : t("screen.WalletSendStablecoinModal.ctaNext")
-      : isRequesting
-        ? t("screen.WalletSendStablecoinModal.loadingLabel")
-        : isBelowMinimum && parsedAmount > 0
-          ? t("screen.WalletSendStablecoinModal.minimumLabel", {
-              symbol: currencySymbol,
-              amount: STABLECOIN_MIN_SEND_AMOUNT,
-            })
-          : sendFailed
-            ? t("screen.WalletSendStablecoinModal.tryAgainLabel")
-            : t("screen.WalletSendStablecoinModal.sendLabel");
+    : isRequesting
+      ? t("screen.WalletSendStablecoinModal.loadingLabel")
+      : isBelowMinimum && parsedAmount > 0
+        ? t("screen.WalletSendStablecoinModal.minimumLabel", {
+            symbol: currencySymbol,
+            amount: STABLECOIN_MIN_SEND_AMOUNT,
+          })
+        : sendFailed
+          ? t("screen.WalletSendStablecoinModal.tryAgainLabel")
+          : t("screen.WalletSendStablecoinModal.sendLabel");
 
   // The failure state is carried by the label alone, so the accessible name has
   // to carry it too — otherwise assistive tech announces "Send EUR" on a button
   // that is really a retry.
-  const ctaA11yLabel = onRecipientStep
-    ? t("screen.WalletSendStablecoinModal.ctaNext")
-    : sendFailed && !isRequesting
+  const ctaA11yLabel =
+    sendFailed && !isRequesting
       ? t("screen.WalletSendStablecoinModal.tryAgainLabel")
       : t("screen.WalletSendStablecoinModal.sendA11yLabel", { symbol: token?.code ?? "EUR" });
 
   return (
     <>
       <DsSheetHost visible={visible} onClose={onClose} mode="full">
-        <Header safeAreaTop chrome="canvas">
-          <Topbar surface="transparent" layout="fluid">
-            <TopbarTitle>{headerTitle}</TopbarTitle>
-            <TopbarTrailing>
-              <IconButton
-                icon="cross"
-                variant="soft"
-                accessibilityLabel={t("common.close")}
-                onPress={onClose}
-              />
-            </TopbarTrailing>
-          </Topbar>
-        </Header>
+        {/* The amount card's "From" row already names the balance and what it
+            holds, so the amount step has no title. A person recipient then
+            takes the top row itself, beside the close button. */}
+        {liftRecipient ? (
+          <Header safeAreaTop chrome="canvas" />
+        ) : (
+          <Header safeAreaTop chrome="canvas">
+            <Topbar surface="transparent" layout={onCardAmountStep ? "centered" : "fluid"}>
+              {onCardAmountStep ? null : <TopbarTitle>{headerTitle}</TopbarTitle>}
+              <TopbarTrailing>{closeButton}</TopbarTrailing>
+            </Topbar>
+          </Header>
+        )}
 
         <Scroll onLayout={keypadFit.onViewportLayout}>
           <View
@@ -571,6 +470,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
             justify="between"
             gap="sm"
             paddingX="lg"
+            {...(liftRecipient ? { paddingTop: "lg" as const } : {})}
             paddingBottom={keypadFit.compact ? "sm" : "lg"}
             fill="grow"
           >
@@ -583,99 +483,79 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
                     {payout.summary}
                   </Text>
                 </View>
-              ) : onRecipientStep ? (
-                <TextField
-                  ref={recipientFieldRef}
-                  value={manualRecipient}
-                  onChangeText={(next) => {
-                    setManualRecipient(next);
-                    resetRecipientLookup();
-                  }}
-                  autoCapitalize="none"
-                  accessibilityLabel={t("screen.WalletSendStablecoinModal.recipientLabel")}
-                >
-                  <TextFieldLabel>
-                    {t("screen.WalletSendStablecoinModal.recipientLabel")}
-                  </TextFieldLabel>
-                  <TextFieldButton
-                    accessibilityLabel={t("common.paste")}
-                    onPress={() => void handlePasteRecipient()}
-                  >
-                    {t("common.paste")}
-                  </TextFieldButton>
-                </TextField>
+              ) : recipientPerson ? (
+                <SendRecipientContact {...recipientPerson} />
               ) : (
                 <View variant="soft" radius="md" paddingX="lg" paddingY="md" align="stretch">
                   <Text size="sm" mono muted flow="truncate" lines={1}>
-                    {savedRecipient
-                      ? recipientWithName(savedRecipient.label, recipient)
-                      : resolvedRecipient && typedRecipient
-                        ? `${typedRecipient} (${resolvedRecipient.slice(0, 6)}…${resolvedRecipient.slice(-4)})`
-                        : recipient}
+                    {recipient}
                   </Text>
                 </View>
               )}
-              {/* Every payable contact while the field is empty, then the ones matching what is typed. */}
-              {/* Tanzanian banks, Lipa Namba and TanQR take this balance directly. */}
-              {onRecipientStep && !toCard && !payout && typedRecipient.length === 0 ? (
-                <Button
-                  size="lg"
-                  variant="soft"
-                  onPress={() => {
-                    Keyboard.dismiss();
-                    setPayoutOpen(true);
-                  }}
-                  accessibilityLabel={t("screen.BitcoinSendScreen.ctaPayAbroad")}
-                >
-                  <ButtonText>{t("screen.BitcoinSendScreen.ctaPayAbroad")}</ButtonText>
-                </Button>
+              {/* Raw View: the close button pinned top-right over the lifted
+                  recipient, which the DS has no slot for outside a Topbar. */}
+              {liftRecipient ? (
+                <RNView style={styles.closeOverRecipient}>{closeButton}</RNView>
               ) : null}
-              <AddressBookSuggestions
-                active={visible && onRecipientStep && !toCard && !payout}
-                query={manualRecipient}
-                accepts={acceptsSavedDestination}
-                payUsername
-                onPick={({ destination, username }) => {
-                  // A Nuri contact: their username, looked up on Next.
-                  setManualRecipient(username ? `@${username}` : destination.raw);
-                  resetRecipientLookup();
-                }}
-              />
             </View>
 
-            {payout ? (
-              <AmountDisplay
-                primaryAmount={tzsDigits || "0"}
-                primaryImage={flagForIso2("TZ") ?? (token?.code === "USD" ? USD_FLAG : EUR_FLAG)}
-                primaryUnit="TZS"
-                message={tzHint ? { text: tzHint, tone: "info" } : null}
-              />
-            ) : onRecipientStep ? (
-              <View direction="column" align="center" justify="center" gap="sm" fill="grow">
-                {recipientHint ? (
-                  <Text size="md" muted align="center">
-                    {recipientHint}
-                  </Text>
-                ) : null}
+            {
+              // The Move sheet's card: which balance pays (a picker of every
+              // balance that can pay this recipient) and the amount, in
+              // shillings for a payout abroad.
+              <View direction="column" align="stretch" gap="sm" fill="grow">
+                <NuriScope mode="dark">
+                  <View
+                    chrome="subtle"
+                    radius="lg"
+                    paddingX="lg"
+                    paddingY="md"
+                    direction="column"
+                    align="stretch"
+                    fill="grow"
+                  >
+                    <SendFromRow
+                      options={balanceOptions}
+                      current={balance ?? (token?.code === "USD" ? "dollar" : "wallet")}
+                      fallback={{
+                        label:
+                          availableDisplay == null
+                            ? assetLabel
+                            : `${assetLabel} (${availableDisplay.toFixed(2)})`,
+                        image: sourceFlag,
+                      }}
+                      disabled={isRequesting}
+                      onPick={onPickBalance}
+                    />
+                    <View fill="grow" justify="end" align="end">
+                      <Text
+                        size="3xl"
+                        align="end"
+                        // Spoken with its unit, as AmountDisplay does.
+                        accessibilityLabel={
+                          payout ? `${tzsDigits || "0"} TZS` : `${amount || "0"} ${stableCode}`
+                        }
+                      >
+                        {payout
+                          ? `TZS ${tzsDigits ? groupCount(Number(tzsDigits)) : "0"}`
+                          : `${currencyGlyph} ${amount || "0.00"}`}
+                      </Text>
+                    </View>
+                  </View>
+                </NuriScope>
+                <Text size="md" align="center" muted>
+                  {(payout ? tzHint : amountHint) ?? "\u00a0"}
+                </Text>
               </View>
-            ) : (
-              <AmountDisplay
-                primaryAmount={amount || "0"}
-                primaryImage={token?.code === "USD" ? USD_FLAG : EUR_FLAG}
-                primaryUnit={token?.code === "USD" ? "USDC" : "EURC"}
-                message={amountHint ? { text: amountHint, tone: "info" } : null}
-              />
-            )}
+            }
 
             <View direction="column" align="stretch" justify="end" gap="lg">
-              {onRecipientStep && !payout ? null : (
-                <AmountKeypad
-                  compact={keypadFit.compact}
-                  onDigit={handleDigit}
-                  onDecimal={handleDecimal}
-                  onDelete={handleDelete}
-                />
-              )}
+              <AmountKeypad
+                compact={keypadFit.compact}
+                onDigit={handleDigit}
+                onDecimal={handleDecimal}
+                onDelete={handleDelete}
+              />
             </View>
           </View>
         </Scroll>
@@ -701,11 +581,6 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
                 else void handleTzOrder();
                 return;
               }
-              if (onRecipientStep) {
-                Keyboard.dismiss();
-                void confirmRecipient();
-                return;
-              }
               void handleSend();
             }}
             accessibilityLabel={ctaA11yLabel}
@@ -714,17 +589,12 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
           </Button>
         </Footer>
       </DsSheetHost>
-      <PayoutAbroadSheet
-        visible={visible && payoutOpen}
-        payWith={stableCode}
-        onClose={() => setPayoutOpen(false)}
-        onDone={(destination) => {
-          setPayout(destination);
-          setPayoutOpen(false);
-        }}
-      />
     </>
   );
 };
+
+const styles = StyleSheet.create({
+  closeOverRecipient: { position: "absolute", top: 0, right: 0 },
+});
 
 export default WalletSendStablecoinModal;

@@ -1,6 +1,6 @@
 // @screen bitcoin.send
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Keyboard, Platform } from "react-native";
+import { Keyboard, Platform, View as RNView, StyleSheet } from "react-native";
 import * as Clipboard from "expo-clipboard";
 
 import {
@@ -9,6 +9,7 @@ import {
   Footer,
   Header,
   IconButton,
+  NuriScope,
   Scroll,
   Text,
   TextField,
@@ -23,11 +24,9 @@ import type { TextFieldHandle } from "@ds";
 import AddressBookSuggestions, {
   useAddressBookContacts,
 } from "../../../components/AddressBookSuggestions";
-import {
-  type Destination,
-  recipientWithName,
-  savedContactFor,
-} from "../../../lib/addressBook/contact";
+import { type Destination, savedContactFor } from "../../../lib/addressBook/contact";
+import SendRecipientContact from "../../../components/SendRecipientContact";
+import SendFromRow from "../../../components/send/SendFromRow";
 import AmountKeypad from "../../../components/AmountKeypad";
 import AmountDisplay, {
   BTC_LOGO,
@@ -188,6 +187,9 @@ export default function BitcoinSendScreen({
   sendSource = "arkade",
   onClose,
   onSendSuccess,
+  person,
+  balanceOptions,
+  onPickBalance,
 }: Props) {
   type InputMode = "sats" | "fiat";
   const [toAddress, setToAddress] = useState(presetAddress ?? "");
@@ -535,7 +537,12 @@ export default function BitcoinSendScreen({
 
   const scheduleSendSuccess = useCallback(
     (txId: string) => {
-      const nuri = nuriRecipientRef.current;
+      // Handed over as a Nuri user (the recipient step looked them up).
+      const nuri =
+        nuriRecipientRef.current ??
+        (person?.nuriUsername
+          ? { username: person.nuriUsername, address: toAddressRef.current.trim() }
+          : null);
       if (nuri && nuri.address === toAddressRef.current.trim()) {
         void rememberNuriPayment(nuri.username, [
           bitcoinDestination(nuri.address, isArkAddress(nuri.address)),
@@ -549,7 +556,7 @@ export default function BitcoinSendScreen({
         } catch {}
       }, delay);
     },
-    [onSendSuccess],
+    [onSendSuccess, person?.nuriUsername],
   );
 
   // If the caller provides a preset address when opening, reflect it in the
@@ -2164,6 +2171,24 @@ export default function BitcoinSendScreen({
     () => savedContactFor(savedContacts, trimmedToAddress, acceptsBitcoinSend),
     [savedContacts, trimmedToAddress],
   );
+  const recipientPerson =
+    person ??
+    (savedRecipient && !zapDestination && !isRecipientRemitPhone
+      ? { name: savedRecipient.label, nuriUsername: savedRecipient.nuriUsername }
+      : recipientNuriUsername && !zapDestination
+        ? { name: recipientNuriUsername, nuriUsername: recipientNuriUsername }
+        : null);
+  // The amount step's card names the balance and what it holds, so it has no
+  // title; a person recipient takes the top row beside the close button.
+  const liftRecipient = !manualEntryActive && recipientPerson !== null;
+  const closeButton = (
+    <IconButton
+      icon="cross"
+      variant="soft"
+      accessibilityLabel={t("common.close")}
+      onPress={() => void closeAndNotifyRefresh()}
+    />
+  );
   const headerTitle =
     availableSatsDisplay == null
       ? t("screen.BitcoinSendScreen.headline")
@@ -2220,19 +2245,16 @@ export default function BitcoinSendScreen({
           if (presetRecipientEmpty) recipientFieldRef.current?.focus();
         }}
       >
-        <Header safeAreaTop chrome="canvas">
-          <Topbar surface="transparent" layout="fluid">
-            <TopbarTitle>{headerTitle}</TopbarTitle>
-            <TopbarTrailing>
-              <IconButton
-                icon="cross"
-                variant="soft"
-                accessibilityLabel={t("common.close")}
-                onPress={() => void closeAndNotifyRefresh()}
-              />
-            </TopbarTrailing>
-          </Topbar>
-        </Header>
+        {liftRecipient ? (
+          <Header safeAreaTop chrome="canvas" />
+        ) : (
+          <Header safeAreaTop chrome="canvas">
+            <Topbar surface="transparent" layout={manualEntryActive ? "fluid" : "centered"}>
+              {manualEntryActive ? <TopbarTitle>{headerTitle}</TopbarTitle> : null}
+              <TopbarTrailing>{closeButton}</TopbarTrailing>
+            </Topbar>
+          </Header>
+        )}
 
         <Scroll onLayout={keypadFit.onViewportLayout}>
           <View
@@ -2265,6 +2287,8 @@ export default function BitcoinSendScreen({
                     {t("common.paste")}
                   </TextFieldButton>
                 </TextField>
+              ) : recipientPerson ? (
+                <SendRecipientContact {...recipientPerson} />
               ) : (
                 <View variant="soft" radius="md" paddingX="lg" paddingY="md" align="stretch">
                   <Text size="sm" mono muted flow="truncate" lines={1}>
@@ -2272,12 +2296,15 @@ export default function BitcoinSendScreen({
                       ? zapDestination.summary
                       : isRecipientRemitPhone
                         ? formatTanzanianMobileNumber(trimmedToAddress)
-                        : savedRecipient
-                          ? recipientWithName(savedRecipient.label, trimmedToAddress)
-                          : trimmedToAddress}
+                        : trimmedToAddress}
                   </Text>
                 </View>
               )}
+              {/* Raw View: the close button pinned top-right over the lifted
+                  recipient, which the DS has no slot for outside a Topbar. */}
+              {liftRecipient ? (
+                <RNView style={styles.closeOverRecipient}>{closeButton}</RNView>
+              ) : null}
               {manualEntryActive && needsRemitName ? (
                 <TextField
                   value={remitName}
@@ -2336,35 +2363,70 @@ export default function BitcoinSendScreen({
               </View>
             ) : (
               <>
-                <AmountDisplay
-                  primaryAmount={primaryAmount}
-                  primaryImage={primaryImage}
-                  primaryUnit={primaryUnit}
-                  secondary={{
-                    amount: secondaryAmount,
-                    image: secondaryImage,
-                    unit: secondaryUnit,
-                  }}
-                  onToggle={toggleInputMode}
-                  // A BOLT11's amount is protocol-fixed and lives in the sats
-                  // field alone. Switching to fiat left the screen and the CTA
-                  // reading zero while the service still paid the invoice's
-                  // real amount — two numbers on one screen, the true one
-                  // invisible. Nothing to switch between, so nothing to press.
-                  // A failed send holds its amount and reason until Try again.
-                  toggleDisabled={
-                    invoiceLockedAmountRef.current || isRecipientRemitPhone || sendFailed
-                  }
-                  message={
-                    errorMessage
-                      ? { text: errorMessage, tone: "alert" }
-                      : exceedsBalance
-                        ? { text: overBalanceMessage, tone: "alert" }
-                        : infoMessage
-                          ? { text: infoMessage, tone: "info" }
-                          : null
-                  }
-                />
+                {/* The Move sheet's card: which balance pays and the amount. */}
+                <NuriScope mode="dark">
+                  <View
+                    chrome="subtle"
+                    radius="lg"
+                    paddingX="lg"
+                    paddingY="md"
+                    direction="column"
+                    align="stretch"
+                    gap="sm"
+                    fill="grow"
+                  >
+                    <SendFromRow
+                      options={balanceOptions}
+                      current={effectiveSendSource}
+                      fallback={{
+                        label:
+                          availableSatsDisplay == null
+                            ? t(
+                                effectiveSendSource === "onchain"
+                                  ? "screen.HomeScreen.railBitcoin"
+                                  : "screen.HomeScreen.railBitcoinLightning",
+                              )
+                            : `${t(
+                                effectiveSendSource === "onchain"
+                                  ? "screen.HomeScreen.railBitcoin"
+                                  : "screen.HomeScreen.railBitcoinLightning",
+                              )} (${groupCount(availableSatsDisplay)})`,
+                        image: BTC_LOGO,
+                      }}
+                      disabled={busy || sendFailed}
+                      onPick={onPickBalance}
+                    />
+                    <AmountDisplay
+                      primaryAmount={primaryAmount}
+                      primaryImage={primaryImage}
+                      primaryUnit={primaryUnit}
+                      secondary={{
+                        amount: secondaryAmount,
+                        image: secondaryImage,
+                        unit: secondaryUnit,
+                      }}
+                      onToggle={toggleInputMode}
+                      // A BOLT11's amount is protocol-fixed and lives in the sats
+                      // field alone. Switching to fiat left the screen and the CTA
+                      // reading zero while the service still paid the invoice's
+                      // real amount — two numbers on one screen, the true one
+                      // invisible. Nothing to switch between, so nothing to press.
+                      // A failed send holds its amount and reason until Try again.
+                      toggleDisabled={
+                        invoiceLockedAmountRef.current || isRecipientRemitPhone || sendFailed
+                      }
+                      message={
+                        errorMessage
+                          ? { text: errorMessage, tone: "alert" }
+                          : exceedsBalance
+                            ? { text: overBalanceMessage, tone: "alert" }
+                            : infoMessage
+                              ? { text: infoMessage, tone: "info" }
+                              : null
+                      }
+                    />
+                  </View>
+                </NuriScope>
 
                 {amountEditable ? (
                   <AmountKeypad
@@ -2439,3 +2501,7 @@ export default function BitcoinSendScreen({
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  closeOverRecipient: { position: "absolute", top: 0, right: 0 },
+});

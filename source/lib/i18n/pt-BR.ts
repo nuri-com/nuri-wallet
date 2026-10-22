@@ -528,6 +528,9 @@ export const ptBR = {
       evmAddressLabel: "Endereço da carteira Base",
       receiveNotReady: "Sua carteira está sendo preparada. Tente de novo em instantes.",
     },
+    SendRecipientSheet: {
+      recipientLabel: "Destinatário",
+    },
     WalletSendStablecoinModal: {
       headline: "Enviar %{asset}",
       headlineWithBalance: "Enviar %{asset} (%{amount})",
