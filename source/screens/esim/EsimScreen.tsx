@@ -2,6 +2,8 @@
 // eSIM — opened from Settings. Buys a data eSIM from nadanada.me with Bitcoin
 // over Lightning (no account; Nuri's referral code rides on every order) and
 // keeps the eSIMs this wallet bought: install QR, install link, data left.
+// A second purchase for a place this wallet already has an eSIM for adds data
+// to that eSIM instead of buying another one (same ICCID, nothing to install).
 //
 // Paying is NOT done here: a plan's invoice is handed to the regular Bitcoin
 // send sheet (onPayInvoice), the same one a scanned Lightning invoice opens.
@@ -10,7 +12,7 @@
 // a restart or on a restored wallet.
 import type * as React from "react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Linking, Platform } from "react-native";
+import { Linking } from "react-native";
 import * as Localization from "expo-localization";
 import {
   Button,
@@ -25,10 +27,6 @@ import {
   ListActionTrailIcon,
   ListActionTrailingText,
   ListSeparator,
-  SelectField,
-  SelectFieldChevron,
-  SelectFieldLabel,
-  SelectFieldValue,
   Screen,
   Scroll,
   Text,
@@ -56,29 +54,30 @@ import {
   getEsimPlaces,
   getEsimPlans,
   getEsimStatus,
+  installUrlFor,
   loadEsims,
   onEsimToppedUp,
   subscribeEsims,
 } from "../../services/esim/EsimService";
 import { lightningSendStartedFor } from "../../services/arkade/lightningSendStarted";
-import ChoiceSheet from "../../components/ChoiceSheet";
 import { EventBus } from "../../services/events/AppEventBusService";
 import {
-  type EsimBundle,
-  type EsimBundleState,
   type EsimPendingOrder,
   type EsimPlace,
   type EsimPlan,
   type EsimRecord,
   type EsimStatus,
+  type OrderDelivery,
   type OwnedEsim,
   currentDataLeft,
   daysLeft,
-  esimDashboardUrl,
   filterPlaces,
   formatDataAmount,
   installParts,
+  orderDelivery,
   planSummary,
+  topupTarget,
+  deliveredTopups,
   visiblePending,
 } from "../../services/esim/esimModel";
 
@@ -121,64 +120,8 @@ function placeLabel(place: EsimPlace): string {
   return place.flag ? `${place.flag} ${place.name}` : place.name;
 }
 
-type InstallMethod = "iphone" | "android" | "graphene" | "qr";
-const INSTALL_METHODS: InstallMethod[] = ["iphone", "android", "graphene", "qr"];
-
-/** The guide the device itself needs; the QR (for a second device) elsewhere. */
-function defaultInstallMethod(): InstallMethod {
-  if (Platform.OS === "ios") return "iphone";
-  if (Platform.OS === "android") return "android";
-  const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
-  if (/Android/i.test(ua)) return "android";
-  if (/iPhone|iPad|iPod/i.test(ua)) return "iphone";
-  return "qr";
-}
-
-const BUNDLE_STATES: EsimBundleState[] = ["current", "next", "expired"];
-
-function BundleCard({ bundle, now }: { bundle: EsimBundle; now: number }) {
-  const left = daysLeft(bundle.endsAt, now);
-  return (
-    <View
-      variant="soft"
-      radius="lg"
-      paddingX="lg"
-      paddingY="md"
-      direction="column"
-      align="stretch"
-      gap="xs"
-    >
-      <View direction="row" align="center" gap="sm">
-        <View fill="grow-shrink">
-          <Text size="md" emphasis>
-            {bundleSummary(bundle.name)}
-          </Text>
-        </View>
-        <Text size="sm">{t(`${K}.state_${bundle.state}`)}</Text>
-      </View>
-      <Text size="sm">
-        {bundle.unlimited
-          ? t(`${K}.unlimited`)
-          : t(`${K}.usage`, {
-              used: formatDataAmount(bundle.usedBytes),
-              total: formatDataAmount(bundle.totalBytes),
-            })}
-      </Text>
-      {bundle.state === "current" && left !== null ? (
-        <Text size="sm" muted>
-          {t(left === 1 ? `${K}.dayLeft` : `${K}.daysLeft`, { count: left })}
-        </Text>
-      ) : bundle.state === "next" ? (
-        <Text size="sm" muted>
-          {t(`${K}.startsOnArrival`)}
-        </Text>
-      ) : null}
-    </View>
-  );
-}
-
-/** One copyable value of the manual install (SM-DP+, code, full string). */
-function CopyField({ label, value }: { label: string; value: string }) {
+/** Money already on an order that nadanada is delivering: said in words. */
+function DeliveringCard({ order, state }: { order: EsimPendingOrder; state: OrderDelivery }) {
   return (
     <View
       variant="soft"
@@ -187,139 +130,17 @@ function CopyField({ label, value }: { label: string; value: string }) {
       paddingY="md"
       direction="row"
       align="center"
-      gap="sm"
+      gap="md"
     >
+      <Spinner />
       <View fill="grow-shrink" direction="column" align="stretch" gap="xs">
-        <Text size="sm" muted>
-          {label}
+        <Text size="sm" emphasis>
+          {t(`${K}.${state}`)}
         </Text>
-        <Text size="md" mono flow="wrap">
-          {value}
+        <Text size="sm" muted>
+          {`${order.placeName} · ${bundleSummary(order.bundleName)}`}
         </Text>
       </View>
-      <IconButton
-        icon="copy"
-        variant="ghost"
-        accessibilityLabel={`${t("common.copy")} ${label}`}
-        onPress={() => void copyToClipboard(value)}
-      />
-    </View>
-  );
-}
-
-function Steps({ steps, start = 1 }: { steps: string[]; start?: number }) {
-  return (
-    <View direction="column" align="stretch" gap="xs">
-      {steps.map((step, index) => (
-        <Text key={step} size="sm">{`${start + index}. ${step}`}</Text>
-      ))}
-    </View>
-  );
-}
-
-/** nadanada's installation guide, per method, with the codes inline. */
-function InstallGuide({ esim, method }: { esim: OwnedEsim; method: InstallMethod }) {
-  const parts = installParts(esim.install);
-  const quick =
-    method === "iphone"
-      ? esim.install.appleInstallUrl
-      : method === "android"
-        ? esim.install.androidInstallUrl
-        : undefined;
-  const after = <Steps steps={[t(`${K}.afterData`), t(`${K}.afterRoaming`)]} />;
-  return (
-    <View direction="column" align="stretch" gap="md">
-      {quick ? (
-        <Button
-          size="lg"
-          variant="solid"
-          accent="lilac"
-          onPress={() => void Linking.openURL(quick).catch(() => {})}
-        >
-          <ButtonIcon name="download" />
-          <ButtonText>{t(`${K}.quickInstall`)}</ButtonText>
-        </Button>
-      ) : null}
-      {method === "qr" && parts ? (
-        <>
-          <AddressQrTile value={parts.activation}>
-            <Text size="sm" muted align="center">
-              {t(`${K}.scanHint`)}
-            </Text>
-          </AddressQrTile>
-          <Text size="sm" emphasis>
-            {t(`${K}.afterInstalling`)}
-          </Text>
-          {after}
-        </>
-      ) : null}
-      {method === "iphone" ? (
-        <>
-          {quick ? (
-            <Text size="sm" muted>
-              {t(`${K}.orManually`)}
-            </Text>
-          ) : null}
-          <Steps
-            steps={[t(`${K}.iphone1`), t(`${K}.iphone2`), t(`${K}.iphone3`), t(`${K}.iphone4`)]}
-          />
-          {parts?.smdpAddress ? (
-            <CopyField label={t(`${K}.smdp`)} value={parts.smdpAddress} />
-          ) : null}
-          {parts?.activationCode ? (
-            <CopyField label={t(`${K}.code`)} value={parts.activationCode} />
-          ) : null}
-          <Steps start={5} steps={[t(`${K}.iphone5`)]} />
-        </>
-      ) : null}
-      {method === "android" ? (
-        <>
-          {quick ? (
-            <Text size="sm" muted>
-              {t(`${K}.orManually`)}
-            </Text>
-          ) : null}
-          <Steps
-            steps={[
-              t(`${K}.android1`),
-              t(`${K}.android2`),
-              t(`${K}.android3`),
-              t(`${K}.android4`),
-              t(`${K}.android5`),
-            ]}
-          />
-          {parts ? <CopyField label={t(`${K}.fullString`)} value={parts.activation} /> : null}
-          <Steps
-            start={6}
-            steps={[t(`${K}.android6`), t(`${K}.afterData`), t(`${K}.afterRoaming`)]}
-          />
-        </>
-      ) : null}
-      {method === "graphene" ? (
-        <>
-          <Steps
-            steps={[
-              t(`${K}.graphene1`),
-              t(`${K}.graphene2`),
-              t(`${K}.graphene3`),
-              t(`${K}.graphene4`),
-            ]}
-          />
-          {parts ? <CopyField label={t(`${K}.fullString`)} value={parts.activation} /> : null}
-          {parts?.smdpAddress ? (
-            <CopyField label={t(`${K}.smdp`)} value={parts.smdpAddress} />
-          ) : null}
-          {parts?.activationCode ? (
-            <CopyField label={t(`${K}.code`)} value={parts.activationCode} />
-          ) : null}
-          <Steps start={5} steps={[t(`${K}.grapheneAfter`)]} />
-        </>
-      ) : null}
-      {method !== "qr" && !parts && !quick ? (
-        <Text size="sm" muted>
-          {t(`${K}.noInstallData`)}
-        </Text>
-      ) : null}
     </View>
   );
 }
@@ -336,10 +157,10 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
   const [orderError, setOrderError] = useState<string | null>(null);
   const [openEsim, setOpenEsim] = useState<OwnedEsim | null>(null);
   const [statuses, setStatuses] = useState<Record<string, EsimStatus | null>>({});
-  const [installMethod, setInstallMethod] = useState<InstallMethod>(defaultInstallMethod);
-  const [methodPicker, setMethodPicker] = useState(false);
-  const [bundleTab, setBundleTab] = useState<EsimBundleState>("current");
-  /** Set while picking a plan to add to this owned eSIM (top-up). */
+  /**
+   * The eSIM whose own "Add data" opened the plans. A wallet can hold two
+   * eSIMs for one country, so the picked one wins over the place.
+   */
   const [topupFor, setTopupFor] = useState<OwnedEsim | null>(null);
   const [now, setNow] = useState(() => Date.now());
   /** Unpaid orders whose invoice may be paid from here (see reopenEsimPayment). */
@@ -356,7 +177,6 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
       setPlace(null);
       setOpenEsim(null);
       setTopupFor(null);
-      setMethodPicker(false);
       setOrderError(null);
       return;
     }
@@ -393,12 +213,56 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
   useEffect(() => onEsimToppedUp(refreshStatus), [refreshStatus]);
 
   const openEsimPage = useCallback((esim: OwnedEsim) => {
-    setBundleTab("current");
-    setInstallMethod(defaultInstallMethod());
     setOpenEsim(esim);
   }, []);
 
-  // Top-up: the eSIM's own place (country or region), plans as for a new one.
+  // An eSIM delivered while this page is open shows itself at once: an order
+  // that leaves the list must never read as "nothing happened", which is what
+  // makes people buy the same plan a second time.
+  const orderedHashes = useRef<Set<string>>(new Set());
+  const autoShown = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!visible) {
+      orderedHashes.current = new Set();
+      autoShown.current = new Set();
+      return;
+    }
+    for (const order of record.pending) orderedHashes.current.add(order.paymentHash);
+    const delivered = record.esims.find(
+      (esim) => orderedHashes.current.has(esim.paymentHash) && !autoShown.current.has(esim.iccid),
+    );
+    if (!delivered) return;
+    autoShown.current.add(delivered.iccid);
+    openEsimPage(delivered);
+  }, [visible, record, openEsimPage]);
+
+  // A top-up delivers into an eSIM that already exists (it keeps its purchase
+  // hash), so it is the order's own hash leaving `pending` that says so. The
+  // card it added data to then opens, with its data re-read: a paid top-up
+  // never ends on the shop list either.
+  const orderedTopups = useRef<Map<string, string>>(new Map());
+  const topupsShown = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!visible) {
+      orderedTopups.current = new Map();
+      topupsShown.current = new Set();
+      return;
+    }
+    for (const order of record.pending) {
+      if (order.topupIccid) orderedTopups.current.set(order.paymentHash, order.topupIccid);
+    }
+    const landed = deliveredTopups(record, orderedTopups.current, topupsShown.current);
+    for (const { paymentHash, iccid } of landed) {
+      topupsShown.current.add(paymentHash);
+      const esim = record.esims.find((owned) => owned.iccid === iccid);
+      if (!esim) continue;
+      refreshStatus(iccid);
+      openEsimPage(esim);
+    }
+  }, [visible, record, openEsimPage, refreshStatus]);
+
+  // Add data: the eSIM's own place (country or region), plans as for a new
+  // one; picking a plan adds to this eSIM (see extendTarget).
   const startTopup = useCallback(
     (esim: OwnedEsim) => {
       const target =
@@ -433,13 +297,22 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
       });
   }, []);
 
+  // The eSIM a purchase for the open place extends: the one "Add data" was
+  // pressed on, else the one this wallet has for that place. Buying data for a
+  // place you have an eSIM for always adds to it (same ICCID, nothing to
+  // install), never buys a second one.
+  const extendTarget = useMemo(
+    () => (place ? topupTarget(topupFor, record.esims, place) : null),
+    [place, topupFor, record.esims],
+  );
+
   const buy = useCallback(
     (plan: EsimPlan) => {
       if (!place || ordering) return;
       setOrdering(plan.name);
       setOrderError(null);
-      const order = topupFor
-        ? createEsimTopup(topupFor, place, plan)
+      const order = extendTarget
+        ? createEsimTopup(extendTarget, place, plan)
         : createEsimOrder(place, plan);
       void order
         .then(({ invoice, amountSats }) => {
@@ -450,7 +323,7 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
         .catch((e) => setOrderError(errMsg(e, t(`${K}.orderFailed`))))
         .finally(() => setOrdering(null));
     },
-    [place, ordering, onPayInvoice, topupFor],
+    [place, ordering, onPayInvoice, extendTarget],
   );
 
   // A paid order that hasn't arrived: support gets the checkout id, which is
@@ -474,6 +347,18 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
     .filter((order) => order.paidAt === undefined)
     .map((order) => order.paymentHash)
     .join(",");
+
+  // Orders with money on them (a send started or a payment made) are not rows
+  // to act on: they say what is happening, above the list.
+  const delivering = openOrders
+    .map((order) => ({ order, state: orderDelivery(order, now, SLOW_DELIVERY_MS) }))
+    .filter(
+      (row): row is { order: EsimPendingOrder; state: OrderDelivery } =>
+        row.state === "sending" || row.state === "delivering",
+    );
+  const listedOrders = openOrders.filter(
+    (order) => !delivering.some((row) => row.order.paymentHash === order.paymentHash),
+  );
 
   // Which unpaid orders can be paid from their row; rechecked as time passes,
   // so a row stops offering payment shortly before its invoice expires.
@@ -538,78 +423,85 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
                         {t(`${K}.mine`)}
                       </Text>
                     </View>
-                    <List>
-                      {/* An unpaid order opens its invoice again, but only while
+                    {delivering.length > 0 ? (
+                      <View direction="column" align="stretch" gap="sm" paddingX="lg">
+                        {delivering.map(({ order, state }) => (
+                          <DeliveringCard key={order.paymentHash} order={order} state={state} />
+                        ))}
+                      </View>
+                    ) : null}
+                    {listedOrders.length > 0 || record.esims.length > 0 ? (
+                      <List>
+                        {/* An unpaid order opens its invoice again, but only while
                             this wallet never started a send for it: a second
                             send of the same invoice would lock sats nobody can
                             claim (reopenEsimPayment). */}
-                      {openOrders.map((order, index) => (
-                        <Fragment key={order.paymentHash}>
-                          {index > 0 ? <ListSeparator /> : null}
-                          {(() => {
-                            const slow =
-                              order.paidAt !== undefined && now - order.paidAt > SLOW_DELIVERY_MS;
-                            const canPay = !slow && payable.has(order.paymentHash);
-                            const label = slow
-                              ? t(`${K}.slow`)
-                              : order.paidAt !== undefined
-                                ? t(`${K}.delivering`)
+                        {listedOrders.map((order, index) => (
+                          <Fragment key={order.paymentHash}>
+                            {index > 0 ? <ListSeparator /> : null}
+                            {(() => {
+                              const slow =
+                                order.paidAt !== undefined && now - order.paidAt > SLOW_DELIVERY_MS;
+                              const canPay = !slow && payable.has(order.paymentHash);
+                              const label = slow
+                                ? t(`${K}.slow`)
                                 : canPay
                                   ? t(`${K}.payNow`)
                                   : t(`${K}.pending`);
-                            return (
-                              <ListAction
-                                accessibilityLabel={`${order.placeName}, ${label}`}
-                                onPress={
-                                  slow
-                                    ? () => openSupport(order)
-                                    : canPay
-                                      ? () => payOrder(order)
-                                      : undefined
-                                }
-                              >
-                                <ListActionText>{order.placeName}</ListActionText>
-                                <ListActionTextMuted>
-                                  {bundleSummary(order.bundleName)}
-                                </ListActionTextMuted>
-                                <ListActionTrailingText>{label}</ListActionTrailingText>
-                                {slow || canPay ? (
-                                  <ListActionTrailIcon name="chevron-right" />
-                                ) : null}
-                              </ListAction>
-                            );
-                          })()}
-                        </Fragment>
-                      ))}
-                      {record.esims.map((esim, index) => {
-                        const status = statuses[esim.iccid];
-                        const left = status ? currentDataLeft(status) : null;
-                        return (
-                          <Fragment key={esim.iccid}>
-                            {index > 0 || openOrders.length > 0 ? <ListSeparator /> : null}
-                            <ListAction
-                              accessibilityLabel={esim.placeName}
-                              onPress={() => openEsimPage(esim)}
-                            >
-                              <ListActionText>{esim.placeName}</ListActionText>
-                              <ListActionTextMuted>
-                                {bundleSummary(esim.bundleName)}
-                              </ListActionTextMuted>
-                              {status ? (
-                                <ListActionTrailingText>
-                                  {!status.installed
-                                    ? t(`${K}.notInstalled`)
-                                    : left !== null
-                                      ? t(`${K}.left`, { amount: formatDataAmount(left) })
-                                      : t(`${K}.noActivePlan`)}
-                                </ListActionTrailingText>
-                              ) : null}
-                              <ListActionTrailIcon name="chevron-right" />
-                            </ListAction>
+                              return (
+                                <ListAction
+                                  accessibilityLabel={`${order.placeName}, ${label}`}
+                                  onPress={
+                                    slow
+                                      ? () => openSupport(order)
+                                      : canPay
+                                        ? () => payOrder(order)
+                                        : undefined
+                                  }
+                                >
+                                  <ListActionText>{order.placeName}</ListActionText>
+                                  <ListActionTextMuted>
+                                    {bundleSummary(order.bundleName)}
+                                  </ListActionTextMuted>
+                                  <ListActionTrailingText>{label}</ListActionTrailingText>
+                                  {slow || canPay ? (
+                                    <ListActionTrailIcon name="chevron-right" />
+                                  ) : null}
+                                </ListAction>
+                              );
+                            })()}
                           </Fragment>
-                        );
-                      })}
-                    </List>
+                        ))}
+                        {record.esims.map((esim, index) => {
+                          const status = statuses[esim.iccid];
+                          const left = status ? currentDataLeft(status) : null;
+                          return (
+                            <Fragment key={esim.iccid}>
+                              {index > 0 || listedOrders.length > 0 ? <ListSeparator /> : null}
+                              <ListAction
+                                accessibilityLabel={esim.placeName}
+                                onPress={() => openEsimPage(esim)}
+                              >
+                                <ListActionText>{esim.placeName}</ListActionText>
+                                <ListActionTextMuted>
+                                  {bundleSummary(esim.bundleName)}
+                                </ListActionTextMuted>
+                                {status ? (
+                                  <ListActionTrailingText>
+                                    {!status.installed
+                                      ? t(`${K}.notInstalled`)
+                                      : left !== null
+                                        ? t(`${K}.left`, { amount: formatDataAmount(left) })
+                                        : t(`${K}.noActivePlan`)}
+                                  </ListActionTrailingText>
+                                ) : null}
+                                <ListActionTrailIcon name="chevron-right" />
+                              </ListAction>
+                            </Fragment>
+                          );
+                        })}
+                      </List>
+                    ) : null}
                   </View>
                 ) : null}
 
@@ -654,7 +546,15 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
                       {shown.map((p, index) => (
                         <Fragment key={`${p.kind}:${p.code}`}>
                           {index > 0 ? <ListSeparator /> : null}
-                          <ListAction accessibilityLabel={p.name} onPress={() => openPlace(p)}>
+                          <ListAction
+                            accessibilityLabel={p.name}
+                            onPress={() => {
+                              // A shop purchase is about the place: any eSIM
+                              // picked on its own card no longer applies.
+                              setTopupFor(null);
+                              openPlace(p);
+                            }}
+                          >
                             <ListActionText>{placeLabel(p)}</ListActionText>
                             <ListActionTrailIcon name="chevron-right" />
                           </ListAction>
@@ -676,7 +576,8 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
       </Layer>
 
       {/* Plans for one country or region, cheapest first; a tap orders it and
-          hands the invoice to the Bitcoin send sheet. */}
+          hands the invoice to the Bitcoin send sheet. For a place this wallet
+          already has an eSIM for, the order adds data to that eSIM. */}
       <DsSheetHost
         visible={visible && place !== null}
         onClose={() => {
@@ -701,7 +602,7 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
             </TopbarLeading>
             <TopbarTitle>
               {place
-                ? topupFor
+                ? extendTarget
                   ? t(`${K}.topupTitle`, { place: placeLabel(place) })
                   : placeLabel(place)
                 : ""}
@@ -748,7 +649,12 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
               </List>
             ) : null}
             {plans && plans.length > 0 ? (
-              <View paddingX="lg">
+              <View paddingX="lg" direction="column" align="stretch" gap="xs">
+                {extendTarget ? (
+                  <Text size="sm" muted align="center">
+                    {t(`${K}.extendNote`)}
+                  </Text>
+                ) : null}
                 <Text size="sm" muted align="center">
                   {t(`${K}.payNote`)}
                 </Text>
@@ -758,7 +664,9 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
         </Scroll>
       </DsSheetHost>
 
-      {/* One bought eSIM: install it (link or QR), its code, data left. */}
+      {/* One bought eSIM: the data it has left, and how to install it. Nothing
+          else: nadanada's identifiers and bundle bookkeeping stay out of the
+          way (support has them, the order carries them). */}
       <DsSheetHost
         visible={visible && openEsim !== null}
         onClose={() => setOpenEsim(null)}
@@ -781,136 +689,130 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
           {openEsim
             ? (() => {
                 const status = statuses[openEsim.iccid];
-                const counts = Object.fromEntries(
-                  BUNDLE_STATES.map((state) => [
-                    state,
-                    status?.bundles.filter((b) => b.state === state).length ?? 0,
-                  ]),
-                ) as Record<EsimBundleState, number>;
-                const bundles = status?.bundles.filter((b) => b.state === bundleTab) ?? [];
+                const active = status?.bundles.filter((b) => b.state === "current") ?? [];
+                const left = status ? currentDataLeft(status) : null;
+                const unlimited = active.some((b) => b.unlimited);
+                const endsAt = active.reduce<number | null>(
+                  (soonest, bundle) =>
+                    bundle.endsAt !== null && (soonest === null || bundle.endsAt < soonest)
+                      ? bundle.endsAt
+                      : soonest,
+                  null,
+                );
+                const leftDays = daysLeft(endsAt, now);
+                const queued = status?.bundles.some((b) => b.state === "next") ?? false;
+                const quick = installUrlFor(openEsim);
+                const parts = installParts(openEsim.install);
                 return (
                   <View direction="column" align="stretch" gap="xl" paddingX="lg" paddingY="md">
-                    {/* Install: the guide for this device first, others one tap away. */}
-                    <View direction="column" align="stretch" gap="md">
-                      <Text size="sm" emphasis muted>
-                        {status?.installed
-                          ? t(`${K}.installedSince`, {
-                              date: status.firstInstalledAt
-                                ? new Date(status.firstInstalledAt).toLocaleDateString()
-                                : "",
-                            })
-                          : t(`${K}.installTitle`)}
-                      </Text>
-                      <SelectField
-                        onPress={() => setMethodPicker(true)}
-                        accessibilityLabel={t(`${K}.installMethod`)}
-                        accessibilityValue={t(`${K}.method_${installMethod}`)}
-                      >
-                        <SelectFieldLabel>{t(`${K}.installMethod`)}</SelectFieldLabel>
-                        <SelectFieldValue>{t(`${K}.method_${installMethod}`)}</SelectFieldValue>
-                        <SelectFieldChevron name="caret-down" />
-                      </SelectField>
-                      <InstallGuide esim={openEsim} method={installMethod} />
-                    </View>
-
-                    {/* Bundles, like nadanada's own page: current, next, expired. */}
-                    <View direction="column" align="stretch" gap="md">
-                      <Text size="sm" emphasis muted>
-                        {t(`${K}.bundles`)}
+                    {/* The data left: the one number this page exists for. */}
+                    <View
+                      variant="soft"
+                      radius="lg"
+                      paddingX="lg"
+                      paddingY="lg"
+                      direction="column"
+                      align="stretch"
+                      gap="xs"
+                    >
+                      <Text size="sm" muted>
+                        {t(`${K}.dataTitle`)}
                       </Text>
                       {status ? (
                         <>
-                          <View direction="row" gap="sm" distribute="even">
-                            {BUNDLE_STATES.map((state) => (
-                              <Button
-                                key={state}
-                                size="sm"
-                                variant={bundleTab === state ? "solid" : "soft"}
-                                accent={bundleTab === state ? "lilac" : undefined}
-                                onPress={() => setBundleTab(state)}
-                              >
-                                <ButtonText>
-                                  {t(`${K}.tab_${state}`, { count: counts[state] })}
-                                </ButtonText>
-                              </Button>
-                            ))}
-                          </View>
-                          {bundles.length > 0 ? (
-                            bundles.map((bundle, index) => (
-                              <BundleCard
-                                key={`${bundle.name}:${index}`}
-                                bundle={bundle}
-                                now={now}
-                              />
-                            ))
-                          ) : (
-                            <Text size="sm" muted align="center">
-                              {t(`${K}.noBundles`)}
+                          <Text size="xl" emphasis>
+                            {unlimited
+                              ? t(`${K}.unlimited`)
+                              : left !== null
+                                ? formatDataAmount(left)
+                                : t(`${K}.noActivePlan`)}
+                          </Text>
+                          {leftDays !== null ? (
+                            <Text size="sm" muted>
+                              {t(leftDays === 1 ? `${K}.dayLeft` : `${K}.daysLeft`, {
+                                count: leftDays,
+                              })}
                             </Text>
-                          )}
+                          ) : queued ? (
+                            <Text size="sm" muted>
+                              {t(`${K}.startsOnUse`, { place: openEsim.placeName })}
+                            </Text>
+                          ) : null}
                         </>
                       ) : (
-                        <View align="center" paddingY="md">
-                          <Spinner />
-                        </View>
+                        <Spinner />
                       )}
-                      <Button
-                        size="lg"
-                        variant="solid"
-                        accent="lilac"
-                        onPress={() => startTopup(openEsim)}
-                      >
-                        <ButtonIcon name="plus" />
-                        <ButtonText>{t(`${K}.addBundle`)}</ButtonText>
-                      </Button>
-                      {orderError ? (
-                        <Text size="sm" muted align="center">
-                          {orderError}
-                        </Text>
-                      ) : null}
                     </View>
 
-                    <List>
-                      <ListAction
-                        accessibilityLabel={t(`${K}.dashboard`)}
-                        onPress={() =>
-                          void Linking.openURL(esimDashboardUrl(openEsim.iccid)).catch(() => {})
-                        }
-                      >
-                        <ListActionText>{t(`${K}.dashboard`)}</ListActionText>
-                        <ListActionTrailIcon name="chevron-right" />
-                      </ListAction>
-                      <ListSeparator />
-                      <ListAction
-                        accessibilityLabel={t(`${K}.iccid`)}
-                        onPress={() => void copyToClipboard(openEsim.iccid)}
-                      >
-                        <ListActionText>{t(`${K}.iccid`)}</ListActionText>
-                        <ListActionTrailingText>{openEsim.iccid}</ListActionTrailingText>
-                        <ListActionTrailIcon name="copy" />
-                      </ListAction>
-                    </List>
+                    {/* Install. One tap where nadanada gives a link; the QR
+                        covers another device and the manual path. */}
+                    {status?.installed ? (
+                      <Text size="sm" muted>
+                        {t(`${K}.installedSince`, {
+                          date: status.firstInstalledAt
+                            ? new Date(status.firstInstalledAt).toLocaleDateString()
+                            : "",
+                        })}
+                      </Text>
+                    ) : (
+                      <View direction="column" align="stretch" gap="md">
+                        <Text size="sm" emphasis muted>
+                          {t(`${K}.installTitle`)}
+                        </Text>
+                        {quick ? (
+                          <Button
+                            size="lg"
+                            variant="solid"
+                            accent="lilac"
+                            onPress={() => void Linking.openURL(quick).catch(() => {})}
+                          >
+                            <ButtonIcon name="download" />
+                            <ButtonText>{t(`${K}.quickInstall`)}</ButtonText>
+                          </Button>
+                        ) : null}
+                        {parts ? (
+                          <AddressQrTile value={parts.activation}>
+                            <Text size="sm" muted align="center">
+                              {t(quick ? `${K}.installAnother` : `${K}.manualInstall`)}
+                            </Text>
+                          </AddressQrTile>
+                        ) : !quick ? (
+                          <Text size="sm" muted align="center">
+                            {t(`${K}.noInstallData`)}
+                          </Text>
+                        ) : null}
+                        <Text size="sm" emphasis>
+                          {t(`${K}.afterInstalling`)}
+                        </Text>
+                        <Text size="sm" muted>
+                          {t(`${K}.afterData`)}
+                        </Text>
+                        <Text size="sm" muted>
+                          {t(`${K}.afterRoaming`)}
+                        </Text>
+                      </View>
+                    )}
+
+                    <Button
+                      size="lg"
+                      variant="solid"
+                      accent="lilac"
+                      onPress={() => startTopup(openEsim)}
+                    >
+                      <ButtonIcon name="plus" />
+                      <ButtonText>{t(`${K}.addBundle`)}</ButtonText>
+                    </Button>
+                    {orderError ? (
+                      <Text size="sm" muted align="center">
+                        {orderError}
+                      </Text>
+                    ) : null}
                   </View>
                 );
               })()
             : null}
         </Scroll>
       </DsSheetHost>
-
-      <ChoiceSheet<InstallMethod>
-        visible={visible && openEsim !== null && methodPicker}
-        onClose={() => setMethodPicker(false)}
-        title={t(`${K}.installMethod`)}
-        items={INSTALL_METHODS.map((method) => ({
-          key: method,
-          label: t(`${K}.method_${method}`),
-          ...(method === installMethod ? { sublabel: t("screen.Settings.selected") } : {}),
-        }))}
-        onSelect={(method) => {
-          setMethodPicker(false);
-          setInstallMethod(method);
-        }}
-      />
     </>
   );
 };

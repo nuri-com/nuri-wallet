@@ -25,7 +25,11 @@
       renders is a bundled asset, so an image URL cannot become the leak channel
       connect-src closes.
       `frame-ancestors` is set at the nginx layer (meta ignores it) — see
-      docs/server-infrastructure.md.
+      docs/server-infrastructure.md. `frame-src` allows the app's own scheme
+      (`nuri:`), which is how the pay page hands a payable link to the native
+      app through a hidden frame (lib/pay/payAppHandoff.ts): without it the
+      frame navigation is refused before the OS sees it. No other scheme is
+      opened, and the wallet never renders third-party frames.
       WalletConnect (pay page wallet picker, lib/pay/payWallet.web.tsx): relay,
       RPC, pulse, verify and the wallet-list API. RainbowKit ships its wallet
       icons as data: URIs. The pay page's token picker shows LI.FI token logos
@@ -49,7 +53,7 @@
         font-src 'self' data:;
         manifest-src 'self';
         worker-src 'self' blob:;
-        frame-src 'self' https:;
+        frame-src 'self' https: nuri:;
         connect-src 'self'
           https://nuri.com
           https://swapkit.nuri.com https://banking.nuri.com https://wirex.nuri.com
@@ -194,6 +198,15 @@
       @media (hover: hover) and (pointer: fine) {
         #root {
           max-width: none;
+        }
+        /* EXCEPT the public pay route, which has no gate: a stranger on a laptop
+         * pays there, and an uncapped column turns the phone layout into a
+         * 1400px card with 460px keypad keys. App.tsx sets this attribute while
+         * PayLinkApp is mounted (lib/web/payLinkFrame.ts). The selector matches
+         * the attribute by name, not by value. */
+        body[data-nuri-pay-link] #root {
+          max-width: 480px;
+          margin-inline: auto;
         }
       }
 

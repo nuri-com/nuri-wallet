@@ -122,6 +122,9 @@ import { checkEvmRecipient } from "../../lib/send/evmRecipientCheck";
 import { scannedSend } from "../../lib/send/scannedSend";
 import { namesEvmNetwork, networkOfChainId, networkOfPrefix } from "../../lib/send/evmNetworks";
 import { evmRecipientLookup } from "../../services/pay/evmRecipientLookup";
+import { type PayIntent, payIntentBalances, payIntentRecipient } from "../../lib/pay/payIntent";
+import { PayIntentGate, fencePayIntentResets } from "../../lib/pay/payIntentGate";
+import { takePayIntent } from "../../lib/pay/payIntentStore";
 import { resolveEnsName } from "../../lib/qr/resolveEns";
 import {
   ark as arkDestination,
@@ -1218,6 +1221,62 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   routeSendRef.current = routeSend;
   const checkSendRecipientRef = useRef(checkSendRecipient);
   checkSendRecipientRef.current = checkSendRecipient;
+
+  // A payment link opened in the app (`nuri://pay/@name`, or `/?pay=@name` when
+  // the installed PWA is handed the same link): the confirm screen for that
+  // person, with the link's figure pinned when it names one, opened on the
+  // balance whose money lands in the link's currency. The link is queued while
+  // the app boots (sign-in, passkey, lock), so it is drained by the first home
+  // that can show it rather than lost before there is a listener.
+  //
+  // Exactly one delivery per link: the queue is the only source, so a link that
+  // arrives while this home is up is queued and then drained by the same code
+  // that drains a boot-time one. A remount (a language change remounts this
+  // screen) therefore finds nothing left to reopen.
+  const payIntentContactsRef = useRef(sendContacts);
+  payIntentContactsRef.current = sendContacts;
+  // Fences each link's lookup: a superseded or dismissed one may not open.
+  const payIntentGateRef = useRef(new PayIntentGate());
+  const runPayIntent = useCallback(async (intent: PayIntent) => {
+    const token = payIntentGateRef.current.begin();
+    let recipient: SendRecipient | null = null;
+    try {
+      recipient = await evmRecipientLookup(payIntentContactsRef.current).nuriUser(intent.username);
+    } catch {
+      // A directory outage is not a payee: nothing opens, the payer can retry.
+      return;
+    }
+    if (!recipient || !payIntentGateRef.current.isCurrent(token)) return;
+    // The link's currency and network narrow the destination, and a rail this
+    // person does not have refuses the intent rather than paying something else.
+    const pinned = payIntentRecipient(recipient, intent);
+    if (!pinned) return;
+    routeSendRef.current(pinned, payIntentBalances(intent));
+  }, []);
+  const runPayIntentRef = useRef(runPayIntent);
+  runPayIntentRef.current = runPayIntent;
+  useEffect(() => {
+    // Both paths take the queue: a live link is queued before its event is
+    // emitted, so draining here (never the event payload) consumes it once.
+    const drain = () => {
+      const queued = takePayIntent();
+      if (queued) void runPayIntentRef.current(queued);
+    };
+    drain();
+    const off = EventBus.on("pay:intent", drain);
+    // A close-all reset (biometric lock, factory reset, a deep link taking over)
+    // closes every screen without unmounting this home: a link whose lookup is
+    // still in flight belonged to the screen that just closed.
+    const offReset = fencePayIntentResets(payIntentGateRef.current, (event, listener) =>
+      EventBus.on(event, listener),
+    );
+    return () => {
+      off();
+      offReset();
+      // This home is gone: an answer still in flight must not open a screen.
+      payIntentGateRef.current.invalidate();
+    };
+  }, []);
 
   // Another balance picked on an amount screen: that balance's screen opens on
   // top, and the one it replaces closes underneath once it is covered. The

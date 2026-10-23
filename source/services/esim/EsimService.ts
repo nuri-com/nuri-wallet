@@ -65,6 +65,7 @@ import {
   emptyEsimRecord,
   parseEsimStatus,
   parseTopupComplete,
+  installUrlForPlatform,
 } from "./esimModel";
 import { ESIM_RECORD_STORAGE_KEY } from "./esimStorageKey";
 
@@ -792,9 +793,14 @@ export function startEsimTracking(): () => void {
   return stopTracking;
 }
 
-/** The device's install link for an owned eSIM, when nadanada gave one. */
+/**
+ * The one-tap install link for the device asking, when nadanada gave one. On
+ * the web (PWA) the browser's user agent says whether this is an Android or an
+ * iPhone, so the right link is chosen there too.
+ */
 export function installUrlFor(esim: OwnedEsim): string | null {
-  if (Platform.OS === "ios") return esim.install.appleInstallUrl ?? null;
-  if (Platform.OS === "android") return esim.install.androidInstallUrl ?? null;
-  return null;
+  const platform = Platform.OS === "ios" ? "ios" : Platform.OS === "android" ? "android" : "web";
+  const userAgent =
+    platform === "web" && typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
+  return installUrlForPlatform(esim.install, platform, userAgent);
 }

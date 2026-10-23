@@ -25,6 +25,10 @@ import { discardUnsignedV2CommitIntents } from "./services/swapkit/SwapKitV2Orde
 import { observeAppViewportHeight } from "./lib/web/appViewportHeight";
 import { revealFocusedField } from "./lib/web/focusedFieldReveal";
 import { installDocumentPanGuard } from "./lib/web/documentPanGuard";
+import { useFinePointer } from "./lib/web/finePointer";
+import { PAY_LINK_BODY_ATTRIBUTE } from "./lib/web/payLinkFrame";
+import { parsePayIntent } from "./lib/pay/payIntent";
+import { queuePayIntent } from "./lib/pay/payIntentStore";
 import { hydrateAndResumeMercuryoOrders } from "./services/mercuryo/MercuryoPendingTracker";
 import {
   DEBUG_UI_ENABLED,
@@ -200,6 +204,17 @@ function initialPayLinkUsername(): string | null {
   return parsePayLinkPath(window.location.pathname);
 }
 
+// The signed-in half of a payment link: `/?pay=@username&to=…&amount=…`, which
+// is where the pay page hands an installed PWA (same-origin navigation stays in
+// the app window) and what the native deep link `nuri://pay/@username` carries.
+// Queued rather than held in state because the home that opens on it mounts
+// after the sign-in, unlock and passkey steps, and only the home can show it.
+function queueInitialPayIntent(): void {
+  if (Platform.OS !== "web" || typeof window === "undefined") return;
+  const intent = parsePayIntent(window.location.pathname, window.location.search);
+  if (intent) queuePayIntent(intent);
+}
+
 // Drop the `/@username` link from the address bar. Clearing only the React state
 // would leave the browser pointing at a claim that is finished or superseded, so
 // the next refresh or PWA reopen would re-enter the targeted flow — for a name
@@ -262,7 +277,12 @@ function redactDeepLinkForLog(url: string): Record<string, unknown> {
 // cost a visitor nothing, so the split sits above the component owning those
 // effects rather than inside its render.
 export default function App() {
-  const [payLinkUsername] = useState(initialPayLinkUsername);
+  const [payLinkUsername] = useState(() => {
+    const username = initialPayLinkUsername();
+    // Read during this first render, before the home that shows it can mount.
+    if (!username) queueInitialPayIntent();
+    return username;
+  });
   // The app's own frame on the web, installed HERE rather than in `WalletApp`:
   // `#root` is one element shared by every route, so the height the browser is
   // actually showing has to be written for the payment-link page too (a page for
@@ -300,6 +320,15 @@ export default function App() {
 // touches none of them.
 function PayLinkApp({ username }: { username: string }) {
   const [fontsLoaded] = useFonts(APP_FONTS);
+  // The document frame is shared by every route, and `public/index.html` drops
+  // the phone-width cap on a desktop browser for the DesktopGate. This route
+  // has no gate (a stranger on a laptop is a payer), so it marks the body to
+  // keep the centered column the app has at phone width.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.body.setAttribute(PAY_LINK_BODY_ATTRIBUTE, "");
+    return () => document.body.removeAttribute(PAY_LINK_BODY_ATTRIBUTE);
+  }, []);
   if (!fontsLoaded) return null;
   return (
     <GestureHandlerRootView style={styles.gestureRoot}>
@@ -992,6 +1021,17 @@ function WalletApp() {
         const screen = segments[0] ?? "";
 
         switch (screen) {
+          // A payment link opened in the app: the home opens the confirm screen
+          // for that person (`?to=` picks the currency, `?amount=` the figure).
+          case "pay": {
+            const [payPath = "", payQuery = ""] = path.split("?");
+            const intent = parsePayIntent(`/${payPath}`, payQuery ? `?${payQuery}` : "");
+            if (intent) {
+              queuePayIntent(intent);
+              EventBus.emit("pay:intent", intent);
+            }
+            break;
+          }
           case "bitcoin":
             openHomeRail("arkade");
             break;
@@ -2157,22 +2197,12 @@ function WalletApp() {
 // True on desktop browsers (fine pointer + hover), so Nuri — a mobile wallet —
 // can show a "scan to open on your phone" gate there instead of the phone-width
 // app. Touch devices (phones, tablets) are never gated. Web-only.
+//
+// The query itself lives in lib/web/finePointer, together with the pay page's
+// use of it: the gate widens the document frame for exactly this match, and the
+// pay route (which has no gate) keeps its column and types instead of tapping.
 function useIsDesktopWeb() {
-  const query = "(hover: hover) and (pointer: fine)";
-  const [isDesktop, setIsDesktop] = useState(
-    () =>
-      Platform.OS === "web" &&
-      typeof window !== "undefined" &&
-      Boolean(window.matchMedia?.(query).matches),
-  );
-  useEffect(() => {
-    if (Platform.OS !== "web" || typeof window === "undefined" || !window.matchMedia) return;
-    const mq = window.matchMedia(query);
-    const onChange = () => setIsDesktop(mq.matches);
-    mq.addEventListener?.("change", onChange);
-    return () => mq.removeEventListener?.("change", onChange);
-  }, []);
-  return isDesktop;
+  return useFinePointer();
 }
 
 // True when the DEVICE is held in landscape, for the rotate-to-portrait gate.

@@ -15,7 +15,7 @@
 // Phase 1 is QR only: whatever the rail, the payer pays it from a wallet they
 // already have. Connectors (EVM, WebLN) are Phase 2 and hang off PayTargetView.
 import type React from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Button,
   ButtonText,
@@ -48,10 +48,14 @@ import {
   paySourceDecimals,
 } from "../../lib/pay/payTarget";
 import { parsePayLink } from "../../lib/pay/payLinkPath";
+import { type PayIntent } from "../../lib/pay/payIntent";
+import { openPayIntentInApp, usePayLinkAppHandoff } from "../../lib/pay/payAppHandoff";
 import { PAY_WALLET_AVAILABLE } from "../../lib/pay/payWallet";
 import { type PayRecipient, resolvePayRecipient } from "../../lib/pay/resolvePayRecipient";
 import { useKeypadFit } from "../../lib/useKeypadFit";
 import { isValidEvmAddress } from "../../lib/validation";
+import { useFinePointer } from "../../lib/web/finePointer";
+import { usePayAmountKeyboard } from "./hooks/usePayAmountKeyboard";
 import {
   availablePaySources,
   type PayRail,
@@ -196,6 +200,21 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
       : null;
   const wallet = usePayWalletSwap(walletRecipient, settle, fixedAmount);
   const keypad = !(source && NO_KEYPAD.has(source)) && !fixedAmount;
+  // A desktop browser gets no soft keypad: it is a mouse target nobody asked
+  // for there, and the point of a keyboard is that it types. The figure is
+  // entered from the hardware keyboard instead (usePayAmountKeyboard).
+  const desktop = useFinePointer();
+  const softKeypad = keypad && !desktop;
+  const typedEntry = keypad && desktop;
+  // The payer's own Nuri balance lives in the app, never on this page, so a
+  // phone hands the link over as soon as it is known to be payable: the app
+  // opens the confirm screen for this person and figure (`usePayLinkAppHandoff`).
+  // A desktop browser has no app to open and pays from a wallet it already has.
+  const appIntent = useMemo<PayIntent>(
+    () => ({ username, settle, amount: link.amount, explicit: link.explicit }),
+    [username, settle, link.amount, link.explicit],
+  );
+  usePayLinkAppHandoff(appIntent, Boolean(recipient) && !desktop);
   const look = source ? SOURCE_LOOK[source] : null;
   const needsAmount = rail ? railRequiresAmount(rail) : false;
   // The typed figure has to be expressible in the asset's own smallest unit,
@@ -267,6 +286,21 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
   // The amount form: the keypad scrolls with the content so a short screen can
   // compact it, and the CTA stays in the footer.
   const showForm = Boolean(recipient && rail && rail.kind !== "wallet-swap" && !target && !overlay);
+  // The same handoff as a real action: a phone browser only launches the app
+  // from a gesture (Android Chrome never does it from a page-started
+  // navigation), so the page carries a button that does exactly what the
+  // automatic attempt hoped to do, with the same recipient, currency and figure.
+  const appHandoff = Boolean(recipient) && !desktop && !target && !overlay;
+  // Desktop types the figure; phones tap it on the keypad. Suspended while the
+  // source chooser is open: that sheet owns Enter and the digits.
+  usePayAmountKeyboard({
+    enabled: showForm && typedEntry && !picking,
+    decimals: Boolean(look?.decimals),
+    amount,
+    canSubmit,
+    onAmount: changeAmount,
+    onSubmit: submit,
+  });
   // A connected wallet's own card (token -> @username) and its wait and result
   // screens replace the summary; the card's arrow keeps the other ways to pay.
   const walletPair =
@@ -396,7 +430,7 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
               ) : null}
             </View>
 
-            {showForm && keypad ? (
+            {showForm && softKeypad ? (
               <AmountKeypad
                 compact={keypadFit.compact}
                 onDigit={(digit) => changeAmount(`${amount}${digit}`)}
@@ -407,7 +441,7 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
           </View>
         </Scroll>
 
-        {showForm ? (
+        {showForm || appHandoff ? (
           <Footer
             safeAreaBottom
             direction="column"
@@ -416,17 +450,32 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
             paddingX="lg"
             paddingBottom="sm"
           >
-            <Button
-              size="lg"
-              variant="solid"
-              accent="lilac"
-              disabled={!canSubmit || busy}
-              onPress={submit}
-              accessibilityLabel={t(`${K}.continue`)}
-            >
-              <ButtonIcon name="chevron-right" />
-              <ButtonText>{t(`${K}.continue`)}</ButtonText>
-            </Button>
+            {/* Android Chrome only launches the app from a real gesture, so the
+                automatic attempt alone would leave a phone payer on this page
+                when the app is installed. This is that gesture. */}
+            {appHandoff ? (
+              <Button
+                size="lg"
+                variant="soft"
+                onPress={() => openPayIntentInApp(appIntent)}
+                accessibilityLabel={t(`${K}.openInApp`)}
+              >
+                <ButtonText>{t(`${K}.openInApp`)}</ButtonText>
+              </Button>
+            ) : null}
+            {showForm ? (
+              <Button
+                size="lg"
+                variant="solid"
+                accent="lilac"
+                disabled={!canSubmit || busy}
+                onPress={submit}
+                accessibilityLabel={t(`${K}.continue`)}
+              >
+                <ButtonIcon name="chevron-right" />
+                <ButtonText>{t(`${K}.continue`)}</ButtonText>
+              </Button>
+            ) : null}
           </Footer>
         ) : null}
       </View>

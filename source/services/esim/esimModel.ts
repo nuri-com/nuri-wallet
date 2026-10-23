@@ -117,6 +117,85 @@ export type EsimRecord = {
   doneTopups: string[];
 };
 
+/** Whether an owned eSIM was bought for this place (its slug, else its name). */
+export function esimMatchesPlace(esim: OwnedEsim, place: EsimPlace): boolean {
+  return esim.placeSlug === place.slug || esim.placeName === place.name;
+}
+
+/**
+ * The owned eSIM a purchase for this place adds data to: buying for a country
+ * or region this wallet already has an eSIM for extends that eSIM (same ICCID,
+ * nothing to install) instead of minting a second one.
+ */
+export function ownedEsimForPlace(esims: OwnedEsim[], place: EsimPlace): OwnedEsim | null {
+  return (
+    esims.find((esim) => esim.placeSlug === place.slug) ??
+    esims.find((esim) => esim.placeName === place.name) ??
+    null
+  );
+}
+
+/**
+ * The eSIM a purchase for `place` adds data to: the one the user picked with
+ * "Add data" on its own card, when it is an eSIM for that place (a wallet can
+ * hold two eSIMs for one country, and only the picked one may get the data);
+ * else the eSIM this wallet already has there; else null, a new eSIM.
+ */
+export function topupTarget(
+  selected: OwnedEsim | null,
+  esims: OwnedEsim[],
+  place: EsimPlace,
+): OwnedEsim | null {
+  if (selected && esimMatchesPlace(selected, place)) return selected;
+  return ownedEsimForPlace(esims, place);
+}
+
+/** The platform asking for a one-tap install link. */
+export type InstallPlatform = "ios" | "android" | "web";
+
+/**
+ * The one-tap install link for the platform asking. A browser reports `web`,
+ * so its own user agent decides; an Android browser must never be handed the
+ * Apple link. A link for the other platform is never returned as a fallback
+ * (it cannot install here): null means no one-tap action, the QR covers it.
+ */
+export function installUrlForPlatform(
+  install: EsimInstall,
+  platform: InstallPlatform,
+  userAgent = "",
+): string | null {
+  if (platform === "ios") return install.appleInstallUrl ?? null;
+  if (platform === "android") return install.androidInstallUrl ?? null;
+  if (/Android/i.test(userAgent)) return install.androidInstallUrl ?? null;
+  if (/iPhone|iPad|iPod/i.test(userAgent)) return install.appleInstallUrl ?? null;
+  return null;
+}
+
+/** A top-up this page saw ordered that nadanada has since delivered. */
+export type DeliveredTopup = { paymentHash: string; iccid: string };
+
+/**
+ * Top-ups that landed since the last look. A top-up keeps the eSIM's own
+ * purchase hash, so its delivery is the order leaving `pending` for
+ * `doneTopups`: that hash, and the ICCID it added data to, are what open the
+ * existing eSIM's card.
+ */
+export function deliveredTopups(
+  record: EsimRecord,
+  ordered: ReadonlyMap<string, string>,
+  shown: ReadonlySet<string>,
+): DeliveredTopup[] {
+  const delivered: DeliveredTopup[] = [];
+  for (const paymentHash of record.doneTopups) {
+    if (shown.has(paymentHash)) continue;
+    const iccid = ordered.get(paymentHash);
+    if (iccid && record.esims.some((esim) => esim.iccid === iccid)) {
+      delivered.push({ paymentHash, iccid });
+    }
+  }
+  return delivered;
+}
+
 export const emptyEsimRecord = (): EsimRecord => ({
   version: 1,
   esims: [],
@@ -511,6 +590,26 @@ export function visiblePending(order: EsimPendingOrder, now: number): boolean {
 /** Whether the invoice can still be paid (shown as "waiting for payment"). */
 export function isInvoiceOpen(order: EsimPendingOrder, now: number): boolean {
   return now < order.expiresAt;
+}
+
+/** What a page says about an order that already has money on it. */
+export type OrderDelivery = "sending" | "delivering";
+
+/**
+ * Delivery state of an order money may be on, null for one it cannot be on:
+ * a send this wallet started (the payment may still be in flight, until the
+ * invoice expires) and a payment made, which nadanada delivers later.
+ */
+export function orderDelivery(
+  order: EsimPendingOrder,
+  now: number,
+  slowAfterMs: number,
+): OrderDelivery | "slow" | null {
+  if (order.paidAt !== undefined) {
+    return now - order.paidAt > slowAfterMs ? "slow" : "delivering";
+  }
+  if (order.sendStartedAt !== undefined && isInvoiceOpen(order, now)) return "sending";
+  return null;
 }
 
 /**
