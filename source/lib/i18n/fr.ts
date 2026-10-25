@@ -111,6 +111,7 @@ export const fr = {
       targetedChecking: "Vérification de %{username}…",
       targetedClaim: "Réclamer la passkey %{username}",
       targetedCheckFailed: "La vérification du nom a échoué. Recharge pour réessayer.",
+      passkeyError: "Votre passkey ne s'est pas ouvert. Touchez à nouveau pour réessayer.",
       restoreBlockedSupportMessage:
         "Bonjour, j'ai essayé de me connecter avec une passkey de l'ancienne version de l'app. On dirait que ce portefeuille ne peut pas être restauré ici. Pouvez-vous m'aider ?",
     },

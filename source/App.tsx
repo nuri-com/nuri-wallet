@@ -63,6 +63,7 @@ import {
   addWalletUnlockedListener,
 } from "./lib/secureKeyStorage";
 import { isMissingPrfError } from "./lib/auth/passkeyErrorClassification";
+import { commitRestoreIdentity } from "./services/auth/RestoreIdentityCommit";
 import { USERNAME_CLAIM_REQUIRED_KEY } from "./lib/auth/usernameClaimSentinel";
 import {
   parsePasskeyUsernamePath,
@@ -1339,7 +1340,12 @@ function WalletApp() {
         return;
       }
       if (lowerError.includes("passkey_native")) {
-        console.log("[App:handleError] Passkey native error - keeping welcome open");
+        // Native and web ceremonies both report through this branch. Clearing
+        // the footer here made every Android passkey failure invisible: the
+        // screen simply reset, so "the button does nothing" was the only thing
+        // a user could report. Show the reason and keep them on welcome.
+        console.log("[App:handleError] Passkey native error - keeping welcome open", error);
+        setWelcomeFooterMessage(t("screen.PasskeyLoginScreen.passkeyError"));
         resetToWelcome();
         return;
       }
@@ -1493,6 +1499,53 @@ function WalletApp() {
             }
           }
 
+          // Identity switch. A restore can end on a different passkey than the
+          // one this device held (Android cannot filter its picker), so the old
+          // wallet has to be gone before anything of the new one is written: a
+          // device carrying two identities' data is a wallet whose recovery
+          // reads are signed for one and encrypted for the other. The commit is
+          // fail-closed and lives in RestoreIdentityCommit so its ordering is
+          // tested rather than implied.
+          const identityCommit = await commitRestoreIdentity(
+            {
+              getPreviousCredentialId: () =>
+                authStateManager.getState().walletPublicKeys?.walletPasskeyCredIdB64u || "",
+              clearPreviousAddresses: () => authStateManager.clearPreviousAddresses(),
+              replaceIdentity: (credId, credPubkey, clientPk33) =>
+                authStateManager.replaceWalletPasskeyIdentity(credId, credPubkey, clientPk33),
+              upsertMetadata: (credId, credPubkey, clientPk33) =>
+                authStateManager.upsertWalletPasskeyMetadata(credId, credPubkey, clientPk33),
+            },
+            {
+              credIdB64u: payload.credIdB64u,
+              credPubkeyB64u: payload.credPubkeyB64u,
+              clientPk33: bootstrapResult.bitcoinPublicKey,
+            },
+          );
+          if (identityCommit.kind === "aborted") {
+            // Nothing of the new identity has been written and the device still
+            // holds the previous one, so the next attempt retries the switch.
+            console.error(
+              `[App:handleStatelessPayload] Restore aborted at ${identityCommit.stage}; no new identity state was written`,
+              identityCommit.error,
+            );
+            handleError(t("screen.App.previousWalletNotRemoved"));
+            return;
+          }
+          if (identityCommit.kind === "replaced") {
+            console.log(
+              "[App:handleStatelessPayload] Restore switched passkey identity; previous wallet replaced",
+            );
+          }
+          if (identityCommit.kind === "same" && identityCommit.metadataError) {
+            // Non-fatal here, but arkade init on the next launch depends on this
+            // metadata — surface the failure instead of swallowing it silently.
+            console.error(
+              "[App:handleStatelessPayload] Failed to persist wallet passkey metadata",
+              identityCommit.metadataError,
+            );
+          }
+
           try {
             await storeEthereumAddress(bootstrapResult.ethereumAddress);
           } catch {}
@@ -1506,28 +1559,6 @@ function WalletApp() {
           try {
             await storeAuthData(WIREX_FORCED_RELOGIN_DONE_KEY, "1");
           } catch {}
-
-          // Persist the wallet passkey credential so arkade can identify the
-          // wallet (ArkadeRemoteIdentity / ArkadeRecoveryBackupService read
-          // walletPublicKeys.walletPasskeyCredIdB64u) and isSignedIn derives.
-          // Must run BEFORE the arkade restore block below, which reads it.
-          // Formerly a side effect of the removed MuSig2 markWalletCreated.
-          if (payload.credIdB64u) {
-            try {
-              await authStateManager.upsertWalletPasskeyMetadata(
-                payload.credIdB64u,
-                payload.credPubkeyB64u,
-                bootstrapResult.bitcoinPublicKey,
-              );
-            } catch (err) {
-              // Non-fatal here, but arkade init on the next launch depends on this
-              // metadata — surface the failure instead of swallowing it silently.
-              console.error(
-                "[App:handleStatelessPayload] Failed to persist wallet passkey metadata",
-                err,
-              );
-            }
-          }
 
           try {
             await storeBitcoinAddress(bootstrapResult.bitcoinAddress);

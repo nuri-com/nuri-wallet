@@ -111,6 +111,7 @@ export const pl = {
       targetedChecking: "Sprawdzanie %{username}…",
       targetedClaim: "Odbierz passkey %{username}",
       targetedCheckFailed: "Sprawdzenie nazwy nie powiodło się. Odśwież, aby spróbować ponownie.",
+      passkeyError: "Twój passkey się nie otworzył. Dotknij ponownie, aby spróbować jeszcze raz.",
       restoreBlockedSupportMessage:
         "Cześć, próbowałem zalogować się passkey z poprzedniej wersji aplikacji. Wygląda na to, że tego portfela nie da się tu przywrócić. Możecie mi pomóc?",
     },

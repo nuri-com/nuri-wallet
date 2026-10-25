@@ -10,6 +10,7 @@ import {
   SUPPORT_RELAY_TIMEOUT_MS,
 } from "../../config/constants";
 import { authStateManager } from "../auth/AuthStateService";
+import { formatPasskeyCeremonyLines } from "../auth/passkeyCeremonyDiagnostics";
 import { getNetworkStatus } from "../app/NetworkStatusService";
 import { getBufferedLogs } from "../logging/DebugLogBuffer";
 import { arkadeServerConfigService } from "../arkade/ArkadeServerConfigService";
@@ -610,6 +611,12 @@ export async function sendSupportDump(opts: {
       if (co) lines.push(`Wallet pubkey cosigner ${co}`);
       if (credIdLen || credPubLen) {
         lines.push(`Wallet passkey cred idLen=${credIdLen} pubLen=${credPubLen}`);
+      }
+      // The ceremony outcome. A blocked restore only posts support text and a
+      // ceremony that dies before the platform shows UI reaches no handler, so
+      // this is often the only trace a "cannot sign in" report can carry.
+      for (const line of formatPasskeyCeremonyLines()) {
+        lines.push(line);
       }
     }
 

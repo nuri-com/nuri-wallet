@@ -104,6 +104,7 @@ export const es = {
       targetedChecking: "Comprobando %{username}…",
       targetedClaim: "Reclamar passkey %{username}",
       targetedCheckFailed: "Falló la comprobación del usuario. Recarga para reintentar.",
+      passkeyError: "Tu passkey no se abrió. Toca de nuevo para intentarlo otra vez.",
       restoreBlockedSupportMessage:
         "Hola, intenté iniciar sesión con un passkey de la versión anterior de la app. Parece que esta cartera no se puede restaurar aquí. ¿Me podéis ayudar?",
     },

@@ -107,6 +107,8 @@ export const de = {
       targetedChecking: "%{username} wird geprüft…",
       targetedClaim: "Passkey %{username} beanspruchen",
       targetedCheckFailed: "Username-Prüfung fehlgeschlagen. Zum Wiederholen neu laden.",
+      passkeyError:
+        "Dein Passkey wurde nicht geöffnet. Tippe erneut, um es noch einmal zu versuchen.",
       restoreBlockedSupportMessage:
         "Hallo, ich habe versucht, mich mit einem Passkey aus der vorherigen App-Version anzumelden. Dieses Wallet lässt sich hier offenbar nicht wiederherstellen. Könnt ihr mir helfen?",
     },

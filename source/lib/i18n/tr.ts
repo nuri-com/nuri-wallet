@@ -109,6 +109,7 @@ export const tr = {
       targetedChecking: "%{username} kontrol ediliyor…",
       targetedClaim: "%{username} passkey'ini al",
       targetedCheckFailed: "Kullanıcı adı kontrol edilemedi. Tekrar denemek için sayfayı yenile.",
+      passkeyError: "Passkey'iniz açılmadı. Tekrar denemek için yeniden dokunun.",
       restoreBlockedSupportMessage:
         "Merhaba, uygulamanın önceki sürümünden bir passkey ile giriş yapmayı denedim. Bu cüzdan burada geri yüklenemiyor gibi görünüyor. Yardımcı olabilir misiniz?",
     },

@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WALLET_RP_ID } from "../config/passkey";
+import { CEREMONY_DEADLINE_CODE, withCeremonyDeadline } from "../lib/auth/passkeyCeremonyDeadline";
 import { normalizePrfOutput, zeroize } from "../lib/crypto";
 import { t } from "../lib/i18n";
 import { formatWalletPasskeyLabel } from "../lib/passkeyLabels";
@@ -15,6 +16,7 @@ import {
 } from "../services/arkade/ArkadeApiService";
 import { getArkadeLnurlStatusPersisted } from "../services/arkade/ArkadeLnurlService";
 import { authStateManager } from "../services/auth/AuthStateService";
+import { recordPasskeyCeremony } from "../services/auth/passkeyCeremonyDiagnostics";
 import {
   createWalletPasskey,
   createWalletPasskeyCredential,
@@ -176,6 +178,30 @@ export default function PasskeyLoginScreenNative({
     [onError],
   );
 
+  // Every ceremony goes through here: one deadline so a platform that never
+  // settles cannot wedge the button, and one diagnostics record so a failed
+  // restore leaves a reason in the support dump. Neither changes the ceremony.
+  const runCeremony = useCallback(
+    async <T,>(kind: "create" | "existing", call: () => Promise<T>): Promise<T> => {
+      const startedAt = Date.now();
+      try {
+        const result = await withCeremonyDeadline(call());
+        recordPasskeyCeremony({ kind, outcome: "ok", durationMs: Date.now() - startedAt });
+        return result;
+      } catch (error) {
+        const message = getErrorMessage(error);
+        recordPasskeyCeremony({
+          kind,
+          outcome: message.includes(CEREMONY_DEADLINE_CODE) ? "timeout" : "error",
+          durationMs: Date.now() - startedAt,
+          code: message,
+        });
+        throw error;
+      }
+    },
+    [],
+  );
+
   const runNativeCreate = useCallback(async () => {
     if (busy) return;
     onAttemptStart?.();
@@ -183,14 +209,16 @@ export default function PasskeyLoginScreenNative({
     setActiveAction("create");
     let success = false;
     try {
-      const result = await createWalletPasskey(WALLET_RP_ID, PRF_SALT, formatWalletPasskeyLabel());
+      const result = await runCeremony("create", () =>
+        createWalletPasskey(WALLET_RP_ID, PRF_SALT, formatWalletPasskeyLabel()),
+      );
       success = handleNativeResult(result);
     } catch (error: unknown) {
       handleNativeError(error);
     } finally {
       if (!success) setBusy(false);
     }
-  }, [busy, handleNativeError, handleNativeResult, onAttemptStart]);
+  }, [busy, handleNativeError, handleNativeResult, onAttemptStart, runCeremony]);
 
   const runRestoreCeremony = useCallback(
     async (opts: { credIdHint?: string }) => {
@@ -199,7 +227,14 @@ export default function PasskeyLoginScreenNative({
       setActiveAction("existing");
       let success = false;
       try {
-        const result = await useExistingWalletPasskey(WALLET_RP_ID, PRF_SALT, opts.credIdHint);
+        const result = await runCeremony("existing", () =>
+          // The plain restore accepts whatever the user picks where the platform
+          // cannot filter the picker. The username-targeted path below never
+          // does: that credential is named by the server.
+          useExistingWalletPasskey(WALLET_RP_ID, PRF_SALT, opts.credIdHint, {
+            acceptPickedCredential: true,
+          }),
+        );
         success = handleNativeResult(result);
       } catch (error: unknown) {
         handleNativeError(error);
@@ -207,7 +242,7 @@ export default function PasskeyLoginScreenNative({
         if (!success) setBusy(false);
       }
     },
-    [handleNativeError, handleNativeResult, onAttemptStart],
+    [handleNativeError, handleNativeResult, onAttemptStart, runCeremony],
   );
 
   useEffect(() => {
@@ -243,10 +278,8 @@ export default function PasskeyLoginScreenNative({
     setActiveAction("existing");
     let success = false;
     try {
-      const result = await useExistingWalletPasskey(
-        WALLET_RP_ID,
-        PRF_SALT,
-        targetedAction.credentialId,
+      const result = await runCeremony("existing", () =>
+        useExistingWalletPasskey(WALLET_RP_ID, PRF_SALT, targetedAction.credentialId),
       );
       success = handleNativeResult(result, targetedAction.credentialId);
     } catch (error: unknown) {
@@ -254,7 +287,7 @@ export default function PasskeyLoginScreenNative({
     } finally {
       if (!success) setBusy(false);
     }
-  }, [busy, handleNativeError, handleNativeResult, onAttemptStart, targetedAction]);
+  }, [busy, handleNativeError, handleNativeResult, onAttemptStart, runCeremony, targetedAction]);
 
   const runTargetedClaim = useCallback(async () => {
     if (busy || !targetedUsername || targetedAction.kind !== "claim") return;
@@ -339,15 +372,16 @@ export default function PasskeyLoginScreenNative({
     void runTargetedRestore();
   }, [targetedUsername, runTargetedRestore, targetedAction.kind]);
 
+  // Tap is the ceremony. This used to open "continue with @name" first when a
+  // credential hint was stored, so on Android the restore button produced no
+  // passkey UI at all until a second tap on the modal, which reads as a dead
+  // button. The hint still rides along: platforms that honour allowCredentials
+  // go straight to the wallet's passkey, and Android shows its own picker.
   const runNativeAuthOnly = useCallback(async () => {
     if (busy) return;
     const hint =
       authStateManager.getState().walletPublicKeys?.walletPasskeyCredIdB64u?.trim() || "";
-    if (hint.length === 0) {
-      await runRestoreCeremony({});
-      return;
-    }
-    setShowContinueModal(true);
+    await runRestoreCeremony(hint ? { credIdHint: hint } : {});
   }, [busy, runRestoreCeremony]);
 
   // When the parent bumps `autoOpenRestoreSignal` (after `auth:relogin`), open

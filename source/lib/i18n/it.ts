@@ -110,6 +110,7 @@ export const it = {
       targetedChecking: "Verifica di %{username}…",
       targetedClaim: "Riscatta la passkey %{username}",
       targetedCheckFailed: "Verifica del nome non riuscita. Ricarica per riprovare.",
+      passkeyError: "Il tuo passkey non si è aperto. Tocca di nuovo per riprovare.",
       restoreBlockedSupportMessage:
         "Ciao, ho provato ad accedere con una passkey della versione precedente dell'app. Sembra che questo wallet non si possa ripristinare qui. Potete aiutarmi?",
     },

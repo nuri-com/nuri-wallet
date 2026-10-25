@@ -110,6 +110,7 @@ export const ptPT = {
       targetedChecking: "A verificar %{username}…",
       targetedClaim: "Resgatar a passkey %{username}",
       targetedCheckFailed: "Falha ao verificar o nome. Recarrega para tentar novamente.",
+      passkeyError: "O seu passkey não abriu. Toque novamente para tentar outra vez.",
       restoreBlockedSupportMessage:
         "Olá, tentei entrar com uma passkey da versão anterior da app. Parece que esta carteira não pode ser restaurada aqui. Podem ajudar-me?",
     },

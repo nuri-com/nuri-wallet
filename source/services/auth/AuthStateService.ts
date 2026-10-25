@@ -427,6 +427,43 @@ class AuthStateManager {
     return { ok: true };
   }
 
+  /**
+   * Persist a wallet passkey identity as a REPLACEMENT, never a merge.
+   *
+   * A restore can end on a different passkey than the one this device held
+   * (Android cannot filter its picker, so the user's pick is the identity). The
+   * upsert above merges, which would pair the new credential with the previous
+   * wallet's public keys and sign every later recovery read for the wrong
+   * wallet. Here nothing of the previous identity survives: only the new
+   * credential, its public key and the client signer key derived from the new
+   * PRF are written.
+   */
+  async replaceWalletPasskeyIdentity(
+    walletPasskeyCredIdB64u: string,
+    walletPasskeyCredPubkeyB64u?: string,
+    clientPk33?: string,
+  ): Promise<{ ok: boolean; reason?: string }> {
+    const credId = String(walletPasskeyCredIdB64u || "").trim();
+    if (!credId) {
+      return { ok: false, reason: "missing_cred_id" };
+    }
+    const credPubkey = String(walletPasskeyCredPubkeyB64u || "").trim() || undefined;
+    const userExternal = String(clientPk33 || "").trim() || undefined;
+
+    await this.ensureLoadPromise();
+    const replaced: NonNullable<AuthState["walletPublicKeys"]> = {
+      walletPasskeyCredIdB64u: credId,
+      ...(credPubkey ? { walletPasskeyCredPubkeyB64u: credPubkey } : {}),
+      ...(userExternal ? { userExternal, userInternal: userExternal } : {}),
+    };
+
+    await storeAuthData("@auth:wallet_public_keys", JSON.stringify(replaced));
+    this.authState.walletPublicKeys = replaced;
+    this.authState.isSignedIn = await this.deriveSignedInFromKeys(this.authState.walletPublicKeys);
+    this.notifyListeners();
+    return { ok: true };
+  }
+
   async getCosignerCompressedPubkey(): Promise<string | null> {
     try {
       // Only accept the actual 33-byte compressed key stored during setup

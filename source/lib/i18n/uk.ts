@@ -108,6 +108,7 @@ export const uk = {
       targetedChecking: "Перевіряємо %{username}…",
       targetedClaim: "Отримати passkey %{username}",
       targetedCheckFailed: "Не вдалося перевірити ім'я користувача. Перезавантаж, щоб повторити.",
+      passkeyError: "Ваш passkey не відкрився. Торкніться ще раз, щоб повторити.",
       restoreBlockedSupportMessage:
         "Привіт, у мене не виходить увійти з passkey з попередньої версії застосунку. Схоже, цей гаманець не можна тут відновити. Можете допомогти?",
     },

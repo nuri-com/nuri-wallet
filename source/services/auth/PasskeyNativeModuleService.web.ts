@@ -136,6 +136,8 @@ async function getAssertion(opts: {
   challenge: Uint8Array;
   credIdB64u?: string | null;
   prfSalt?: string;
+  /** Set only by the plain "sign in with any of my passkeys" restore. */
+  acceptPickedCredential?: boolean;
 }): Promise<PublicKeyCredential> {
   ensureWebAuthn();
   // Naming the credential is what we want everywhere it works: the browser
@@ -167,7 +169,19 @@ async function getAssertion(opts: {
   }
   const assertion = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential | null;
   if (!assertion) throw new Error("empty_assertion");
-  if (expectedCredIdB64u && toBase64Url(assertion.rawId) !== expectedCredIdB64u) {
+  // The exact credential is enforced by default. One shape relaxes it, and only
+  // for the plain restore where the platform cannot filter the picker (Android
+  // shows every nuri.com passkey because allowCredentials is dropped above):
+  // there the pick IS the user's choice, the PRF derives the wallet, and the
+  // server recovery gate decides validity. Registration, the username claim,
+  // signing and every recovery read keep the strict check: pairing one
+  // credential's metadata with another credential's seed is unrecoverable.
+  const acceptedByPick = Boolean(opts.acceptPickedCredential) && hangsOnAllowCredentials();
+  if (
+    expectedCredIdB64u &&
+    !acceptedByPick &&
+    toBase64Url(assertion.rawId) !== expectedCredIdB64u
+  ) {
     throw new Error("assertion_credential_mismatch");
   }
   return assertion;
@@ -245,12 +259,14 @@ export const useExistingWalletPasskey = async (
   rpId: string,
   prfSalt: string,
   credIdB64u?: string | null,
+  opts?: { acceptPickedCredential?: boolean },
 ): Promise<NativePasskeyResult> => {
   const assertion = await getAssertion({
     rpId,
     challenge: randomBytes(32),
     credIdB64u,
     prfSalt,
+    acceptPickedCredential: opts?.acceptPickedCredential,
   });
   const prf = readPrfFirst(assertion);
   if (!prf) throw new Error("missing_assertion_prf");

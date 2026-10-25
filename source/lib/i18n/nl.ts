@@ -110,6 +110,7 @@ export const nl = {
       targetedClaim: "Passkey %{username} claimen",
       targetedCheckFailed:
         "Controle van de gebruikersnaam mislukt. Herlaad om het opnieuw te proberen.",
+      passkeyError: "Je passkey is niet geopend. Tik opnieuw om het nog eens te proberen.",
       restoreBlockedSupportMessage:
         "Hoi, ik probeerde in te loggen met een passkey uit de vorige versie van de app. Het lijkt erop dat deze wallet hier niet kan worden hersteld. Kunnen jullie me helpen?",
     },

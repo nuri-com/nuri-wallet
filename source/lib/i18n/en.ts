@@ -104,6 +104,7 @@ export const en = {
       targetedChecking: "Checking %{username}…",
       targetedClaim: "Claim %{username} Passkey",
       targetedCheckFailed: "Username check failed. Reload to retry.",
+      passkeyError: "Your passkey didn't open. Tap again to try.",
       restoreBlockedSupportMessage:
         "Hi, I tried to sign in with a passkey from the previous version of the app. It looks like this wallet can't be restored here. Can you help me?",
     },

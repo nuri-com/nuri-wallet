@@ -105,6 +105,7 @@ export const sw = {
       targetedChecking: "Inakagua %{username}…",
       targetedClaim: "Dai Passkey ya %{username}",
       targetedCheckFailed: "Ukaguzi wa jina umeshindwa. Pakia upya ili kujaribu tena.",
+      passkeyError: "Passkey yako haikufunguka. Gusa tena kujaribu.",
       restoreBlockedSupportMessage:
         "Habari, nilijaribu kuingia kwa passkey kutoka toleo la awali la programu. Inaonekana pochi hii haiwezi kurejeshwa hapa. Unaweza kunisaidia?",
     },
