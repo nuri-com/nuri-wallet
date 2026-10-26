@@ -31,7 +31,7 @@ import {
 import { asSwapKitV2OrderId } from "../swapkit/SwapKitV2Service";
 import { executeAndSubmitV2Action } from "../swapkit/SwapKitV2ActionService";
 import { startSwapKitV2Tracking } from "../swapkit/SwapKitV2PendingTracker";
-import { fundArkadeIntentsOutpoint } from "./ArkadeSendService";
+import { fundArkadeIntentsOutpoint, planArkadeSendChange } from "./ArkadeSendService";
 import { runLightningFundingGuards } from "./lightningFundingGuards";
 import { arkadeServerConfigService } from "./ArkadeServerConfigService";
 import { EventBus } from "../events/AppEventBusService";
@@ -426,6 +426,37 @@ export async function payArkadeLightningInvoice(_params: {
         `insufficient offchain funds: available=${availableSats || 0} required=${fundingAmountSats} boarding=${boardingSats || 0}`,
       );
     }
+    // The lockup is funded by its own `wallet.send`, not `sendArkadeToArk`, so
+    // it needs the same change check: a funding amount whose change lands
+    // under the node's floor is refused by the server after the passkey
+    // (issue #1595: 3,970 out of one 4,139-sat coin). Grow the inputs when one
+    // more coin fixes it, otherwise stop here, before the record, the intent
+    // and the approval exist.
+    const fundingSplit = await planArkadeSendChange(fundingAmountSats);
+    logArkadeWalletSignTrace("ln_pay_change_split", {
+      status: fundingSplit.kind,
+      funding_sats: fundingAmountSats,
+      selected_coins: fundingSplit.kind === "grow" ? fundingSplit.coins.length : "wallet",
+      ...(fundingSplit.kind === "refuse" ? { max_amount_sats: fundingSplit.maxSendableSats } : {}),
+      side_effect: "none",
+      expected_next:
+        fundingSplit.kind === "refuse" ? "surface_max_before_passkey" : "persist_send_record",
+    });
+    if (fundingSplit.kind === "refuse") {
+      if (requestKind === "lnurl") {
+        throw new ArkadeMaxSendAmountError(
+          maxFundableAmountSats({
+            availableSats: fundingSplit.maxSendableSats,
+            requestedSats: invoiceSats,
+            fundingSats: fundingAmountSats,
+          }),
+        );
+      }
+      throw new Error(
+        `ln_pay_change_below_floor funding=${fundingAmountSats} max_funding=${fundingSplit.maxSendableSats}`,
+      );
+    }
+    const fundingSelectedVtxos = fundingSplit.kind === "grow" ? fundingSplit.coins : null;
     // Persist BEFORE funding, never after. Once the wallet sends, the lockup is
     // the user's money in a covenant, and `rfqId` is the only handle anything
     // has for looking it up again — a record written afterwards would be
@@ -541,10 +572,17 @@ export async function payArkadeLightningInvoice(_params: {
                   // Again with nothing awaited before the send: the hooks above
                   // can take long enough to cross the deadline themselves.
                   ctx.assertBeforeDeadline?.();
-                  return wallet.send({
-                    address: fundingAddress,
-                    amount: fundingAmountSats,
-                  });
+                  // Named inputs only when the split had to grow the pick to
+                  // clear the floor; otherwise the wallet chooses as before.
+                  return fundingSelectedVtxos
+                    ? wallet.send({
+                        recipients: [{ address: fundingAddress, amount: fundingAmountSats }],
+                        selectedVtxos: fundingSelectedVtxos,
+                      })
+                    : wallet.send({
+                        address: fundingAddress,
+                        amount: fundingAmountSats,
+                      });
                 },
                 {
                   opId: payTrace.opId,

@@ -41,7 +41,6 @@ export const tr = {
       walletUnavailable: "Hiçbir cüzdan açılmadı. QR kodunu tara veya ödeme bilgilerini kopyala.",
       sendExactly: "Tam olarak %{amount} gönder",
       continue: "Devam et",
-      openInApp: "Nuri'de aç",
       orderWaiting: "Ödemen bekleniyor",
       orderSettled: "Ödeme alındı",
       anyTokenHint:
@@ -544,7 +543,6 @@ export const tr = {
     },
     HomeScreen: {
       greeting: "Selam %{name}!",
-      greetingFallback: "dostum",
       scanA11yLabel: "QR kodu tara",
       details: "Ayrıntılar",
       detailsBank: "Banka bilgileri",

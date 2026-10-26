@@ -37,7 +37,6 @@ export const en = {
       walletUnavailable: "No wallet opened. Scan the QR or copy the payment details.",
       sendExactly: "Send exactly %{amount}",
       continue: "Continue",
-      openInApp: "Open in Nuri",
       orderWaiting: "Waiting for your payment",
       orderSettled: "Payment received",
       anyTokenHint:
@@ -549,7 +548,6 @@ export const en = {
     },
     HomeScreen: {
       greeting: "Welcome %{name}!",
-      greetingFallback: "there",
       scanA11yLabel: "Scan QR code",
       details: "Details",
       detailsBank: "Bank details",

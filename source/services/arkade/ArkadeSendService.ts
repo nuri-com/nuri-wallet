@@ -33,6 +33,7 @@ import {
   rememberSettlementMinExpiryGapMs,
 } from "./internal/vtxoSettleability";
 import { grossUpOffboardSats } from "./internal/offboardGrossUp";
+import { planSendChangeSplit } from "./internal/sendChangeSplit";
 import {
   assertMeetsVtxoMinimum,
   requireVtxoMinimumSats,
@@ -56,6 +57,43 @@ function spendableVtxoBalance(vtxosRaw: unknown): number {
     const value = Number(coin.value);
     return Number.isFinite(value) && value > 0 ? sum + value : sum;
   }, 0);
+}
+
+type ArkadeSendCoin = Awaited<
+  ReturnType<Awaited<ReturnType<typeof getOrCreateWallet>>["getSpendableVtxos"]>
+>[number];
+
+/**
+ * The coins the wallet itself would spend for an ark send, read the same way
+ * `wallet.send` reads them, or null when the wallet cannot answer.
+ *
+ * Null is "no opinion": a wallet that cannot be read must never turn a send
+ * into a refusal.
+ */
+export async function readSendChangeCoins(): Promise<ArkadeSendCoin[] | null> {
+  try {
+    return await paymentTimed("arkade send split", async () => {
+      const wallet = await getOrCreateWallet();
+      return await wallet.getSpendableVtxos({ withRecoverable: false });
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The change split for an offchain send of `amountSats` that is not routed
+ * through `sendArkadeToArk` (the Lightning lockup funding calls `wallet.send`
+ * itself). Same planner, same coins, same node floor; an unreadable node or
+ * wallet answers `auto` and the send keeps its previous behaviour.
+ */
+export async function planArkadeSendChange(amountSats: number) {
+  const nodeInfo = await getRecentArkNodeInfo(
+    arkadeServerConfigService.getArkadeNodeUrl().replace(/\/+$/, ""),
+  ).catch((): null => null);
+  const minVtxoSats = vtxoMinimumSatsOrNull(nodeInfo);
+  if (minVtxoSats === null) return { kind: "auto" as const };
+  return planSendChangeSplit(await readSendChangeCoins(), amountSats, minVtxoSats);
 }
 
 // Server-declared onchain-output floor. An offboard creates a real onchain UTXO,
@@ -518,6 +556,39 @@ export async function sendArkadeToArk(params: {
       sats,
       expected_next: "wallet_send_requests_signatures",
     });
+    // The amount is only half of what arkd checks. Every output has to clear
+    // the same floor and the tx has to conserve sats exactly, so a send whose
+    // change would land under it cannot exist at all: the server refuses it
+    // with `output #1 amount is lower than min vtxo amount` after the passkey
+    // has already been approved (issue #1595). Decide now, while nothing has
+    // been signed: spend one more VTXO to lift the change over the floor, or
+    // refuse with the largest amount that fits.
+    const split = planSendChangeSplit(await readSendChangeCoins(), sats, minVtxoSats);
+    const splitSelectedSats =
+      split.kind === "grow"
+        ? split.coins.reduce((sum, coin) => sum + Math.max(0, Math.trunc(Number(coin.value))), 0)
+        : 0;
+    logArkadeWalletSignTrace("send_ark_change_split", {
+      status: split.kind,
+      sats,
+      min_vtxo_sats: minVtxoSats,
+      selected_coins:
+        split.kind === "grow" ? split.coins.length : split.kind === "refuse" ? 0 : "wallet",
+      selected_sats:
+        split.kind === "grow" ? splitSelectedSats : split.kind === "refuse" ? 0 : "wallet",
+      // Output #0 is the recipient; the wallet's change is the only other
+      // output an ark send generates.
+      change_sats:
+        split.kind === "grow" ? splitSelectedSats - sats : split.kind === "refuse" ? 0 : "wallet",
+      ...(split.kind === "refuse" ? { max_amount_sats: split.maxSendableSats } : {}),
+      side_effect: "none",
+      expected_next:
+        split.kind === "refuse" ? "ui_sets_max_amount_before_passkey" : "approval_armed",
+    });
+    if (split.kind === "refuse") {
+      throw new ArkadeMaxSendAmountError(split.maxSendableSats);
+    }
+    const selectedVtxos = split.kind === "grow" ? split.coins : null;
     const decoded = ArkAddress.decode(address);
     if (decoded.hrp !== wallet.network.hrp) {
       throw new Error(
@@ -563,12 +634,20 @@ export async function sendArkadeToArk(params: {
               paymentTimed("SDK loads spendable coins", () => loadCoins.apply(wallet, args));
           }
           try {
+            // `selectedVtxos` only when the split had to grow the wallet's own
+            // pick to clear the node's floor: every other send keeps letting
+            // the SDK choose.
             return await paymentTimed("arkade send (build, passkey, submit)", () =>
               withCoinSyncAhead(wallet, () =>
-                wallet.send({
-                  address,
-                  amount: sats,
-                }),
+                selectedVtxos
+                  ? wallet.send({
+                      recipients: [{ address, amount: sats }],
+                      selectedVtxos,
+                    })
+                  : wallet.send({
+                      address,
+                      amount: sats,
+                    }),
               ),
             );
           } finally {

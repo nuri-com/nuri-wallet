@@ -49,7 +49,7 @@ import {
 } from "../../lib/pay/payTarget";
 import { parsePayLink } from "../../lib/pay/payLinkPath";
 import { type PayIntent } from "../../lib/pay/payIntent";
-import { openPayIntentInApp, usePayLinkAppHandoff } from "../../lib/pay/payAppHandoff";
+import { usePayLinkAppHandoff } from "../../lib/pay/payAppHandoff";
 import { PAY_WALLET_AVAILABLE } from "../../lib/pay/payWallet";
 import { type PayRecipient, resolvePayRecipient } from "../../lib/pay/resolvePayRecipient";
 import { useKeypadFit } from "../../lib/useKeypadFit";
@@ -286,11 +286,6 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
   // The amount form: the keypad scrolls with the content so a short screen can
   // compact it, and the CTA stays in the footer.
   const showForm = Boolean(recipient && rail && rail.kind !== "wallet-swap" && !target && !overlay);
-  // The same handoff as a real action: a phone browser only launches the app
-  // from a gesture (Android Chrome never does it from a page-started
-  // navigation), so the page carries a button that does exactly what the
-  // automatic attempt hoped to do, with the same recipient, currency and figure.
-  const appHandoff = Boolean(recipient) && !desktop && !target && !overlay;
   // Desktop types the figure; phones tap it on the keypad. Suspended while the
   // source chooser is open: that sheet owns Enter and the digits.
   usePayAmountKeyboard({
@@ -316,9 +311,13 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
           inside with no bounded height — on the PWA that renders the header and
           nothing else. */}
       <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
+        {/* The top bar holds one thing: the way back from a payment target. A DS
+            Topbar is a fixed-height block, so rendering it with nothing inside
+            parks 72px of empty bar over the content and pushes the From card
+            under it. The Header stays for the safe-area inset alone. */}
         <Header safeAreaTop chrome="canvas">
-          <Topbar surface="transparent" layout="fluid">
-            {target || stalled ? (
+          {target || stalled ? (
+            <Topbar surface="transparent" layout="fluid">
               <TopbarTrailing>
                 <IconButton
                   icon="chevron-left"
@@ -327,8 +326,8 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
                   onPress={reset}
                 />
               </TopbarTrailing>
-            ) : null}
-          </Topbar>
+            </Topbar>
+          ) : null}
         </Header>
 
         <Scroll onLayout={keypadFit.onViewportLayout}>
@@ -441,7 +440,7 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
           </View>
         </Scroll>
 
-        {showForm || appHandoff ? (
+        {showForm ? (
           <Footer
             safeAreaBottom
             direction="column"
@@ -450,32 +449,17 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
             paddingX="lg"
             paddingBottom="sm"
           >
-            {/* Android Chrome only launches the app from a real gesture, so the
-                automatic attempt alone would leave a phone payer on this page
-                when the app is installed. This is that gesture. */}
-            {appHandoff ? (
-              <Button
-                size="lg"
-                variant="soft"
-                onPress={() => openPayIntentInApp(appIntent)}
-                accessibilityLabel={t(`${K}.openInApp`)}
-              >
-                <ButtonText>{t(`${K}.openInApp`)}</ButtonText>
-              </Button>
-            ) : null}
-            {showForm ? (
-              <Button
-                size="lg"
-                variant="solid"
-                accent="lilac"
-                disabled={!canSubmit || busy}
-                onPress={submit}
-                accessibilityLabel={t(`${K}.continue`)}
-              >
-                <ButtonIcon name="chevron-right" />
-                <ButtonText>{t(`${K}.continue`)}</ButtonText>
-              </Button>
-            ) : null}
+            <Button
+              size="lg"
+              variant="solid"
+              accent="lilac"
+              disabled={!canSubmit || busy}
+              onPress={submit}
+              accessibilityLabel={t(`${K}.continue`)}
+            >
+              <ButtonIcon name="chevron-right" />
+              <ButtonText>{t(`${K}.continue`)}</ButtonText>
+            </Button>
           </Footer>
         ) : null}
       </View>

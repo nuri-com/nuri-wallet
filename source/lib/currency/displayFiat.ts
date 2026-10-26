@@ -105,14 +105,17 @@ export function formatFiat(
 
 /**
  * A held balance's list line: its own currency, plus "≈ <home>" when the home
- * currency differs and the conversion is known.
+ * currency differs and the conversion is known. An unread balance is the
+ * unknown mark, never a 0: only a balance nobody has read is unknown, and a
+ * real zero still prints as zero.
  */
 export function heldWithHome(
-  value: number,
+  value: number | null,
   held: FiatCode,
   home: FiatCode,
   rates: FiatRates | null | undefined,
 ): string {
+  if (value === null || !Number.isFinite(value)) return UNKNOWN_FIGURE;
   const own = formatFiat(value, held, { grouped: false });
   if (held === home) return own;
   const converted = convertFiat(value, held, home, rates);

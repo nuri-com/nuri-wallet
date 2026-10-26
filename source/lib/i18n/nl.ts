@@ -42,7 +42,6 @@ export const nl = {
       walletUnavailable: "Er is geen wallet geopend. Scan de QR-code of kopieer de betaalgegevens.",
       sendExactly: "Stuur precies %{amount}",
       continue: "Doorgaan",
-      openInApp: "Openen in Nuri",
       orderWaiting: "Wachten op je betaling",
       orderSettled: "Betaling ontvangen",
       anyTokenHint:
@@ -552,7 +551,6 @@ export const nl = {
     },
     HomeScreen: {
       greeting: "Welkom %{name}!",
-      greetingFallback: "terug",
       scanA11yLabel: "QR-code scannen",
       details: "Details",
       detailsBank: "Bankgegevens",

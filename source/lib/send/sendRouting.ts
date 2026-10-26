@@ -215,6 +215,20 @@ export function isSendableDestination(destination: Destination): boolean {
 }
 
 /**
+ * The balances Send on a home card prefers, in order. Only a preference: the
+ * amount screen's From row still offers every balance that can pay. Bitcoin
+ * starts on Lightning, the cheaper and faster one, and falls back to Onchain
+ * when Lightning is empty; Cash starts on the main currency.
+ */
+export function cardSendStart(
+  card: "wallet" | "onchain",
+  main: "wallet" | "dollar",
+): readonly SendBalance[] {
+  if (card === "onchain") return ["arkade", "onchain"];
+  return main === "dollar" ? ["dollar", "wallet"] : ["wallet", "dollar"];
+}
+
+/**
  * The balance the amount screen opens on: the card Send was pressed on when it
  * can pay, otherwise one that pays without a swap, otherwise any that can pay.
  * Within each tier a balance holding money comes first, in `order`.

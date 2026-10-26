@@ -39,7 +39,6 @@ export const de = {
         "Keine Wallet geöffnet. Scanne den QR-Code oder kopiere die Zahlungsdaten.",
       sendExactly: "Genau %{amount} senden",
       continue: "Weiter",
-      openInApp: "In Nuri öffnen",
       orderWaiting: "Warten auf deine Zahlung",
       orderSettled: "Zahlung erhalten",
       anyTokenHint:
@@ -562,7 +561,6 @@ export const de = {
     },
     HomeScreen: {
       greeting: "Willkommen %{name}!",
-      greetingFallback: "zur\u00fcck",
       scanA11yLabel: "QR-Code scannen",
       details: "Details",
       detailsBank: "Bankdaten",

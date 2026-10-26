@@ -42,7 +42,6 @@ export const ptBR = {
       walletUnavailable: "Nenhuma carteira abriu. Escaneie o QR ou copie os dados do pagamento.",
       sendExactly: "Envie exatamente %{amount}",
       continue: "Continuar",
-      openInApp: "Abrir no Nuri",
       orderWaiting: "Aguardando seu pagamento",
       orderSettled: "Pagamento recebido",
       anyTokenHint:
@@ -551,7 +550,6 @@ export const ptBR = {
     },
     HomeScreen: {
       greeting: "Bem-vindo %{name}!",
-      greetingFallback: "de volta",
       scanA11yLabel: "Escanear QR code",
       details: "Detalhes",
       detailsBank: "Dados bancários",

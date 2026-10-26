@@ -37,7 +37,6 @@ export const sw = {
       walletUnavailable: "Hakuna pochi iliyofunguka. Changanua QR au nakili maelezo ya malipo.",
       sendExactly: "Tuma %{amount} kamili",
       continue: "Endelea",
-      openInApp: "Fungua katika Nuri",
       orderWaiting: "Tunasubiri malipo yako",
       orderSettled: "Malipo yamepokelewa",
       anyTokenHint:
@@ -551,7 +550,6 @@ export const sw = {
     },
     HomeScreen: {
       greeting: "Karibu %{name}!",
-      greetingFallback: "rafiki",
       scanA11yLabel: "Changanua msimbo wa QR",
       details: "Maelezo",
       detailsBank: "Maelezo ya benki",

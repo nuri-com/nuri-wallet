@@ -43,7 +43,6 @@ export const pl = {
         "Nie otworzył się żaden portfel. Zeskanuj kod QR albo skopiuj dane płatności.",
       sendExactly: "Wyślij dokładnie %{amount}",
       continue: "Dalej",
-      openInApp: "Otwórz w Nuri",
       orderWaiting: "Czekamy na twoją płatność",
       orderSettled: "Płatność otrzymana",
       anyTokenHint:
@@ -554,7 +553,6 @@ export const pl = {
     },
     HomeScreen: {
       greeting: "Witaj %{name}!",
-      greetingFallback: "ponownie",
       scanA11yLabel: "Skanuj kod QR",
       details: "Szczegóły",
       detailsBank: "Dane bankowe",

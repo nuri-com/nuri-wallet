@@ -42,7 +42,6 @@ export const ptPT = {
       walletUnavailable: "Nenhuma carteira abriu. Lê o QR ou copia os dados de pagamento.",
       sendExactly: "Envia exatamente %{amount}",
       continue: "Continuar",
-      openInApp: "Abrir na Nuri",
       orderWaiting: "A aguardar o teu pagamento",
       orderSettled: "Pagamento recebido",
       anyTokenHint:
@@ -554,7 +553,6 @@ export const ptPT = {
     },
     HomeScreen: {
       greeting: "Bem-vindo %{name}!",
-      greetingFallback: "de volta",
       scanA11yLabel: "Ler código QR",
       details: "Detalhes",
       detailsBank: "Dados bancários",

@@ -80,9 +80,14 @@ import { isArkadeVtxoTooFreshError } from "../../../services/arkade/internal/set
 import { getArkadeWalletSummary } from "../../../services/arkade/ArkadeWalletService";
 import {
   getArkadeArkSendMinimumSats,
+  readSendChangeCoins,
   getArkadeOnchainSendMinimumSats,
 } from "../../../services/arkade/ArkadeSendService";
-import { isBelowVtxoMinimum } from "../../../services/arkade/internal/sendMinimums";
+import { planSendChangeSplit } from "../../../services/arkade/internal/sendChangeSplit";
+import {
+  arkadeSendableSats as sendableFromArkadeBalance,
+  isBelowVtxoMinimum,
+} from "../../../services/arkade/internal/sendMinimums";
 import { t } from "../../../lib/i18n";
 import { useCurrencyToggle, useKeypadEntry } from "../../../lib/useCurrencyToggle";
 import { useLiveBtcPrice } from "../../../lib/bitcoin/useLiveBtcPrice";
@@ -232,6 +237,11 @@ export default function BitcoinSendScreen({
   // The node's floor for an ark-to-ark send (a new VTXO), read live. Null until
   // the node answers; the send re-reads it and refuses on its own.
   const [arkMinSats, setArkMinSats] = useState<number | null>(null);
+  // The Arkade coins a send would spend, read like the send reads them, so the
+  // sheet can tell an amount whose change the server refuses from one it takes.
+  const [arkadeSendCoins, setArkadeSendCoins] = useState<Awaited<
+    ReturnType<typeof readSendChangeCoins>
+  > | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [localAmountLocked, setLocalAmountLocked] = useState(false);
@@ -672,6 +682,12 @@ export default function BitcoinSendScreen({
         if (mounted && min !== null) setArkMinSats(min);
       })
       .catch(() => {});
+    setArkadeSendCoins(null);
+    if (effectiveSendSource !== "onchain") {
+      void readSendChangeCoins().then((coins) => {
+        if (mounted) setArkadeSendCoins(coins);
+      });
+    }
     return () => {
       mounted = false;
     };
@@ -827,10 +843,21 @@ export default function BitcoinSendScreen({
       (balanceSats ?? 0) >= LIGHTNING_TO_BITCOIN_MIN_SATS ? (balanceSats ?? 0) : 0;
     return Math.max(0, Math.max(viaOffboard, viaCorridor) - estimatedFeeSats);
   }, [balanceSats, settleableSats, isRecipientBitcoinAddress, estimatedFeeSats]);
+  // The Ark server refuses any output under its `vtxoMinAmount`, the change
+  // included. The figure SHOWN for an Arkade balance is therefore the balance
+  // less that floor: every amount up to it can go out (the send adds a coin
+  // when the change would be too small). It is a promise, not a ceiling: what
+  // a given amount can actually do is decided from the coins below.
+  const arkadeChangeReserveSats =
+    effectiveSendSource !== "onchain" && arkMinSats !== null ? arkMinSats : 0;
   const availableSatsDisplay = useMemo(() => {
     if (maxSpendableSats === null) return null;
-    return Math.max(0, Math.floor(maxSpendableSats));
-  }, [maxSpendableSats]);
+    const sendable =
+      arkadeChangeReserveSats > 0 && !isRecipientBitcoinAddress
+        ? sendableFromArkadeBalance(maxSpendableSats, arkadeChangeReserveSats)
+        : maxSpendableSats;
+    return sendable === null ? null : Math.max(0, Math.floor(sendable));
+  }, [maxSpendableSats, arkadeChangeReserveSats, isRecipientBitcoinAddress]);
   // Current sats — derived from active input mode
   const currentSats = useMemo(() => {
     return satsFromAmountEntry(isSatsMode, satsDigits, fiatDigits, fiatPerBtc);
@@ -906,10 +933,30 @@ export default function BitcoinSendScreen({
     isRecipientBitcoinAddress,
     sendsOverCorridor,
   ]);
+  // The largest amount this wallet's own coins can send when `sats` would leave
+  // change under the node's floor, or null when `sats` can go out. Planned
+  // from the same coins and in the same order as the send itself, so an exact
+  // spend (1,000 out of a 1,000 and a 200 coin) is never refused, and the
+  // single-coin case (3,970 out of 4,139) is refused here instead of after
+  // the passkey. Unknown coins or floor decide nothing: the send re-checks.
+  const changeRefusalMaxFor = useCallback(
+    (sats: number): number | null => {
+      if (effectiveSendSource === "onchain" || isRecipientBitcoinAddress) return null;
+      if (arkMinSats === null || arkadeSendCoins === null || !(sats > 0)) return null;
+      const plan = planSendChangeSplit(arkadeSendCoins, sats, arkMinSats);
+      return plan.kind === "refuse" ? plan.maxSendableSats : null;
+    },
+    [effectiveSendSource, isRecipientBitcoinAddress, arkMinSats, arkadeSendCoins],
+  );
+  const changeRefusalMaxSats = useMemo(
+    () => changeRefusalMaxFor(spendSats),
+    [changeRefusalMaxFor, spendSats],
+  );
   const exceedsBalance = useMemo(() => {
+    if (changeRefusalMaxSats !== null) return true;
     if (maxSpendableSats == null) return false;
     return spendSats > maxSpendableSats;
-  }, [spendSats, maxSpendableSats]);
+  }, [spendSats, maxSpendableSats, changeRefusalMaxSats]);
   // A Bitcoin send BELOW the corridor floor runs on the offboard, which can
   // only spend settled vtxos. The cap above is the larger of the two rails, so
   // this case has to be named separately or the screen accepts an amount the
@@ -1144,14 +1191,18 @@ export default function BitcoinSendScreen({
       }
       if (exceedsBalance) {
         setErrorMessage(
-          isRecipientBitcoinAddress &&
-            balanceSats !== null &&
-            maxSpendableSats !== null &&
-            balanceSats > maxSpendableSats
+          changeRefusalMaxSats !== null
             ? t("screen.BitcoinSendScreen.maxAvailableLabel", {
-                amount: groupCount(maxSpendableSats),
+                amount: groupCount(changeRefusalMaxSats),
               })
-            : t("screen.BitcoinSendScreen.errorExceedsBalance"),
+            : isRecipientBitcoinAddress &&
+                balanceSats !== null &&
+                maxSpendableSats !== null &&
+                balanceSats > maxSpendableSats
+              ? t("screen.BitcoinSendScreen.maxAvailableLabel", {
+                  amount: groupCount(maxSpendableSats),
+                })
+              : t("screen.BitcoinSendScreen.errorExceedsBalance"),
         );
         return;
       }
@@ -1441,6 +1492,16 @@ export default function BitcoinSendScreen({
               fundingSatsFor: maxFundAmountSats,
             });
             if (mintRefusal) throw new Error(describeRemitRefusal(mintRefusal));
+            // Refused before the price is shown, not after the passkey: the
+            // lockup this invoice needs would leave change the server refuses.
+            const mintChangeMax = changeRefusalMaxFor(maxFundAmountSats(mintedSats));
+            if (mintChangeMax !== null) {
+              throw new Error(
+                t("screen.BitcoinSendScreen.maxAvailableLabel", {
+                  amount: groupCount(mintChangeMax),
+                }),
+              );
+            }
             setRemitPendingInvoice({
               invoice: created.invoice,
               sats: mintedSats,
@@ -1730,6 +1791,8 @@ export default function BitcoinSendScreen({
     currentSats,
     estimatedFeeSats,
     exceedsBalance,
+    changeRefusalMaxSats,
+    changeRefusalMaxFor,
     maxSpendableSats,
     balanceSats,
     isRecipientBitcoinAddress,
@@ -2066,6 +2129,13 @@ export default function BitcoinSendScreen({
         amount: groupCount(Math.max(0, settleableSats - estimatedFeeSats)),
       });
     }
+    // The sats are there, but this amount would leave change the Ark server
+    // refuses: name the figure that can go out, not an insufficient balance.
+    if (changeRefusalMaxSats !== null) {
+      return t("screen.BitcoinSendScreen.maxAvailableLabel", {
+        amount: groupCount(changeRefusalMaxSats),
+      });
+    }
     if (!exceedsBalance || maxSpendableSats === null) return null;
     if (isRecipientBitcoinAddress && balanceSats !== null && balanceSats > maxSpendableSats) {
       return t("screen.BitcoinSendScreen.maxAvailableLabel", {
@@ -2076,6 +2146,7 @@ export default function BitcoinSendScreen({
   }, [
     exceedsBalance,
     exceedsSettleableForOffboard,
+    changeRefusalMaxSats,
     maxSpendableSats,
     isRecipientBitcoinAddress,
     balanceSats,

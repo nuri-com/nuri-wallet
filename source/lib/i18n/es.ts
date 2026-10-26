@@ -83,7 +83,6 @@ export const es = {
         quoteExpired: "Ese precio caducó. Toca «Inténtalo de nuevo» para obtener uno nuevo.",
       },
       continue: "Continuar",
-      openInApp: "Abrir en Nuri",
       asset: {
         BTC: "Bitcoin",
         BTC_LN: "Lightning",
@@ -552,7 +551,6 @@ export const es = {
     },
     HomeScreen: {
       greeting: "¡Bienvenido, %{name}!",
-      greetingFallback: "hola",
       scanA11yLabel: "Escanear código QR",
       details: "Detalles",
       detailsBank: "Datos bancarios",

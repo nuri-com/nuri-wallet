@@ -139,6 +139,7 @@ import {
   SEND_BALANCES,
   type SendBalance,
   type SendRecipient,
+  cardSendStart,
   defaultSendBalance,
   isBitcoinBalance,
   isSwapRoute,
@@ -531,7 +532,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   const [swapFrom, setSwapFrom] = useState<RailKey | null>(null);
   const [swapTo, setSwapTo] = useState<RailKey | null>(null);
   // Add money fixes the card's end as the destination, Send as the source.
-  const [moveLock, setMoveLock] = useState<"from" | "to" | null>(null);
+  const [moveLock, setMoveLock] = useState<"to" | null>(null);
   // The two buttons: which card's Add money or Send list is open, which list
   // waits for a card to be picked (the total has none), and the user's own pay
   // page shown for "From another wallet".
@@ -717,10 +718,12 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   const satsGlyph = useCallback((n: number) => `${BTC_GLYPH} ${satsDigits(n)}`, []);
   const listSatsStr = useCallback((n: number) => `BTC ${ungroupedCount(n)}`, []);
   // A balance in the currency it is HELD in — the euro rails in EUR, the dollar
-  // rails in USD, whatever the display currency is.
-  const heldStr = useCallback((n: number, code: FiatCode) => formatFiat(n, code), []);
+  // rails in USD, whatever the display currency is. Null is the unknown mark, so
+  // a rail whose first read has not landed never prints a balance it does not
+  // have (#1430).
+  const heldStr = useCallback((n: number | null, code: FiatCode) => formatFiat(n, code), []);
   const heldGlyph = useCallback(
-    (n: number, code: FiatCode) => formatFiat(n, code, { style: "glyph" }),
+    (n: number | null, code: FiatCode) => formatFiat(n, code, { style: "glyph" }),
     [],
   );
   // A figure CONVERTED into the display currency. Null is unknown ("—").
@@ -730,7 +733,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     [home],
   );
   const heldList = useCallback(
-    (n: number, code: FiatCode) => heldWithHome(n, code, home, fxRates),
+    (n: number | null, code: FiatCode) => heldWithHome(n, code, home, fxRates),
     [home, fxRates],
   );
 
@@ -842,42 +845,47 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       ),
     );
     // Listed unconditionally: gating it on the first read made the row appear
-    // late and shove the rows under it down. Its figure comes from the cache
-    // until the chain answers.
-    const usd = usdcBalance ?? 0;
-    const usdSats = fiatToSats(usd, "USD");
+    // late and shove the rows under it down. Until the chain answers its figure
+    // is unknown, never a 0 the account does not hold (#1430).
+    const usdSats = usdcBalance === null ? null : fiatToSats(usdcBalance, "USD");
     list.push({
       key: "dollar",
       label: t("screen.HomeScreen.railDollar"),
-      available: usd,
+      available: usdcBalance,
       image: USD_FLAG,
       accent: "lilac",
-      amount: heldStr(usd, "USD"),
+      amount: heldStr(usdcBalance, "USD"),
       converted: satsOrUnknown(usdSats),
-      listFigure: heldList(usd, "USD"),
-      homeValue: toHome(usd, "USD"),
-      glyph: { amount: heldGlyph(usd, "USD"), converted: satsOrUnknown(usdSats, true) },
+      listFigure: heldList(usdcBalance, "USD"),
+      homeValue: usdcBalance === null ? null : toHome(usdcBalance, "USD"),
+      glyph: {
+        amount: heldGlyph(usdcBalance, "USD"),
+        converted: satsOrUnknown(usdSats, true),
+      },
     });
-    const walletSats = fiatToSats(walletEur, "EUR");
+    const walletSats = walletBalance === null ? null : fiatToSats(walletBalance, "EUR");
     list.push({
       key: "wallet",
       label: t("screen.HomeScreen.railEuro"),
-      available: walletEur,
+      available: walletBalance,
       image: EUR_FLAG,
       accent: "lilac",
-      amount: heldStr(walletEur, "EUR"),
+      amount: heldStr(walletBalance, "EUR"),
       converted: satsOrUnknown(walletSats),
-      listFigure: heldList(walletEur, "EUR"),
-      homeValue: toHome(walletEur, "EUR"),
-      glyph: { amount: heldGlyph(walletEur, "EUR"), converted: satsOrUnknown(walletSats, true) },
+      listFigure: heldList(walletBalance, "EUR"),
+      homeValue: walletBalance === null ? null : toHome(walletBalance, "EUR"),
+      glyph: {
+        amount: heldGlyph(walletBalance, "EUR"),
+        converted: satsOrUnknown(walletSats, true),
+      },
     });
     // One Wirex balance, spendable from either face. On the card it is the
     // whole account — both pockets summed in EUR — so the card states it in the
     // display currency (its screen itemises the pockets as held). The IBAN is a
     // euro account and states it in euros.
-    const wirexEur = cardActive ? cardBalance : 0;
-    const wirexHome = toHome(wirexEur, "EUR");
-    const wirexSats = fiatToSats(wirexEur, "EUR");
+    const wirexEur = cardActive ? cardBalance : wirex.loading ? null : 0;
+    const wirexHome = wirexEur === null ? null : toHome(wirexEur, "EUR");
+    const wirexSats = wirexEur === null ? null : fiatToSats(wirexEur, "EUR");
     const wirexConverted = satsOrUnknown(wirexSats);
     list.push({
       key: "visa",
@@ -913,7 +921,8 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     arkadeSats,
     onchainSats,
     cardActive,
-    walletEur,
+    wirex.loading,
+    walletBalance,
     cardBalance,
     usdcBalance,
     home,
@@ -940,11 +949,15 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     bitcoinHome: arkadeSats + onchainSats === 0 ? 0 : satsToHome(arkadeSats + onchainSats),
     walletHome: walletBalance === null ? null : toHome(walletBalance, "EUR"),
     dollarHome: usdcBalance === null ? null : toHome(usdcBalance, "USD"),
-    wirexHome: !wirex.isApproved
-      ? 0
-      : balances.cardBalanceEur === null
-        ? null
-        : toHome(balances.cardBalanceEur, "EUR"),
+    // The card's figure is unknown until the first status read lands: a pending
+    // read used to add a hard 0 to the total, so a funded account read 0,00 €.
+    wirexHome: wirex.loading
+      ? null
+      : !wirex.isApproved
+        ? 0
+        : balances.cardBalanceEur === null
+          ? null
+          : toHome(balances.cardBalanceEur, "EUR"),
   });
   const overviewLabels = {
     bitcoin: t("screen.HomeScreen.railBitcoin"),
@@ -2047,10 +2060,11 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     [rails, setMovePair, btcRail, cashRail],
   );
 
-  // The Move sheet with one end fixed: the card the user is adding money to
-  // (destination) or sending from (source).
+  // The Move sheet opened from a card: Add money fixes the card as the
+  // destination; Send only preselects the card as the source, and every
+  // source stays pickable (null).
   const openLockedMove = useCallback(
-    (from: RailKey, to: RailKey, lock: "from" | "to") => {
+    (from: RailKey, to: RailKey, lock: "to" | null) => {
       cancelMoveHandoff();
       moveHandoffTimerRef.current = setTimeout(() => {
         moveHandoffTimerRef.current = null;
@@ -2069,17 +2083,12 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   const openCardSheet = useCallback(
     (kind: "add" | "send", card: HomeCard) => {
       if (kind === "send" && (card === "wallet" || card === "onchain")) {
-        sendStartRef.current =
-          card === "wallet"
-            ? settleWallet === "dollar"
-              ? ["dollar", "wallet"]
-              : ["wallet", "dollar"]
-            : [btcRail, btcRail === "onchain" ? "arkade" : "onchain"];
+        sendStartRef.current = cardSendStart(card, settleWallet);
         return handOff(() => setRecipientSheetOpen(true));
       }
       setCardSheet({ kind, card });
     },
-    [settleWallet, btcRail, handOff],
+    [settleWallet, handOff],
   );
   const onCardButton = useCallback(
     (kind: "add" | "send") => {
@@ -2200,7 +2209,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // Send on Visa & Banking: Cash and Bitcoin go through the one send flow.
   const onSend = (key: string) => {
     setCardSheet(null);
-    if (key === "balances") return openLockedMove("visa", settleWallet, "from");
+    if (key === "balances") return openLockedMove("visa", settleWallet, null);
     if (key === "card") return void cardPayout.start();
     return wirexSend.startSepa();
   };
@@ -2414,11 +2423,17 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                 {/* Eight taps here open the debug hub — the gesture the Nuri
                     logo carried while the tabs existed. */}
                 <Pressable onPress={handleGreetingPress}>
-                  <Text size="lg" emphasis>
-                    {t("screen.HomeScreen.greeting", {
-                      name: username ?? t("screen.HomeScreen.greetingFallback"),
-                    })}
-                  </Text>
+                  {/* A name is stated only when one is known. Until the identity
+                      resolves the line keeps its height and states nothing:
+                      "Welcome there!" read as a healthy app greeting a person
+                      whose name had simply not loaded (#1430). */}
+                  {username ? (
+                    <Text size="lg" emphasis>
+                      {t("screen.HomeScreen.greeting", { name: username })}
+                    </Text>
+                  ) : (
+                    <RNView style={styles.greetingReserve} />
+                  )}
                 </Pressable>
               </TopbarTitle>
               {/* The scanner, on every card. */}
@@ -3065,7 +3080,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           setRecipientSheetOpen(false);
           const from = sendStartRef.current[0] ?? cashRail;
           sendStartRef.current = [];
-          openLockedMove(from, isBitcoinBalance(from) ? "wallet" : "arkade", "from");
+          openLockedMove(from, isBitcoinBalance(from) ? "wallet" : "arkade", null);
         }}
       />
 
@@ -3405,6 +3420,11 @@ const styles = StyleSheet.create({
     zIndex: 2,
     right: 20,
     bottom: 28,
+  },
+  // The greeting line, held while no name is known: the lg type is 22px at a
+  // 1.27 line height, so the header does not jump when the name arrives.
+  greetingReserve: {
+    height: 28,
   },
 });
 

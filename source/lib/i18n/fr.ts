@@ -43,7 +43,6 @@ export const fr = {
         "Aucun portefeuille ne s'est ouvert. Scanne le QR code ou copie les détails du paiement.",
       sendExactly: "Envoie exactement %{amount}",
       continue: "Continuer",
-      openInApp: "Ouvrir dans Nuri",
       orderWaiting: "En attente de ton paiement",
       orderSettled: "Paiement reçu",
       anyTokenHint:
@@ -553,7 +552,6 @@ export const fr = {
     },
     HomeScreen: {
       greeting: "Bienvenue %{name} !",
-      greetingFallback: "à toi",
       scanA11yLabel: "Scanner un QR code",
       details: "Détails",
       detailsBank: "Coordonnées bancaires",

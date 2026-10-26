@@ -32,22 +32,6 @@ export function payIntentWebUrl(intent: PayIntent, origin: string): string {
 }
 
 /**
- * Opens the link in the native app FROM A TAP.
- *
- * Android Chrome only launches an external app from a user gesture: a scheme
- * navigation the page starts on its own (the hidden frame below) is not
- * followed there, and iOS is heading the same way. So the page keeps a real
- * action for the payer to press (`Open in Nuri`), and the frame stays as the
- * best-effort automatic attempt for the browsers that still allow it.
- */
-export function openPayIntentInApp(
-  intent: PayIntent,
-  navigate: (url: string) => void = (url) => window.location.assign(url),
-): void {
-  navigate(payIntentDeepLink(intent));
-}
-
-/**
  * The settlement a link ACTUALLY asked for. A plain link asked for nothing, so
  * it carries no `to=` and the app keeps every rail the person has: sending the
  * euro default would turn it into an explicit euro request and drop a recipient

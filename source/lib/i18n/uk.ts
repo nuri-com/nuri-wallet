@@ -41,7 +41,6 @@ export const uk = {
       walletUnavailable: "Жоден гаманець не відкрився. Відскануй QR-код або скопіюй платіжні дані.",
       sendExactly: "Надішли рівно %{amount}",
       continue: "Продовжити",
-      openInApp: "Відкрити в Nuri",
       orderWaiting: "Очікуємо на твій платіж",
       orderSettled: "Платіж отримано",
       anyTokenHint:
@@ -547,7 +546,6 @@ export const uk = {
     },
     HomeScreen: {
       greeting: "Привіт, %{name}!",
-      greetingFallback: "друже",
       scanA11yLabel: "Сканувати QR-код",
       details: "Деталі",
       detailsBank: "Банківські реквізити",
