@@ -24,6 +24,13 @@
       same reason `img-src` stays off `https:`: every image the web build
       renders is a bundled asset, so an image URL cannot become the leak channel
       connect-src closes.
+      ENS name lookup needs ENS's own CCIP-Read batch gateway
+      (ccip-v3.ens.xyz): the Universal Resolver answers every
+      `<name>.nuri.eth` and every `.eth` lookup with an OffchainLookup
+      pointing there (lib/pay/resolvePayRecipient.ts), so without it the web
+      build cannot resolve a username at all and a send says "Could not look up
+      that name." The gateway's answer is never trusted on its own: the
+      resolver verifies its signature onchain.
       `frame-ancestors` is set at the nginx layer (meta ignores it) — see
       docs/server-infrastructure.md. `frame-src` allows the app's own scheme
       (`nuri:`), which is how the pay page hands a payable link to the native
@@ -62,6 +69,7 @@
           https://notifications.nuri.com
           https://remit.nuri.com
           https://*.g.alchemy.com
+          https://ccip-v3.ens.xyz
           https://mempool.space https://mutinynet.com
           https://blockstream.info
           https://api.boltz.exchange https://li.quest

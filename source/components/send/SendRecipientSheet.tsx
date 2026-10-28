@@ -246,30 +246,33 @@ export default function SendRecipientSheet({
         </Header>
 
         <Scroll>
-          <View
-            direction="column"
-            align="stretch"
-            gap="sm"
-            paddingX="lg"
-            paddingBottom="lg"
-            fill="grow"
-          >
-            <TextField
-              value={entry}
-              onChangeText={edit}
-              autoCapitalize="none"
-              accessibilityLabel={t("screen.SendRecipientSheet.recipientLabel")}
-            >
-              <TextFieldLabel>{t("screen.SendRecipientSheet.recipientLabel")}</TextFieldLabel>
-              <TextFieldButton accessibilityLabel={t("common.paste")} onPress={() => void paste()}>
-                {t("common.paste")}
-              </TextFieldButton>
-            </TextField>
-            {hint ? (
-              <Text size="md" muted align="center">
-                {hint}
-              </Text>
-            ) : null}
+          {/* No paddingX here: a List already insets its rows by 18dp (6 on the
+              List, 12 on the ListAction), so padding the column put the
+              suggestion rows on 36dp while the field and the CTA sat on 18dp.
+              Only the field and its hint need the gutter, same split as
+              PayoutAbroadSheet.tsx. */}
+          <View direction="column" align="stretch" gap="sm" paddingBottom="lg" fill="grow">
+            <View direction="column" align="stretch" gap="sm" paddingX="lg">
+              <TextField
+                value={entry}
+                onChangeText={edit}
+                autoCapitalize="none"
+                accessibilityLabel={t("screen.SendRecipientSheet.recipientLabel")}
+              >
+                <TextFieldLabel>{t("screen.SendRecipientSheet.recipientLabel")}</TextFieldLabel>
+                <TextFieldButton
+                  accessibilityLabel={t("common.paste")}
+                  onPress={() => void paste()}
+                >
+                  {t("common.paste")}
+                </TextFieldButton>
+              </TextField>
+              {hint ? (
+                <Text size="md" muted align="center">
+                  {hint}
+                </Text>
+              ) : null}
+            </View>
             {/* Every other way to send, as rows above the contacts. The abroad
                 row is a bank or mobile money account, paid over Bitcoin or, in
                 Tanzania, from Euro or Dollar. */}
