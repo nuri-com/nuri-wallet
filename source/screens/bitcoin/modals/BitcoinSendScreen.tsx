@@ -8,7 +8,6 @@ import {
   ButtonText,
   Header,
   IconButton,
-  NuriScope,
   Scroll,
   Text,
   TextField,
@@ -25,6 +24,7 @@ import AddressBookSuggestions, {
 } from "../../../components/AddressBookSuggestions";
 import { type Destination, savedContactFor } from "../../../lib/addressBook/contact";
 import SendRecipientContact from "../../../components/SendRecipientContact";
+import SendAmountCard from "../../../components/send/SendAmountCard";
 import SendFromRow from "../../../components/send/SendFromRow";
 import AmountKeypad from "../../../components/AmountKeypad";
 import AmountDisplay, {
@@ -2438,69 +2438,58 @@ export default function BitcoinSendScreen({
             ) : (
               <>
                 {/* The Move sheet's card: which balance pays and the amount. */}
-                <NuriScope mode="dark">
-                  <View
-                    chrome="subtle"
-                    radius="lg"
-                    paddingX="lg"
-                    paddingY="md"
-                    direction="column"
-                    align="stretch"
-                    gap="sm"
-                    fill="grow"
-                  >
-                    <SendFromRow
-                      options={balanceOptions}
-                      current={effectiveSendSource}
-                      fallback={{
-                        label:
-                          availableSatsDisplay == null
-                            ? t(
-                                effectiveSendSource === "onchain"
-                                  ? "screen.HomeScreen.railBitcoin"
-                                  : "screen.HomeScreen.railBitcoinLightning",
-                              )
-                            : `${t(
-                                effectiveSendSource === "onchain"
-                                  ? "screen.HomeScreen.railBitcoin"
-                                  : "screen.HomeScreen.railBitcoinLightning",
-                              )} (${groupCount(availableSatsDisplay)})`,
-                        image: BTC_LOGO,
-                      }}
-                      disabled={busy || sendFailed}
-                      onPick={onPickBalance}
-                    />
-                    <AmountDisplay
-                      primaryAmount={primaryAmount}
-                      primaryImage={primaryImage}
-                      primaryUnit={primaryUnit}
-                      secondary={{
-                        amount: secondaryAmount,
-                        image: secondaryImage,
-                        unit: secondaryUnit,
-                      }}
-                      onToggle={toggleInputMode}
-                      // A BOLT11's amount is protocol-fixed and lives in the sats
-                      // field alone. Switching to fiat left the screen and the CTA
-                      // reading zero while the service still paid the invoice's
-                      // real amount — two numbers on one screen, the true one
-                      // invisible. Nothing to switch between, so nothing to press.
-                      // A failed send holds its amount and reason until Try again.
-                      toggleDisabled={
-                        invoiceLockedAmountRef.current || isRecipientRemitPhone || sendFailed
-                      }
-                      message={
-                        errorMessage
-                          ? { text: errorMessage, tone: "alert" }
-                          : exceedsBalance
-                            ? { text: overBalanceMessage, tone: "alert" }
-                            : infoMessage
-                              ? { text: infoMessage, tone: "info" }
-                              : null
-                      }
-                    />
-                  </View>
-                </NuriScope>
+                <SendAmountCard>
+                  <SendFromRow
+                    options={balanceOptions}
+                    current={effectiveSendSource}
+                    fallback={{
+                      label:
+                        availableSatsDisplay == null
+                          ? t(
+                              effectiveSendSource === "onchain"
+                                ? "screen.HomeScreen.railBitcoin"
+                                : "screen.HomeScreen.railBitcoinLightning",
+                            )
+                          : `${t(
+                              effectiveSendSource === "onchain"
+                                ? "screen.HomeScreen.railBitcoin"
+                                : "screen.HomeScreen.railBitcoinLightning",
+                            )} (${groupCount(availableSatsDisplay)})`,
+                      image: BTC_LOGO,
+                    }}
+                    disabled={busy || sendFailed}
+                    onPick={onPickBalance}
+                  />
+                  <AmountDisplay
+                    primaryAmount={primaryAmount}
+                    primaryImage={primaryImage}
+                    primaryUnit={primaryUnit}
+                    secondary={{
+                      amount: secondaryAmount,
+                      image: secondaryImage,
+                      unit: secondaryUnit,
+                    }}
+                    onToggle={toggleInputMode}
+                    // A BOLT11's amount is protocol-fixed and lives in the sats
+                    // field alone. Switching to fiat left the screen and the CTA
+                    // reading zero while the service still paid the invoice's
+                    // real amount: two numbers on one screen, the true one
+                    // invisible. Nothing to switch between, so nothing to press.
+                    // A failed send holds its amount and reason until Try again.
+                    toggleDisabled={
+                      invoiceLockedAmountRef.current || isRecipientRemitPhone || sendFailed
+                    }
+                    message={
+                      errorMessage
+                        ? { text: errorMessage, tone: "alert" }
+                        : exceedsBalance
+                          ? { text: overBalanceMessage, tone: "alert" }
+                          : infoMessage
+                            ? { text: infoMessage, tone: "info" }
+                            : null
+                    }
+                  />
+                </SendAmountCard>
 
                 {amountEditable ? (
                   <AmountKeypad

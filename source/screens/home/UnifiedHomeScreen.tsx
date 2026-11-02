@@ -157,6 +157,7 @@ import { useWirexSendFlow } from "../wirex/hooks/useWirexSendFlow";
 import { ADD_PAYOUT_CARD_KEY, useCardPayoutFlow } from "../wirex/hooks/useCardPayoutFlow";
 import WirexAppleWalletModal from "../wirex/modals/WirexAppleWalletModal";
 import type { WirexBankCounterparty } from "../../lib/wirex/cardTransactions";
+import BankRecipientSheet from "../../components/BankRecipientSheet";
 import SepaRecipientModal from "../wirex/modals/SepaRecipientModal";
 import SepaAmountConfirmationModal from "../wirex/modals/SepaAmountConfirmationModal";
 import CardPayoutAddModal from "../wirex/modals/CardPayoutAddModal";
@@ -2830,6 +2831,13 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         }}
       />
 
+      <BankRecipientSheet
+        visible={wirexSend.pickVisible}
+        onClose={wirexSend.closePick}
+        onPick={(suggestion) => void wirexSend.pickSaved(suggestion)}
+        onNew={wirexSend.pickNew}
+      />
+
       <SepaRecipientModal
         visible={wirexSend.recipientVisible}
         onClose={wirexSend.closeRecipient}
@@ -2852,6 +2860,8 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         reference={wirexSend.recipient?.reference}
         onSuccess={() => {
           // The status pill reports the transfer (raised by the sheet).
+          // Who it went to is saved once it went out (nothing when already saved).
+          wirexSend.saveRecipientAfterSend();
           wirexSend.setAmountVisible(false);
           void wirex.silentRefetch();
         }}

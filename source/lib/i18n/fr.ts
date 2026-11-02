@@ -49,7 +49,6 @@ export const fr = {
         "Envoie n'importe quel token vérifié sur Ethereum, Arbitrum, Optimism, Polygon ou Gnosis à cette adresse. Il est converti en euros ou en dollars à l'arrivée.",
       wallet: {
         connect: "Connecter un portefeuille",
-        hint: "Paie avec n'importe quel token de ton portefeuille : extension de navigateur, portefeuille mobile (WalletConnect) ou portefeuille matériel.",
         unavailable:
           "Le paiement par portefeuille n'est pas encore disponible sur cette page. Utilise une autre option ci-dessus.",
         connected: "Connecté : %{account}",
@@ -466,6 +465,7 @@ export const fr = {
     },
     SepaRecipientModal: {
       headerTitle: "Virement bancaire",
+      newRecipient: "Nouveau bénéficiaire",
       continueLabel: "Continuer",
       tabPersonal: "Particulier",
       tabCompany: "Entreprise",

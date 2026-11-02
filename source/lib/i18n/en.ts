@@ -43,7 +43,6 @@ export const en = {
         "Send any verified token on Ethereum, Arbitrum, Optimism, Polygon or Gnosis to this address. It is converted to euros or dollars on arrival.",
       wallet: {
         connect: "Connect wallet",
-        hint: "Pay with any token from your wallet: browser extension, phone wallet (WalletConnect) or hardware wallet.",
         unavailable:
           "Wallet payments are not available on this page yet. Use another option above.",
         connected: "Connected %{account}",
@@ -460,6 +459,7 @@ export const en = {
     },
     SepaRecipientModal: {
       headerTitle: "Bank Transfer",
+      newRecipient: "New recipient",
       continueLabel: "Continue",
       tabPersonal: "Personal",
       tabCompany: "Company",

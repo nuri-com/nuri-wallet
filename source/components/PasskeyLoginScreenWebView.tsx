@@ -37,14 +37,16 @@ type LoginColors = { pillBg: string; pillFg: string; linkFg: string };
  * The page draws the same landing actions the web and Android screens draw with
  * the DS (a large solid Button, the restore link, the shared AppFooter), so it
  * uses the DS numbers: the large button is 60 tall (DS size xl) with 24 side
- * padding (space xl), stacked 6 apart (space sm) in an 18-wide bar (space lg),
+ * padding (space xl), stacked 12 apart (space md) in an 18-wide bar (space lg),
  * and its text is the DS md emphasis type. Only the passkey ceremony needs this
  * page (WKWebView requires the tap inside it); how it looks must not differ.
  */
 export const LANDING_BUTTON_HEIGHT = 60;
 export const LANDING_BUTTON_PADDING_X = 24;
-export const LANDING_STACK_GAP = 6;
+export const LANDING_STACK_GAP = 12;
 export const LANDING_BAR_PADDING_X = 18;
+/** The restore link's own tap padding (space sm), as the native Pressable has. */
+export const LANDING_LINK_PADDING_Y = 6;
 
 type LoginType = {
   fontSize: number;
@@ -73,7 +75,7 @@ const buildHtml = (
       button { width:100%; padding:0 ${LANDING_BUTTON_PADDING_X}px; min-height:${LANDING_BUTTON_HEIGHT}px; border-radius:9999px; border:none; margin:0; display:flex; align-items:center; justify-content:center; color:${colors.pillFg}; box-sizing:border-box; outline:none; -webkit-tap-highlight-color:transparent; font-family:inherit; }
       button:focus, button:focus-visible { outline:none; }
       #create { background:${colors.pillBg}; }
-      #have { width:100%; padding:${LANDING_STACK_GAP}px 0; margin:0; display:flex; align-items:center; justify-content:center; background:transparent; border:none; color:${colors.linkFg}; cursor:pointer; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+      #have { width:100%; padding:${LANDING_LINK_PADDING_Y}px 0; margin:0; display:flex; align-items:center; justify-content:center; background:transparent; border:none; color:${colors.linkFg}; cursor:pointer; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
     </style>
   </head>
   <body>

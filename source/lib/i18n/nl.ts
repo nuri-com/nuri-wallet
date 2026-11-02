@@ -48,7 +48,6 @@ export const nl = {
         "Stuur een geverifieerde token op Ethereum, Arbitrum, Optimism, Polygon of Gnosis naar dit adres. Bij aankomst wordt hij omgezet in euro of dollar.",
       wallet: {
         connect: "Wallet koppelen",
-        hint: "Betaal met elke token uit je wallet: browserextensie, telefoonwallet (WalletConnect) of hardwarewallet.",
         unavailable:
           "Betalen met een wallet kan op deze pagina nog niet. Kies hierboven een andere optie.",
         connected: "Gekoppeld: %{account}",
@@ -463,6 +462,7 @@ export const nl = {
     },
     SepaRecipientModal: {
       headerTitle: "Bankoverschrijving",
+      newRecipient: "Nieuwe ontvanger",
       continueLabel: "Doorgaan",
       tabPersonal: "Persoonlijk",
       tabCompany: "Bedrijf",

@@ -42,7 +42,6 @@ export const es = {
         "Envía cualquier token verificado en Ethereum, Arbitrum, Optimism, Polygon o Gnosis a esta dirección. Se convierte en euros o dólares al llegar.",
       wallet: {
         connect: "Conectar cartera",
-        hint: "Paga con cualquier token de tu cartera: extensión del navegador, cartera del móvil (WalletConnect) o cartera hardware.",
         unavailable:
           "Los pagos con cartera aún no están disponibles en esta página. Usa otra opción de arriba.",
         connected: "Conectada %{account}",
@@ -461,6 +460,7 @@ export const es = {
     },
     SepaRecipientModal: {
       headerTitle: "Transferencia bancaria",
+      newRecipient: "Nuevo destinatario",
       continueLabel: "Continuar",
       tabPersonal: "Particular",
       tabCompany: "Empresa",

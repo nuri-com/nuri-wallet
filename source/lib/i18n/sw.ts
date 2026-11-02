@@ -43,7 +43,6 @@ export const sw = {
         "Tuma tokeni yoyote iliyothibitishwa kwenye Ethereum, Arbitrum, Optimism, Polygon au Gnosis kwenda anwani hii. Itabadilishwa kuwa euro au dola ikifika.",
       wallet: {
         connect: "Unganisha pochi",
-        hint: "Lipa kwa tokeni yoyote kutoka pochi yako: kiendelezi cha kivinjari, pochi ya simu (WalletConnect) au pochi ya maunzi.",
         unavailable:
           "Malipo kwa pochi bado hayapatikani kwenye ukurasa huu. Tumia chaguo jingine hapo juu.",
         connected: "Imeunganishwa %{account}",
@@ -463,6 +462,7 @@ export const sw = {
     },
     SepaRecipientModal: {
       headerTitle: "Uhamisho wa Benki",
+      newRecipient: "Mpokeaji mpya",
       continueLabel: "Endelea",
       tabPersonal: "Binafsi",
       tabCompany: "Kampuni",

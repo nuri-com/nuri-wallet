@@ -3,7 +3,8 @@
  *
  * A DS Footer with the app's single bottom rule baked in: the device bottom
  * inset (added by the DS Footer itself) plus one fixed gap (lib/ui/bottomGap),
- * the same horizontal padding and the same spacing between stacked buttons.
+ * the same horizontal padding and the same spacing between stacked buttons
+ * (DS `md`, as the design system's send screens space them).
  * Screens never choose their own bottom padding; a screen that needs more room
  * gets it here, for every screen at once.
  *
@@ -31,7 +32,7 @@ export default function AppFooter({ canvas = false, children }: Props) {
       {...(canvas ? { chrome: "canvas" as const } : {})}
       direction="column"
       align="stretch"
-      gap="sm"
+      gap="md"
       paddingX="lg"
       paddingBottom={bottomGapToken(insets.bottom)}
     >

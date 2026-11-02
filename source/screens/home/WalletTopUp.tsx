@@ -26,7 +26,6 @@ import {
 } from "../../services/pay/PayWalletSwapService";
 import { runWalletTopUp } from "../../services/pay/PayWalletTopUp";
 import { usePayWalletSwap } from "../pay/hooks/usePayWalletSwap";
-import AppFooter from "../../components/AppFooter";
 
 /** How long a closed picker may wait for the wallet's connection to arrive. */
 const CONNECT_SETTLE_MS = 5_000;
@@ -118,7 +117,9 @@ const Flow: React.FC<Props> = ({ onClose, settle, payoutAddress, rail, label, fo
       </Header>
       {/* No scroll, as on the Move sheet: the card takes the height the
           keypad and the button leave. */}
-      <View direction="column" align="stretch" fill="grow" paddingX="lg" paddingTop="lg">
+      {/* The panel draws the page itself: its body, then its button in the
+          shared AppFooter at the bottom. */}
+      <View direction="column" align="stretch" fill="grow">
         {/* The sheet renders at the app root, outside the provider below;
               a nested one shares its clients and its connection. */}
         <PayWalletProvider modal={false}>
@@ -142,7 +143,6 @@ const Flow: React.FC<Props> = ({ onClose, settle, payoutAddress, rail, label, fo
           </RNView>
         </PayWalletProvider>
       </View>
-      <AppFooter />
     </DsSheetHost>
   );
 };

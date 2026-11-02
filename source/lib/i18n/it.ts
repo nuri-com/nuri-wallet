@@ -48,7 +48,6 @@ export const it = {
         "Invia a questo indirizzo qualsiasi token verificato su Ethereum, Arbitrum, Optimism, Polygon o Gnosis. All'arrivo viene convertito in euro o dollari.",
       wallet: {
         connect: "Collega wallet",
-        hint: "Paga con qualsiasi token del tuo wallet: estensione del browser, wallet sul telefono (WalletConnect) o hardware wallet.",
         unavailable:
           "I pagamenti con wallet non sono ancora disponibili su questa pagina. Usa un'altra opzione qui sopra.",
         connected: "Collegato: %{account}",
@@ -461,6 +460,7 @@ export const it = {
     },
     SepaRecipientModal: {
       headerTitle: "Bonifico bancario",
+      newRecipient: "Nuovo destinatario",
       continueLabel: "Continua",
       tabPersonal: "Privato",
       tabCompany: "Azienda",

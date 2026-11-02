@@ -7,7 +7,6 @@ import {
   ButtonText,
   Header,
   IconButton,
-  NuriScope,
   Scroll,
   Text,
   Topbar,
@@ -21,6 +20,7 @@ import { groupCount } from "../../../lib/formatting";
 import AmountKeypad from "../../../components/AmountKeypad";
 import { useKeypadFit } from "../../../lib/useKeypadFit";
 import DsSheetHost from "../../../components/DsSheetHost";
+import SendAmountCard from "../../../components/send/SendAmountCard";
 import SendFromRow from "../../../components/send/SendFromRow";
 import { BASE_EURC } from "../../../config/network";
 import { STABLECOIN_MIN_SEND_AMOUNT } from "../../../config/constants";
@@ -504,45 +504,35 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
               // balance that can pay this recipient) and the amount, in
               // shillings for a payout abroad.
               <View direction="column" align="stretch" gap="sm" fill="grow">
-                <NuriScope mode="dark">
-                  <View
-                    chrome="subtle"
-                    radius="lg"
-                    paddingX="lg"
-                    paddingY="md"
-                    direction="column"
-                    align="stretch"
-                    fill="grow"
-                  >
-                    <SendFromRow
-                      options={balanceOptions}
-                      current={balance ?? (token?.code === "USD" ? "dollar" : "wallet")}
-                      fallback={{
-                        label:
-                          availableDisplay == null
-                            ? assetLabel
-                            : `${assetLabel} (${availableDisplay.toFixed(2)})`,
-                        image: sourceFlag,
-                      }}
-                      disabled={isRequesting}
-                      onPick={onPickBalance}
-                    />
-                    <View fill="grow" justify="end" align="end">
-                      <Text
-                        size="3xl"
-                        align="end"
-                        // Spoken with its unit, as AmountDisplay does.
-                        accessibilityLabel={
-                          payout ? `${tzsDigits || "0"} TZS` : `${amount || "0"} ${stableCode}`
-                        }
-                      >
-                        {payout
-                          ? `TZS ${tzsDigits ? groupCount(Number(tzsDigits)) : "0"}`
-                          : `${currencyGlyph} ${amount || "0.00"}`}
-                      </Text>
-                    </View>
+                <SendAmountCard>
+                  <SendFromRow
+                    options={balanceOptions}
+                    current={balance ?? (token?.code === "USD" ? "dollar" : "wallet")}
+                    fallback={{
+                      label:
+                        availableDisplay == null
+                          ? assetLabel
+                          : `${assetLabel} (${availableDisplay.toFixed(2)})`,
+                      image: sourceFlag,
+                    }}
+                    disabled={isRequesting}
+                    onPick={onPickBalance}
+                  />
+                  <View fill="grow" justify="end" align="end">
+                    <Text
+                      size="3xl"
+                      align="end"
+                      // Spoken with its unit, as AmountDisplay does.
+                      accessibilityLabel={
+                        payout ? `${tzsDigits || "0"} TZS` : `${amount || "0"} ${stableCode}`
+                      }
+                    >
+                      {payout
+                        ? `TZS ${tzsDigits ? groupCount(Number(tzsDigits)) : "0"}`
+                        : `${currencyGlyph} ${amount || "0.00"}`}
+                    </Text>
                   </View>
-                </NuriScope>
+                </SendAmountCard>
                 <Text size="md" align="center" muted>
                   {(payout ? tzHint : amountHint) ?? "\u00a0"}
                 </Text>

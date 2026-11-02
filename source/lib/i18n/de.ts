@@ -45,7 +45,6 @@ export const de = {
         "Sende einen beliebigen verifizierten Token auf Ethereum, Arbitrum, Optimism, Polygon oder Gnosis an diese Adresse. Er wird bei Eingang in Euro oder Dollar umgewandelt.",
       wallet: {
         connect: "Wallet verbinden",
-        hint: "Bezahle mit jedem Token aus deiner Wallet: Browser-Erweiterung, Handy-Wallet (WalletConnect) oder Hardware-Wallet.",
         unavailable:
           "Wallet-Zahlungen sind auf dieser Seite noch nicht verfügbar. Nutze eine andere Option oben.",
         connected: "Verbunden: %{account}",
@@ -471,6 +470,7 @@ export const de = {
     },
     SepaRecipientModal: {
       headerTitle: "Bank\u00fcberweisung",
+      newRecipient: "Neuer Empfänger",
       continueLabel: "Weiter",
       tabPersonal: "Privat",
       tabCompany: "Firma",

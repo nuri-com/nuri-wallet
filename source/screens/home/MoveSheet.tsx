@@ -47,7 +47,6 @@ import {
   IconButton,
   NuriScope,
   Pressable,
-  Scroll,
   SelectTrigger,
   SelectTriggerAvatar,
   SelectTriggerChevron,
@@ -56,7 +55,6 @@ import {
   Text,
   Topbar,
   TopbarTrailing,
-  useNuriSafeAreaInsets,
   View,
 } from "@ds";
 import AmountKeypad from "../../components/AmountKeypad";
@@ -80,7 +78,7 @@ import { useMoveSwapBounds } from "./hooks/useMoveSwapBounds";
 import { swapBoundBlock } from "../../services/swapkit/SwapAmountBounds";
 import { useArkadeLightningLimits } from "../../services/arkade/lightningLimits";
 import AppFooter from "../../components/AppFooter";
-import { bottomGapToken } from "../../lib/ui/bottomGap";
+import StatusHost from "../../components/StatusHost";
 
 /** One side of a move: a balance that can give or take. */
 export type SwapRail = {
@@ -253,7 +251,6 @@ const MoveSheet: React.FC<Props> = ({
   locked = null,
   exactReceive,
 }) => {
-  const insets = useNuriSafeAreaInsets();
   // Which side the keypad is typing into. The other side shows its value small
   // in its own row.
   const [focus, setFocus] = useState<Side>("from");
@@ -726,18 +723,7 @@ const MoveSheet: React.FC<Props> = ({
               </TopbarTrailing>
             </Topbar>
           </Header>
-          {/* The Scroll adds the bottom inset, this the app's one gap, so Try
-              again sits where every AppFooter button sits. */}
-          <Scroll safeAreaBottom>
-            <View
-              direction="column"
-              align="stretch"
-              fill="grow"
-              paddingBottom={bottomGapToken(insets.bottom)}
-            >
-              {overlay}
-            </View>
-          </Scroll>
+          <StatusHost>{overlay}</StatusHost>
         </>
       ) : (
         <>

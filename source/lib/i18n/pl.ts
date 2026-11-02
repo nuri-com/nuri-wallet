@@ -49,7 +49,6 @@ export const pl = {
         "Wyślij na ten adres dowolny zweryfikowany token z Ethereum, Arbitrum, Optimism, Polygon lub Gnosis. Po dotarciu zostanie zamieniony na euro lub dolary.",
       wallet: {
         connect: "Połącz portfel",
-        hint: "Zapłać dowolnym tokenem z portfela: rozszerzenie przeglądarki, portfel w telefonie (WalletConnect) lub portfel sprzętowy.",
         unavailable:
           "Płatności portfelem nie są jeszcze dostępne na tej stronie. Wybierz inną opcję powyżej.",
         connected: "Połączono: %{account}",
@@ -465,6 +464,7 @@ export const pl = {
     },
     SepaRecipientModal: {
       headerTitle: "Przelew bankowy",
+      newRecipient: "Nowy odbiorca",
       continueLabel: "Dalej",
       tabPersonal: "Osoba prywatna",
       tabCompany: "Firma",

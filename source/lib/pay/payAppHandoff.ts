@@ -75,10 +75,12 @@ export function staysInBrowser(search: string): boolean {
 export type PayLinkHandoff = "installed-app" | "scheme" | "none";
 
 /**
- * Where a payable link goes. The installed PWA shares this origin's storage, so
- * the page can see whether it holds a wallet; without one the PWA would only
- * show its sign-in screen, so the page stays. The native app is checked on its
- * own side (it sends a link it cannot pay back with `?browser=1`).
+ * Where a payable link goes. The installed PWA and any browser tab of this site
+ * share this origin's storage, so the page can see whether it holds a wallet:
+ * with one, the link opens the app's send flow for that person; without one an
+ * installed PWA would only show its sign-in screen, so the page stays. The
+ * native app is checked on its own side (it sends a link it cannot pay back
+ * with `?browser=1`).
  */
 export function planPayLinkHandoff(opts: {
   installed: boolean;
@@ -86,7 +88,10 @@ export function planPayLinkHandoff(opts: {
   staysInBrowser: boolean;
 }): PayLinkHandoff {
   if (opts.staysInBrowser) return "none";
-  if (opts.installed) return opts.walletOnDevice ? "installed-app" : "none";
+  // A wallet on this origin pays the link in the app's own send flow, whether
+  // the page opened in the installed PWA or in a browser tab of the same site.
+  if (opts.walletOnDevice) return "installed-app";
+  if (opts.installed) return "none";
   return "scheme";
 }
 
@@ -128,7 +133,7 @@ export function usePayLinkAppHandoff(
     let timer: ReturnType<typeof setTimeout> | undefined;
     void (async () => {
       const installed = isInstalledApp();
-      const hasWallet = installed ? await walletOnDevice().catch(() => false) : false;
+      const hasWallet = await walletOnDevice().catch(() => false);
       if (cancelled) return;
       decided = true;
       const plan = planPayLinkHandoff({

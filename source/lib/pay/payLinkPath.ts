@@ -111,7 +111,9 @@ export function parsePayLinkPath(pathname: string): string | null {
   } catch {
     return null;
   }
-  const match = /^\/pay\/@([^/]+)\/?$/.exec(decoded);
+  // The `@` is optional: people type `/pay/emino` as often as `/pay/@emino`,
+  // and a link shared through some apps arrives with it encoded (`%40`).
+  const match = /^\/pay\/@?([^/@]+)\/?$/i.exec(decoded);
   const username = match?.[1]?.trim().toLowerCase() || "";
   return USERNAME.test(username) ? username : null;
 }

@@ -13,7 +13,7 @@
 // failure reverts THIS one even if another transfer started meanwhile, and the
 // wallet's side of the move travels as an optimistic-credit event because it
 // lives on another screen.
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { LOG_EMOJI, errorWithId, logWithId } from "../../../lib/OperationLogUtils";
 import { shouldRevertOptimisticWithdraw } from "../../../lib/wirex/withdrawRollback";
 import { EventBus } from "../../../services/events/AppEventBusService";
@@ -22,6 +22,16 @@ import { wirexService, type WirexWithdrawAsset } from "../../../services/wirex/W
 import { USDC_BASE_TOKEN } from "../../../services/swapkit/SwapKitStableAssets";
 import { finishInFlight, startCardWithdrawInFlight } from "../../../services/money/announce";
 import type { SepaRecipientData } from "../modals/SepaRecipientModal";
+import type { DestinationSuggestion } from "../../../lib/addressBook/contact";
+import { saveRecipientToOriginBook } from "../../../lib/addressBook/savedRecipient";
+import { createBankPickSequence } from "../../../lib/wirex/bankPickSequence";
+import {
+  bankDestinationFor,
+  bankRecipientFromSaved,
+  bankRecipientName,
+} from "../../../lib/wirex/bankRecipient";
+import { getAddressBook } from "../../../services/addressBook/AddressBookService";
+import { ADDRESS_BOOK_CHANGED_EVENT } from "../../../components/AddressBookSuggestions";
 
 const SOURCE = "screens/wirex/hooks/useWirexSendFlow.ts";
 
@@ -38,23 +48,95 @@ type Params = {
 };
 
 export function useWirexSendFlow({ bankReady }: Params) {
+  const [pickVisible, setPickVisible] = useState(false);
   const [recipientVisible, setRecipientVisible] = useState(false);
   const [amountVisible, setAmountVisible] = useState(false);
   const [recipient, setRecipient] = useState<SepaRecipientData | null>(null);
   const [prefill, setPrefill] = useState<WirexSepaPrefill | null>(null);
+  // Which saved-contact tap may still act: the newest one, and none after the
+  // step closed (lib/wirex/bankPickSequence).
+  const picks = useRef(createBankPickSequence());
+  // The book of the account this transfer is sent from, taken when the amount
+  // step opens: the recipient is saved there once the transfer went out.
+  const originBook = useRef<Promise<Awaited<ReturnType<typeof getAddressBook>> | null> | null>(
+    null,
+  );
 
-  // Send "To someone" from Visa & Banking: the SEPA recipient step.
+  // Send "To someone" from Visa & Banking: first who it goes to, the saved
+  // contacts with bank details and a row for someone new.
   const startSepa = useCallback(() => {
     if (!bankReady) return;
-    setRecipientVisible(true);
+    picks.current.invalidate();
+    setPickVisible(true);
   }, [bankReady]);
 
+  const closePick = useCallback(() => {
+    picks.current.invalidate();
+    setPickVisible(false);
+  }, []);
+
   const handleRecipientContinue = useCallback((data: SepaRecipientData) => {
+    originBook.current = getAddressBook().catch((): null => null);
     setRecipient(data);
     setPrefill(null);
     setRecipientVisible(false);
     setAmountVisible(true);
   }, []);
+
+  /** Someone new: the recipient form, opened over the pick step, which then closes. */
+  const pickNew = useCallback(() => {
+    setPrefill(null);
+    setRecipientVisible(true);
+    picks.current.invalidate();
+    setPickVisible(false);
+  }, []);
+
+  /**
+   * A saved contact IS the recipient: straight to the amount. A contact saved
+   * without a BIC gets it from the IBAN lookup first; when that finds none,
+   * the form opens filled in so the BIC can be typed.
+   */
+  const pickSaved = useCallback(
+    async ({ contact, destination }: DestinationSuggestion) => {
+      const saved = bankRecipientFromSaved(contact, destination);
+      if (!saved) return;
+      const outcome = await picks.current.pick(saved, async (iban) => {
+        const res = await wirexService.ibanLookup(iban);
+        return res.valid && res.bic && !res.needsManualBic ? res.bic : null;
+      });
+      if (outcome.kind === "stale") return;
+      if (outcome.kind === "amount") {
+        handleRecipientContinue(outcome.recipient);
+      } else {
+        setPrefill(outcome.prefill);
+        setRecipientVisible(true);
+      }
+      setPickVisible(false);
+    },
+    [handleRecipientContinue],
+  );
+
+  /**
+   * After the transfer went out: save who it went to, unless that IBAN is
+   * already in the book. Best effort, and only into the sending account's book.
+   */
+  const saveRecipientAfterSend = useCallback(() => {
+    const sent = recipient;
+    const origin = originBook.current;
+    if (!sent || !origin) return;
+    void saveRecipientToOriginBook(
+      origin,
+      getAddressBook,
+      bankRecipientName(sent),
+      bankDestinationFor(sent),
+    )
+      .then((written) => {
+        if (written) EventBus.emit(ADDRESS_BOOK_CHANGED_EVENT);
+      })
+      .catch(() => {
+        // Never log the IBAN.
+      });
+  }, [recipient]);
 
   /** Send to a known counterparty again — skips straight to the recipient step. */
   const startSepaTo = useCallback((counterparty: WirexSepaPrefill) => {
@@ -197,6 +279,11 @@ export function useWirexSendFlow({ bankReady }: Params) {
   );
 
   return {
+    pickVisible,
+    closePick,
+    pickNew,
+    pickSaved,
+    saveRecipientAfterSend,
     recipientVisible,
     closeRecipient,
     amountVisible,

@@ -47,7 +47,6 @@ export const tr = {
         "Ethereum, Arbitrum, Optimism, Polygon veya Gnosis üzerindeki doğrulanmış herhangi bir tokeni bu adrese gönder. Ulaştığında euro veya dolara çevrilir.",
       wallet: {
         connect: "Cüzdan bağla",
-        hint: "Cüzdanındaki herhangi bir tokenle öde: tarayıcı eklentisi, telefon cüzdanı (WalletConnect) veya donanım cüzdanı.",
         unavailable:
           "Bu sayfada cüzdanla ödeme henüz kullanılamıyor. Yukarıdaki başka bir seçeneği kullan.",
         connected: "%{account} bağlandı",
@@ -456,6 +455,7 @@ export const tr = {
     },
     SepaRecipientModal: {
       headerTitle: "Banka havalesi",
+      newRecipient: "Yeni alıcı",
       continueLabel: "Devam et",
       tabPersonal: "Bireysel",
       tabCompany: "Şirket",

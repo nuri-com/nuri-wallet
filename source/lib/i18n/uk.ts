@@ -47,7 +47,6 @@ export const uk = {
         "Надішли на цю адресу будь-який перевірений токен в Ethereum, Arbitrum, Optimism, Polygon або Gnosis. Після надходження його буде конвертовано в євро або долари.",
       wallet: {
         connect: "Під'єднати гаманець",
-        hint: "Плати будь-яким токеном зі свого гаманця: розширення браузера, гаманець на телефоні (WalletConnect) або апаратний гаманець.",
         unavailable:
           "Оплата з гаманця на цій сторінці поки недоступна. Скористайся іншим варіантом вище.",
         connected: "Під'єднано %{account}",
@@ -459,6 +458,7 @@ export const uk = {
     },
     SepaRecipientModal: {
       headerTitle: "Банківський переказ",
+      newRecipient: "Новий отримувач",
       continueLabel: "Продовжити",
       tabPersonal: "Особистий",
       tabCompany: "Компанія",

@@ -1,6 +1,17 @@
 // @screen auth.login
 import { Image, Linking, Platform, StyleSheet, View } from "react-native";
-import { Header, IconButton, NuriScope, Screen, useNuriTheme, View as DsView } from "@ds";
+import {
+  Header,
+  IconButton,
+  NuriScope,
+  Screen,
+  Topbar,
+  TopbarTrailing,
+  useNuriTheme,
+  View as DsView,
+} from "@ds";
+import { useEffect } from "react";
+import { tintPage } from "../lib/web/pageTint";
 import BrandDisplayTitle from "./BrandDisplayTitle";
 import { t } from "../lib/i18n";
 import PasskeyLoginScreenNative from "./PasskeyLoginScreenNative";
@@ -60,6 +71,14 @@ function PasskeyLoginScreenContent({
   onDismiss,
 }: PasskeyLoginScreenProps) {
   const theme = useNuriTheme();
+  const tint = theme.surface.solid.bg;
+
+  // The browser's status-bar strip and toolbar take the page color: lilac
+  // while the landing shows, the canvas again once it goes.
+  useEffect(() => {
+    if (!visible || Platform.OS !== "web" || !tint) return;
+    return tintPage(typeof document === "undefined" ? undefined : (document as never), tint);
+  }, [visible, tint]);
 
   if (!visible) {
     return null;
@@ -88,18 +107,22 @@ function PasskeyLoginScreenContent({
           actions in the shared AppFooter (rendered by the content below). */}
       <Screen>
         <Header safeAreaTop>
-          <DsView direction="row" align="center" justify="end" paddingX="xl" paddingBottom="lg">
-            {/* ponytail: pre-auth support = WhatsApp deep link; swap for in-app
-             * nostr chat (ephemeral keypair) if we want to keep support in-app */}
-            {!targetedUsername ? (
-              <IconButton
-                icon="headphones"
-                variant="soft"
-                accessibilityLabel={t("screen.ScreenHeader.supportAccessibilityLabel")}
-                onPress={() => Linking.openURL("https://wa.me/37253687271")}
-              />
-            ) : null}
-          </DsView>
+          {/* The same top bar as every page: the button sits in the bar's
+              own height, never against the top edge. */}
+          <Topbar surface="transparent" layout="centered">
+            <TopbarTrailing>
+              {/* ponytail: pre-auth support = WhatsApp deep link; swap for in-app
+               * nostr chat (ephemeral keypair) if we want to keep support in-app */}
+              {!targetedUsername ? (
+                <IconButton
+                  icon="headphones"
+                  variant="soft"
+                  accessibilityLabel={t("screen.ScreenHeader.supportAccessibilityLabel")}
+                  onPress={() => Linking.openURL("https://wa.me/37253687271")}
+                />
+              ) : null}
+            </TopbarTrailing>
+          </Topbar>
         </Header>
         <DsView direction="column" align="center" paddingX="lg">
           <BrandDisplayTitle>{t("screen.PasskeyLoginScreen.headline")}</BrandDisplayTitle>

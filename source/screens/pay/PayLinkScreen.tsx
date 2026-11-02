@@ -68,6 +68,7 @@ import { usePayLinkTarget } from "./hooks/usePayLinkTarget";
 import { usePayOrderStatus } from "./hooks/usePayOrderStatus";
 import { usePayWalletSwap } from "./hooks/usePayWalletSwap";
 import AppFooter from "../../components/AppFooter";
+import StatusHost from "../../components/StatusHost";
 import { bottomGapToken } from "../../lib/ui/bottomGap";
 
 const K = "screen.PayLink";
@@ -303,13 +304,28 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
     onAmount: changeAmount,
     onSubmit: submit,
   });
-  // A connected wallet's own card (token -> @username) and its wait and result
-  // screens replace the summary; the card's arrow keeps the other ways to pay.
-  const walletPair =
-    rail?.kind === "wallet-swap" &&
-    ["connected", "busy", "quoted", "no-route", "insufficient", "paying", "done"].includes(
-      wallet.state.step,
-    );
+
+  // How the payer pays: the card's first row, opening the list of ways.
+  const methodChoice =
+    rail && look
+      ? {
+          label: t(`${K}.from`),
+          value: t(`${K}.asset.${rail.source}`),
+          ...(look.image !== undefined ? { image: look.image } : { icon: "wallet" as const }),
+          accessibilityLabel: t(`${K}.sourceA11yLabel`),
+          onPress: () => setPicking(true),
+        }
+      : null;
+  const person = { name: `@${username}`, nuriUsername: username };
+  // A status screen replaces the page: the wait, Try again, Payment received.
+  const status =
+    overlay ??
+    (order?.state === "settled" ? (
+      <BrandStatusView
+        title={t(`${K}.orderSettled`)}
+        illustration={<GotPaidIllustration width={241} height={213} />}
+      />
+    ) : null);
 
   return (
     <Screen>
@@ -320,8 +336,8 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
       <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
         {/* The top bar holds one thing: the way back from a payment target. A DS
             Topbar is a fixed-height block, so rendering it with nothing inside
-            parks 72px of empty bar over the content and pushes the From card
-            under it. The Header stays for the safe-area inset alone. */}
+            parks 72px of empty bar over the content. The Header stays for the
+            safe-area inset alone. */}
         <Header safeAreaTop chrome="canvas">
           {target || stalled ? (
             <Topbar surface="transparent" layout="fluid">
@@ -337,60 +353,61 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
           ) : null}
         </Header>
 
-        {/* With the amount form the footer owns the bottom edge. Every other
-            state (status screens, wallet panel, payment target) ends in the
-            scroll, so the scroll adds the bottom inset and the content the app's
-            one gap, the same place AppFooter puts its buttons. */}
-        <Scroll onLayout={keypadFit.onViewportLayout} safeAreaBottom={!showForm}>
-          <View
-            onLayout={keypadFit.onContentLayout}
-            direction="column"
-            align="stretch"
-            gap={keypadFit.compact ? "sm" : "lg"}
-            paddingX="lg"
-            paddingBottom={
-              showForm ? (keypadFit.compact ? "sm" : "lg") : bottomGapToken(insets.bottom)
-            }
-            fill="grow"
-          >
-            <View direction="column" align="stretch" gap="lg" fill="grow">
+        {lookup.state !== "found" ? (
+          <StatusHost>
+            <View direction="column" align="center" justify="center" fill="grow" paddingX="lg">
               {lookup.state === "loading" ? (
-                <View direction="column" align="center" justify="center" fill="grow">
-                  <Spinner />
-                </View>
-              ) : null}
-
-              {lookup.state === "missing" ? (
+                <Spinner />
+              ) : (
                 <Text size="md" muted align="center">
                   {t(`${K}.notFound`, { username })}
                 </Text>
-              ) : null}
-
-              {overlay}
-
-              {order?.state === "settled" ? (
-                <View direction="column" align="stretch" fill="grow">
-                  <BrandStatusView
-                    title={t(`${K}.orderSettled`)}
-                    illustration={<GotPaidIllustration width={241} height={213} />}
-                  />
-                </View>
-              ) : null}
-
-              {/* Summary stays visible when the keypad becomes a payment target. */}
-              {recipient &&
-              rail &&
-              look &&
-              !overlay &&
-              !walletPair &&
-              order?.state !== "settled" ? (
+              )}
+            </View>
+          </StatusHost>
+        ) : status ? (
+          <StatusHost>{status}</StatusHost>
+        ) : rail?.kind === "wallet-swap" && methodChoice ? (
+          // Any token from the payer's own wallet, swapped in-page into what the
+          // link asks for. The panel draws the same page: person, card, button.
+          <PayWalletSwapPanel
+            state={wallet.state}
+            fixedAmount={fixedAmount}
+            holdings={wallet.holdings}
+            settleLabel={t(`${K}.asset.${settle}`)}
+            toLabel={`@${username}`}
+            recipient={person}
+            method={methodChoice}
+            onConnect={() => void wallet.connect()}
+            onRefreshHoldings={wallet.refreshHoldings}
+            onQuote={(holding, typed) => void wallet.quote(holding, typed)}
+            onSelectOption={wallet.selectOption}
+            onPay={() => void wallet.pay()}
+            onResume={() => void wallet.resume()}
+            onReset={wallet.reset}
+          />
+        ) : rail && look && methodChoice ? (
+          <>
+            {/* With the amount form the footer owns the bottom edge. The payment
+                target ends in the scroll, so the scroll adds the bottom inset and
+                the content the app's one gap, where AppFooter puts its buttons. */}
+            <Scroll onLayout={keypadFit.onViewportLayout} safeAreaBottom={!showForm}>
+              <View
+                onLayout={keypadFit.onContentLayout}
+                direction="column"
+                align="stretch"
+                gap={keypadFit.compact ? "sm" : "lg"}
+                paddingX="lg"
+                paddingTop="lg"
+                paddingBottom={
+                  showForm ? (keypadFit.compact ? "sm" : "lg") : bottomGapToken(insets.bottom)
+                }
+                fill="grow"
+              >
                 <PayLinkSummary
                   grow={showForm}
-                  to={`@${username}`}
-                  sourceLabel={t(`${K}.asset.${rail.source}`)}
-                  {...(look.image !== undefined
-                    ? { image: look.image }
-                    : { icon: "wallet" as const })}
+                  recipient={person}
+                  choices={[methodChoice]}
                   amount={
                     source && NO_KEYPAD.has(source)
                       ? null
@@ -398,69 +415,48 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
                         ? amountFigure(exactAmountText(target) ?? "", look)
                         : amountFigure(typedAmount, look)
                   }
-                  onPickSource={() => setPicking(true)}
                 />
-              ) : null}
 
-              {/* Any token from the payer's own wallet, swapped in-page into what
-                the link asks for. The wallet signs; nothing is shown as a QR. */}
-              {rail?.kind === "wallet-swap" && !overlay ? (
-                <PayWalletSwapPanel
-                  state={wallet.state}
-                  fixedAmount={fixedAmount}
-                  holdings={wallet.holdings}
-                  settleLabel={t(`${K}.asset.${settle}`)}
-                  toLabel={`@${username}`}
-                  onPickSource={() => setPicking(true)}
-                  onConnect={() => void wallet.connect()}
-                  onRefreshHoldings={wallet.refreshHoldings}
-                  onQuote={(holding, typed) => void wallet.quote(holding, typed)}
-                  onSelectOption={wallet.selectOption}
-                  onPay={() => void wallet.pay()}
-                  onResume={() => void wallet.resume()}
-                  onReset={wallet.reset}
-                />
-              ) : null}
+                {target ? (
+                  <PayTargetView
+                    target={target}
+                    label={t(`${K}.asset.${rail.source}`)}
+                    {...(exactAmount ? { exactAmount } : {})}
+                    {...(order?.state === "waiting"
+                      ? { status: t(`${K}.orderWaiting`) }
+                      : rail.kind === "evm-any"
+                        ? { status: t(`${K}.anyTokenHint`) }
+                        : {})}
+                  />
+                ) : null}
 
-              {rail && target && !overlay && order?.state !== "settled" ? (
-                <PayTargetView
-                  target={target}
-                  label={t(`${K}.asset.${rail.source}`)}
-                  {...(exactAmount ? { exactAmount } : {})}
-                  {...(order?.state === "waiting"
-                    ? { status: t(`${K}.orderWaiting`) }
-                    : rail.kind === "evm-any"
-                      ? { status: t(`${K}.anyTokenHint`) }
-                      : {})}
-                />
-              ) : null}
-            </View>
+                {showForm && softKeypad ? (
+                  <AmountKeypad
+                    compact={keypadFit.compact}
+                    onDigit={(digit) => changeAmount(`${amount}${digit}`)}
+                    {...(look?.decimals ? { onDecimal: () => changeAmount(`${amount}.`) } : {})}
+                    onDelete={() => changeAmount(amount.slice(0, -1))}
+                  />
+                ) : null}
+              </View>
+            </Scroll>
 
-            {showForm && softKeypad ? (
-              <AmountKeypad
-                compact={keypadFit.compact}
-                onDigit={(digit) => changeAmount(`${amount}${digit}`)}
-                {...(look?.decimals ? { onDecimal: () => changeAmount(`${amount}.`) } : {})}
-                onDelete={() => changeAmount(amount.slice(0, -1))}
-              />
+            {showForm ? (
+              <AppFooter>
+                <Button
+                  size="lg"
+                  variant="solid"
+                  accent="lilac"
+                  disabled={!canSubmit || busy}
+                  onPress={submit}
+                  accessibilityLabel={t(`${K}.continue`)}
+                >
+                  <ButtonIcon name="chevron-right" />
+                  <ButtonText>{t(`${K}.continue`)}</ButtonText>
+                </Button>
+              </AppFooter>
             ) : null}
-          </View>
-        </Scroll>
-
-        {showForm ? (
-          <AppFooter>
-            <Button
-              size="lg"
-              variant="solid"
-              accent="lilac"
-              disabled={!canSubmit || busy}
-              onPress={submit}
-              accessibilityLabel={t(`${K}.continue`)}
-            >
-              <ButtonIcon name="chevron-right" />
-              <ButtonText>{t(`${K}.continue`)}</ButtonText>
-            </Button>
-          </AppFooter>
+          </>
         ) : null}
       </View>
 

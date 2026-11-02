@@ -1,11 +1,12 @@
 // @component pay-link-summary
-// Frontend-only extraction of #1163's Move-style source and fixed recipient.
+// The public pay page's summary, drawn the way the app's own "send to @name"
+// screen is: the recipient as a person (avatar and name) and the send screens'
+// one amount card (components/send/SendAmountCard) with how the payer pays on
+// top and the figure bottom right. Without a person (adding money to one of
+// the user's own balances) the card states where it goes in a To row instead.
 import type React from "react";
 import type { ImageSourcePropType } from "react-native";
 import {
-  Bleed,
-  IconButton,
-  NuriScope,
   SelectTrigger,
   SelectTriggerAvatar,
   SelectTriggerChevron,
@@ -15,60 +16,70 @@ import {
   View,
 } from "@ds";
 import type { IconName } from "@ds";
+import SendAmountCard from "./send/SendAmountCard";
+import SendRecipientContact from "./SendRecipientContact";
 import { t } from "../lib/i18n";
 
-type Props = {
-  /** Takes the height the keypad leaves, like the Move sheet's focused half. */
-  grow?: boolean;
-  /** Who or what receives: "@username", or the balance being filled. */
-  to: string;
-  /** What arrives, once priced: stated beside the To line, as the Move sheet does. */
-  toAmount?: string | null;
-  sourceLabel: string;
+/** One picker row of the card: what it is called, what is chosen, what a tap opens. */
+export type PaySummaryChoice = {
+  label: string;
+  value: string;
   image?: ImageSourcePropType;
   icon?: IconName;
-  amount: string | null;
-  onPickSource: () => void;
-  /** The arrow between the cards; picks the source when not given. */
-  onArrowPress?: () => void;
+  onPress: () => void;
+  accessibilityLabel: string;
 };
 
+type Props = {
+  /** The person paid, shown above the card like the send screens show a contact. */
+  recipient?: { name: string; nuriUsername?: string };
+  /** The card's rows: how the payer pays, then (paying from a wallet) which token. */
+  choices: PaySummaryChoice[];
+  /** The figure the payer pays; null states none. */
+  amount: string | null;
+  /** Where the money goes, when no person names it; with a person, only beside what arrives. */
+  to?: string;
+  /** What arrives, once known. */
+  toAmount?: string | null;
+  /** Takes the height the keypad leaves. */
+  grow?: boolean;
+};
+
+function ChoiceRow({ choice }: { choice: PaySummaryChoice }) {
+  return (
+    <View direction="row" align="center">
+      <SelectTrigger onPress={choice.onPress} accessibilityLabel={choice.accessibilityLabel}>
+        <SelectTriggerLabel>{choice.label}</SelectTriggerLabel>
+        {choice.image !== undefined ? (
+          <SelectTriggerAvatar source={choice.image} />
+        ) : (
+          <SelectTriggerAvatar name={choice.icon ?? "wallet"} accent="lilac" />
+        )}
+        <SelectTriggerValue>{choice.value}</SelectTriggerValue>
+        <SelectTriggerChevron name="caret-down" />
+      </SelectTrigger>
+    </View>
+  );
+}
+
 const PayLinkSummary: React.FC<Props> = ({
-  grow = false,
+  recipient,
+  choices,
+  amount,
   to,
   toAmount = null,
-  sourceLabel,
-  image,
-  icon,
-  amount,
-  onPickSource,
-  onArrowPress,
-}) => (
-  <NuriScope mode="dark">
-    <View direction="column" align="stretch" gap="xs" {...(grow ? { fill: "grow" as const } : {})}>
-      <View
-        chrome="subtle"
-        radius="lg"
-        paddingX="lg"
-        paddingY="md"
-        direction="column"
-        align="stretch"
-        gap="lg"
-        {...(grow ? { fill: "grow" as const } : {})}
-      >
-        <SelectTrigger
-          onPress={onPickSource}
-          accessibilityLabel={t("screen.PayLink.sourceA11yLabel")}
-        >
-          <SelectTriggerLabel>{t("screen.PayLink.from")}</SelectTriggerLabel>
-          {image !== undefined ? (
-            <SelectTriggerAvatar source={image} />
-          ) : (
-            <SelectTriggerAvatar name={icon ?? "wallet"} accent="lilac" />
-          )}
-          <SelectTriggerValue>{sourceLabel}</SelectTriggerValue>
-          <SelectTriggerChevron name="caret-down" />
-        </SelectTrigger>
+  grow = false,
+}) => {
+  const toRow = to && (!recipient || toAmount) ? to : null;
+  return (
+    <View direction="column" align="stretch" gap="lg" {...(grow ? { fill: "grow" as const } : {})}>
+      {recipient ? (
+        <SendRecipientContact name={recipient.name} nuriUsername={recipient.nuriUsername} />
+      ) : null}
+      <SendAmountCard grow={grow}>
+        {choices.map((choice) => (
+          <ChoiceRow key={choice.label} choice={choice} />
+        ))}
         {amount !== null ? (
           <View fill="grow" justify="end" align="end">
             <Text size="3xl" align="end">
@@ -76,34 +87,24 @@ const PayLinkSummary: React.FC<Props> = ({
             </Text>
           </View>
         ) : null}
-      </View>
-      <Bleed top="xl" bottom="xl">
-        <View direction="row" justify="center" align="center" height="lg">
-          <IconButton
-            icon="arrow-down"
-            variant="solid"
-            accessibilityLabel={t("screen.PayLink.sourceA11yLabel")}
-            onPress={onArrowPress ?? onPickSource}
-          />
-        </View>
-      </Bleed>
-      <View chrome="subtle" radius="lg" paddingX="lg" paddingY="md">
-        <View direction="row" justify="between" align="center" gap="sm">
-          <View direction="row" align="center" gap="sm">
-            <Text size="md" muted>
-              {t("screen.PayLink.to")}
-            </Text>
-            <Text size="md">{to}</Text>
+        {toRow ? (
+          <View direction="row" justify="between" align="center" gap="sm">
+            <View direction="row" align="center" gap="sm">
+              <Text size="md" muted>
+                {t("screen.PayLink.to")}
+              </Text>
+              <Text size="md">{toRow}</Text>
+            </View>
+            {toAmount ? (
+              <Text size="md" emphasis>
+                {toAmount}
+              </Text>
+            ) : null}
           </View>
-          {toAmount ? (
-            <Text size="md" emphasis>
-              {toAmount}
-            </Text>
-          ) : null}
-        </View>
-      </View>
+        ) : null}
+      </SendAmountCard>
     </View>
-  </NuriScope>
-);
+  );
+};
 
 export default PayLinkSummary;

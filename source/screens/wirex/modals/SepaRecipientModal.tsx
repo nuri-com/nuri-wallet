@@ -18,10 +18,7 @@ import {
   View,
 } from "@ds";
 import type { TextFieldHandle } from "@ds";
-import AddressBookSuggestions from "../../../components/AddressBookSuggestions";
 import DsSheetHost from "../../../components/DsSheetHost";
-import type { DestinationSuggestion } from "../../../lib/addressBook/contact";
-import { acceptsBankSend } from "../../addressBook/addressBookModel";
 import { normalizeIbanInput } from "../../../lib/ibanFormat";
 import { t } from "../../../lib/i18n";
 import { isValidIban } from "../../../lib/validation";
@@ -66,9 +63,6 @@ const SepaRecipientModal: React.FC<Props> = ({
   const [clipboardIban, setClipboardIban] = useState<string | null>(null);
   const ibanFieldRef = useRef<TextFieldHandle>(null);
   const nameFieldRef = useRef<TextFieldHandle>(null);
-  // The name a saved contact filled in; the suggestions hide until it changes.
-  const [pickedName, setPickedName] = useState<string | null>(null);
-  const nameQuery = (isCompany ? firstName : `${firstName} ${lastName}`).trim();
   // IBAN lookup (server /iban/lookup): bank-name confirmation + validation message.
   const [bankName, setBankName] = useState<string | null>(null);
   const [lookupMsg, setLookupMsg] = useState<string | null>(null);
@@ -97,7 +91,6 @@ const SepaRecipientModal: React.FC<Props> = ({
     setIsCompany(false);
     setBankName(null);
     setLookupMsg(null);
-    setPickedName(null);
   }, [visible]);
 
   // Apply prefills (QR scanner or send-again from an activity row)
@@ -118,10 +111,6 @@ const SepaRecipientModal: React.FC<Props> = ({
     }
     if (prefilledFirstName != null) setFirstName(prefilledFirstName);
     if (prefilledLastName != null) setLastName(prefilledLastName);
-    // A prefilled recipient is already chosen: no suggestions for it.
-    if (prefilledFirstName || prefilledLastName) {
-      setPickedName(`${prefilledFirstName ?? ""} ${prefilledLastName ?? ""}`.trim());
-    }
     if (prefilledReference != null) setReference(prefilledReference);
   }, [
     visible,
@@ -255,32 +244,6 @@ const SepaRecipientModal: React.FC<Props> = ({
     } catch {}
   };
 
-  const pickSaved = ({ contact, destination }: DestinationSuggestion) => {
-    if (destination.type !== "bank") return;
-    const holder = (destination.holder || contact.label).trim();
-    const parts = holder ? holder.split(/\s+/) : [];
-    setIban(formatIbanInput(destination.iban));
-    setBankName(null);
-    setLookupMsg(null);
-    if (destination.bic) {
-      latestIbanRef.current = normalizeIbanInput(destination.iban);
-      setBic(destination.bic);
-    } else {
-      setBic("");
-      void runIbanLookup(destination.iban);
-    }
-    if (isCompany) {
-      setFirstName(holder);
-      setPickedName(holder);
-    } else {
-      const first = parts[0] ?? "";
-      const last = parts.slice(1).join(" ");
-      setFirstName(first);
-      setLastName(last);
-      setPickedName(`${first} ${last}`.trim());
-    }
-  };
-
   return (
     <DsSheetHost
       visible={visible}
@@ -374,14 +337,6 @@ const SepaRecipientModal: React.FC<Props> = ({
                 </View>
               </View>
             )}
-            {/* Saved bank contacts matching the typed name; nothing when none
-                match, and gone once one is picked. */}
-            <AddressBookSuggestions
-              active={visible && nameQuery !== pickedName}
-              query={nameQuery}
-              accepts={acceptsBankSend}
-              onPick={pickSaved}
-            />
 
             <TextField
               ref={ibanFieldRef}

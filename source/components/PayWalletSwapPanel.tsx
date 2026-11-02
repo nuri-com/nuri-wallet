@@ -9,7 +9,9 @@ import { Button, ButtonIcon, ButtonText, Text, View } from "@ds";
 import GotPaidIllustration from "../assets/illustrations/gotpaid.svg";
 import AmountKeypad from "./AmountKeypad";
 import BrandStatusView from "./BrandStatusView";
-import PayLinkSummary from "./PayLinkSummary";
+import AppFooter from "./AppFooter";
+import PayLinkSummary, { type PaySummaryChoice } from "./PayLinkSummary";
+import StatusHost from "./StatusHost";
 import SwapProcessingView, { SwapTryAgainView } from "./SwapProcessingView";
 import SwapRouteChoices from "./SwapRouteChoices";
 import { swapRouteCardDetail } from "../lib/formatting";
@@ -42,8 +44,10 @@ type Props = {
   toLabel?: string;
   /** Writes what arrives; "<amount> <settleLabel>" when not given. */
   formatSettle?: (amount: string) => string;
-  /** Changes how to pay at all (the pay page's other ways); the arrow opens it. */
-  onPickSource?: () => void;
+  /** The person paid (the pay page), shown above the card. */
+  recipient?: { name: string; nuriUsername?: string };
+  /** How the payer pays (the pay page's other ways), the card's first row. */
+  method?: PaySummaryChoice;
   onConnect: () => void;
   onRefreshHoldings: () => void;
   onQuote: (holding: PayWalletHolding, amount: string) => void;
@@ -73,7 +77,8 @@ const PayWalletSwapPanel: React.FC<Props> = ({
   settleLabel,
   toLabel,
   formatSettle,
-  onPickSource,
+  recipient,
+  method,
   onConnect,
   onRefreshHoldings,
   onQuote,
@@ -95,32 +100,60 @@ const PayWalletSwapPanel: React.FC<Props> = ({
     setSelectedKey(first ? payWalletHoldingKey(first) : null);
   }, [holdings.status, selected, first]);
 
+  // The page around the panel: the summary, what goes under it, and the one
+  // button in the shared AppFooter at the bottom of the screen.
+  const page = (content: React.ReactNode, cta: React.ReactNode, grow = false) => (
+    <>
+      <View
+        direction="column"
+        align="stretch"
+        gap="lg"
+        paddingX="lg"
+        paddingTop="lg"
+        paddingBottom="lg"
+        fill="grow"
+      >
+        {content}
+        {grow ? null : <View fill="grow" />}
+      </View>
+      {cta ? <AppFooter>{cta}</AppFooter> : null}
+    </>
+  );
+  const methodOnly = (amountText: string | null = null) => (
+    <PayLinkSummary
+      {...(recipient ? { recipient } : {})}
+      choices={method ? [method] : []}
+      amount={amountText}
+    />
+  );
+
   if (state.step === "unavailable") {
-    return (
-      <Text size="sm" muted align="center">
-        {t(`${K}.unavailable`)}
-      </Text>
+    return page(
+      <>
+        {method ? methodOnly() : null}
+        <Text size="sm" muted align="center">
+          {t(`${K}.unavailable`)}
+        </Text>
+      </>,
+      null,
     );
   }
 
   if (state.step === "idle") {
-    return (
-      <View direction="column" align="stretch" gap="sm">
-        <Button size="lg" variant="solid" accent="lilac" onPress={onConnect}>
-          <ButtonIcon name="wallet" />
-          <ButtonText>{t(`${K}.connect`)}</ButtonText>
-        </Button>
-        <Text size="sm" muted align="center">
-          {t(`${K}.hint`)}
-        </Text>
-      </View>
+    return page(
+      method ? methodOnly() : null,
+      <Button size="lg" variant="solid" accent="lilac" onPress={onConnect}>
+        <ButtonIcon name="wallet" />
+        <ButtonText>{t(`${K}.connect`)}</ButtonText>
+      </Button>,
     );
   }
 
   if (state.step === "pending") {
     const { request, option } = state.pending;
-    return (
-      <View direction="column" align="stretch" gap="sm">
+    return page(
+      <>
+        {method ? methodOnly() : null}
         <Text size="md" align="center">
           {t(`${K}.pending`, {
             // What the payer spends: on a fixed-amount link the request names
@@ -138,31 +171,46 @@ const PayWalletSwapPanel: React.FC<Props> = ({
             })}
           </Text>
         ) : null}
-        <Button size="lg" variant="solid" accent="lilac" onPress={onResume}>
-          <ButtonIcon name={state.otherAccount ? "wallet" : "chevron-right"} />
-          <ButtonText>{t(state.otherAccount ? `${K}.switchAccount` : `${K}.resume`)}</ButtonText>
-        </Button>
-      </View>
+      </>,
+      <Button size="lg" variant="solid" accent="lilac" onPress={onResume}>
+        <ButtonIcon name={state.otherAccount ? "wallet" : "chevron-right"} />
+        <ButtonText>{t(state.otherAccount ? `${K}.switchAccount` : `${K}.resume`)}</ButtonText>
+      </Button>,
     );
   }
 
-  // The wait, the result and the failure are the swap screens' own.
+  // The wait, the result and the failure are the swap screens' own, in the
+  // status frame every status screen uses.
   if (state.step === "paying" || (state.step === "done" && state.progress.state === "waiting")) {
-    return <SwapProcessingView phase="transfer" statusText={progressText(state)} />;
+    return (
+      <StatusHost>
+        <SwapProcessingView phase="transfer" statusText={progressText(state)} />
+      </StatusHost>
+    );
   }
   if (state.step === "done") {
-    return state.progress.state === "settled" ? (
-      <BrandStatusView
-        title={t(`${K}.settled`)}
-        illustration={<GotPaidIllustration width={241} height={213} />}
-      />
-    ) : (
-      <SwapTryAgainView onRetry={onReset} title={progressText(state) ?? undefined} />
+    return (
+      <StatusHost>
+        {state.progress.state === "settled" ? (
+          <BrandStatusView
+            title={t(`${K}.settled`)}
+            illustration={<GotPaidIllustration width={241} height={213} />}
+          />
+        ) : (
+          <SwapTryAgainView onRetry={onReset} title={progressText(state) ?? undefined} />
+        )}
+      </StatusHost>
     );
   }
 
   // Pricing is the swap screens' own wait.
-  if (state.step === "busy") return <SwapProcessingView phase="route" />;
+  if (state.step === "busy") {
+    return (
+      <StatusHost>
+        <SwapProcessingView phase="route" />
+      </StatusHost>
+    );
+  }
 
   const quoted = state.step === "quoted" ? state.quote : null;
   const writeSettle = (value: string) =>
@@ -217,71 +265,81 @@ const PayWalletSwapPanel: React.FC<Props> = ({
         : quoted
           ? t("screen.MoveSheet.confirm")
           : t("screen.MoveSheet.next");
+  // Which token pays: the card's own row, under how the payer pays on the pay
+  // page, or its only row when the panel adds money to a balance of the user's.
+  const tokenChoice: PaySummaryChoice = {
+    label: method ? t(`${K}.tokenLabel`) : t("screen.PayLink.from"),
+    value: sourceLabel,
+    ...(logo ? { image: logo } : { icon: "wallet" as const }),
+    accessibilityLabel: t(`${K}.chooseToken`),
+    onPress: () =>
+      quoted
+        ? clearQuote()
+        : holdings.status === "failed"
+          ? onRefreshHoldings()
+          : list.length > 0
+            ? setPicking(true)
+            : undefined,
+  };
 
   return (
-    <View direction="column" align="stretch" gap="lg" fill="grow">
-      <PayLinkSummary
-        grow
-        to={toLabel ?? settleLabel}
-        toAmount={(() => {
-          const arrives = fixedAmount ?? quoted?.option.settleAmount ?? null;
-          return arrives === null ? null : writeSettle(arrives);
-        })()}
-        sourceLabel={sourceLabel}
-        {...(logo ? { image: logo } : { icon: "wallet" as const })}
-        amount={spend === null ? null : selected ? `${spend} ${selected.symbol}` : spend}
-        onPickSource={() =>
-          quoted
-            ? clearQuote()
-            : holdings.status === "failed"
-              ? onRefreshHoldings()
-              : list.length > 0
-                ? setPicking(true)
-                : undefined
-        }
-        {...(onPickSource ? { onArrowPress: onPickSource } : {})}
-      />
-
-      {state.step === "quoted" ? (
-        <View direction="column" align="stretch" justify="center" gap="sm">
-          {routeDetail(state.quote.option) ? (
-            <Text size="md" muted align="center">
-              {routeDetail(state.quote.option)}
-            </Text>
-          ) : null}
-          <SwapRouteChoices
-            options={state.options.map((option) => ({
-              id: option.optionId,
-              label: writeSettle(option.settleAmount),
-              sublabel: routeDetail(option),
-            }))}
-            selectedId={state.quote.option.optionId}
-            onSelect={onSelectOption}
+    <>
+      {page(
+        <>
+          <PayLinkSummary
+            grow
+            {...(recipient ? { recipient } : {})}
+            choices={method ? [method, tokenChoice] : [tokenChoice]}
+            to={toLabel ?? settleLabel}
+            toAmount={(() => {
+              const arrives = fixedAmount ?? quoted?.option.settleAmount ?? null;
+              return arrives === null ? null : writeSettle(arrives);
+            })()}
+            amount={spend === null ? null : selected ? `${spend} ${selected.symbol}` : spend}
           />
-        </View>
-      ) : /* The amount is typed while the tokens load; the token only bounds it. */
-      !fixedAmount ? (
-        <AmountKeypad
-          onDigit={(digit) => changeAmount(`${amount}${digit}`)}
-          {...(selected?.decimals !== 0 ? { onDecimal: () => changeAmount(`${amount}.`) } : {})}
-          onDelete={() => changeAmount(amount.slice(0, -1))}
-        />
-      ) : null}
 
-      <Button
-        size="lg"
-        variant="solid"
-        accent="lilac"
-        disabled={
-          !selected ||
-          state.step === "no-route" ||
-          state.step === "insufficient" ||
-          (!quoted && !canQuote)
-        }
-        onPress={() => (quoted ? onPay() : selected && onQuote(selected, fixedAmount ?? typed))}
-      >
-        <ButtonText>{ctaLabel}</ButtonText>
-      </Button>
+          {state.step === "quoted" ? (
+            <View direction="column" align="stretch" justify="center" gap="sm">
+              {routeDetail(state.quote.option) ? (
+                <Text size="md" muted align="center">
+                  {routeDetail(state.quote.option)}
+                </Text>
+              ) : null}
+              <SwapRouteChoices
+                options={state.options.map((option) => ({
+                  id: option.optionId,
+                  label: writeSettle(option.settleAmount),
+                  sublabel: routeDetail(option),
+                }))}
+                selectedId={state.quote.option.optionId}
+                onSelect={onSelectOption}
+              />
+            </View>
+          ) : /* The amount is typed while the tokens load; the token only bounds it. */
+          !fixedAmount ? (
+            <AmountKeypad
+              onDigit={(digit) => changeAmount(`${amount}${digit}`)}
+              {...(selected?.decimals !== 0 ? { onDecimal: () => changeAmount(`${amount}.`) } : {})}
+              onDelete={() => changeAmount(amount.slice(0, -1))}
+            />
+          ) : null}
+        </>,
+        <Button
+          size="lg"
+          variant="solid"
+          accent="lilac"
+          disabled={
+            !selected ||
+            state.step === "no-route" ||
+            state.step === "insufficient" ||
+            (!quoted && !canQuote)
+          }
+          onPress={() => (quoted ? onPay() : selected && onQuote(selected, fixedAmount ?? typed))}
+        >
+          <ButtonText>{ctaLabel}</ButtonText>
+        </Button>,
+        true,
+      )}
 
       <PayWalletTokenPicker
         visible={picking}
@@ -295,7 +353,7 @@ const PayWalletSwapPanel: React.FC<Props> = ({
           }
         }}
       />
-    </View>
+    </>
   );
 };
 

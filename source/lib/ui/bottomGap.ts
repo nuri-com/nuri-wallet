@@ -1,10 +1,10 @@
 /**
  * The one bottom gap under a screen's last button.
  *
- * Every screen's buttons sit the same distance from the bottom edge. On a
- * phone with a home indicator (bottom inset > 0) the gap is the inset plus the
- * DS `sm` space; with no inset it is the DS
- * `lg` space (Touch ID iPhones, a Safari tab with its bottom toolbar docked).
+ * Every screen's buttons sit the same distance from the bottom edge: the
+ * device's bottom inset (home indicator, Android nav bar; 0 on Touch ID
+ * iPhones and in a Safari tab with its toolbar docked) plus the DS `lg` space,
+ * as the design system's send screens draw it.
  * `AppFooter` applies this rule through the DS Footer; the few
  * surfaces that cannot host a DS Footer (a WebView page, the keyboard-driven
  * onboarding footer) use the pixel form, so both land on the same number.
@@ -13,14 +13,14 @@
  * (pinned by bottomGap.test.ts against the vendored tokens).
  */
 
-/** DS space `sm`. */
-export const BOTTOM_GAP_WITH_INSET = 6;
+/** DS space `lg`: the gap above the inset is the same with or without one. */
+export const BOTTOM_GAP_WITH_INSET = 18;
 /** DS space `lg`. */
 export const BOTTOM_GAP_WITHOUT_INSET = 18;
 
 /** The DS space token the Footer adds on top of the bottom inset. */
-export function bottomGapToken(bottomInset: number): "sm" | "lg" {
-  return bottomInset > 0 ? "sm" : "lg";
+export function bottomGapToken(_bottomInset: number): "lg" {
+  return "lg";
 }
 
 /** The whole gap in px (inset included), for surfaces without a DS Footer. */
