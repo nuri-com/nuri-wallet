@@ -17,7 +17,9 @@
 import "@rainbow-me/rainbowkit/styles.css";
 import {
   RainbowKitProvider,
+  type Wallet,
   connectorsForWallets,
+  getWalletConnectConnector,
   lightTheme,
   useAccountModal,
   useConnectModal,
@@ -66,6 +68,31 @@ const transports = Object.fromEntries(
   CHAINS.map((chain) => [chain.id, http(getChainRpcUrl(chain.id as ChainId))]),
 ) as Record<(typeof CHAINS)[number]["id"], ReturnType<typeof http>>;
 
+/**
+ * MetaMask without the MetaMask SDK. RainbowKit's own metaMaskWallet connects
+ * phone browsers through @metamask/sdk, which ships its own usage analytics.
+ * This keeps RainbowKit's MetaMask entry (name, icon, install links) but always
+ * connects over WalletConnect: a phone browser opens the MetaMask app, a desktop
+ * without the extension shows MetaMask's QR. An installed extension (and the
+ * MetaMask app's own browser) announces itself through EIP-6963 and replaces
+ * this entry, as before.
+ */
+function metaMaskOverWalletConnect(params: Parameters<typeof metaMaskWallet>[0]): Wallet {
+  const { createConnector: _sdkConnector, ...metaMask } = metaMaskWallet(params);
+  const wcUri = (uri: string) => `https://metamask.app.link/wc?uri=${encodeURIComponent(uri)}`;
+  return {
+    ...metaMask,
+    installed: undefined,
+    mobile: {
+      // Android opens the wc: link in its wallet chooser; iOS needs MetaMask's scheme.
+      getUri: (uri) =>
+        /android/i.test(navigator.userAgent) ? uri : `metamask://wc?uri=${encodeURIComponent(uri)}`,
+    },
+    qrCode: { ...metaMask.qrCode, getUri: wcUri },
+    createConnector: getWalletConnectConnector(params),
+  };
+}
+
 /** Whether this build can offer the wallet modal at all. */
 export const PAY_WALLET_AVAILABLE = WALLETCONNECT_PROJECT_ID.length > 0;
 
@@ -86,7 +113,7 @@ function createPayWalletConfig() {
         {
           groupName: "Wallets",
           wallets: [
-            metaMaskWallet,
+            metaMaskOverWalletConnect,
             rabbyWallet,
             frameWallet,
             rainbowWallet,

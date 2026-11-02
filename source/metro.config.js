@@ -40,7 +40,17 @@ const NODE_ONLY_STUBS = new Set(["node:worker_threads"]);
 // Porto (lib/pay/payWallet.web.tsx lists its wallets explicitly; native uses
 // AppKit's own connector), so it is never constructed and nothing reads these
 // modules at runtime, on any platform.
-const UNUSED_STUBS = new Set(["porto", "porto/internal"]);
+//
+// Same for MetaMask's SDK: wagmi's metaMask connector loads it with a dynamic
+// import, so Metro emits it (and its usage-analytics client) as a chunk even
+// though the pay page connects MetaMask over EIP-6963 or WalletConnect only
+// (lib/pay/payWallet.web.tsx). Stubbing it keeps the SDK out of the build.
+const UNUSED_STUBS = new Set([
+  "porto",
+  "porto/internal",
+  "@metamask/sdk",
+  "@metamask/sdk-analytics",
+]);
 
 // Reown AppKit's React Native packages each install their own valtio 2 copy
 // (the web AppKit inside wagmi's WalletConnect connector needs valtio 1 at the
