@@ -14,15 +14,14 @@
 // Instead, this file fires `emitArkadeWalletSummaryLoaded` after a successful
 // load. The receive modules each register a listener at module-load time and
 // schedule what they care about. walletSummary stays acyclic.
-import { hasTerminalSpend } from "@arkade-os/sdk";
+import { isVtxoSpent } from "@arkade-os/sdk";
 
 // SDK 0.5 removed `isSpendable`. Its body was exactly `!hasTerminalSpend(vtxo)`
-// (sdk 0.4.62, chunk-URT2RVGB.js:2376), and `hasTerminalSpend` is unchanged, so
-// this is the same predicate under its own name — NOT the new
+// (sdk 0.4.62, chunk-URT2RVGB.js:2376), and 0.5 ships that body unchanged as
+// `isVtxoSpent`, so this is the same predicate under its own name — NOT the new
 // `canSpendOffchain`, which additionally excludes swept/expired/unrolled vtxos
 // and would silently drop coins this balance still counts.
-const isSpendable = (vtxo: Parameters<typeof hasTerminalSpend>[0]): boolean =>
-  !hasTerminalSpend(vtxo);
+const isSpendable = (vtxo: Parameters<typeof isVtxoSpent>[0]): boolean => !isVtxoSpent(vtxo);
 import * as btc from "@scure/btc-signer";
 import { bytesToHex } from "../../../lib/bytes";
 import { shortTime } from "../../../lib/logShared";
@@ -245,7 +244,7 @@ function buildBalanceFromWalletRows(
     // in the terminal-spend fields, not the state. Counting state alone put the
     // sats of every lightning/ark send back into the headline: the wallet showed
     // the pre-send total while the send gate (SDK available, which excludes
-    // hasTerminalSpend) read the real spendable — two numbers for one wallet.
+    // isVtxoSpent) read the real spendable — two numbers for one wallet.
     // isSpendable is the same exclusion the spend path uses; only the swept
     // branch checked it before, so spent-settled coins counted forever.
     const unspent = isSpendable(coin as Parameters<typeof isSpendable>[0]);

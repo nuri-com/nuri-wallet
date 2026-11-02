@@ -176,6 +176,31 @@ const byPendingThenNewest = (a: ActivityItem, b: ActivityItem): number => {
   return (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
 };
 
+// ── What a credit to the card actually is ─────────────────────────────────
+// Money in is not automatically a refund: someone can also push money onto the
+// card from their own card. Only the item's own evidence decides, so a push to
+// card never reads as a refund from Wirex.
+const REFUND_OPERATION_REASONS = new Set(["refund", "reversal"]);
+
+function isRefundCredit(item: WirexActivityItem): boolean {
+  const reasons = (item.operations ?? []).map((o) =>
+    (o.operation_reason ?? "").trim().toLowerCase(),
+  );
+  if (reasons.some((reason) => REFUND_OPERATION_REASONS.has(reason))) return true;
+  // An external card is the sender of a push to card, never a refunding merchant.
+  if (item.source?.type === "ExternalCard") return false;
+  // A card purchase reversed to the card: a card transaction with a merchant.
+  return (
+    item.type === "CardTransaction" &&
+    Boolean(item.source?.merchant?.name || item.destination?.merchant?.name)
+  );
+}
+
+/** The last four of the card that pushed money in, when the feed names it. */
+function senderCardLast4(item: WirexActivityItem): string {
+  return (item.source?.card?.pan_last ?? "").trim();
+}
+
 export function mapWirexCardTransactions(
   items: WirexActivityItem[],
   rates?: FxRates,
@@ -184,15 +209,25 @@ export function mapWirexCardTransactions(
   if (!Array.isArray(items)) return [];
 
   return items
-    .map((item) =>
-      wirexActivityRow(item, rates, home, {
-        title: merchantName(item) || t("screen.CardTransactionsModal.typePayment"),
-        settledLabel:
-          item.direction === "Inbound"
-            ? t("screen.CardTransactionsModal.typeRefund")
+    .map((item) => {
+      const isCredit = item.direction === "Inbound";
+      const refund = isCredit && isRefundCredit(item);
+      // A credit that is not a refund came from someone else's card.
+      const depositLast4 = isCredit && !refund ? senderCardLast4(item) : "";
+      const deposit = isCredit && !refund;
+      return wirexActivityRow(item, rates, home, {
+        title: deposit
+          ? depositLast4
+            ? t("screen.CardPayout.cardRow", { last4: depositLast4 })
+            : t("screen.CardTransactionsModal.typePushToCard")
+          : merchantName(item) || t("screen.CardTransactionsModal.typePayment"),
+        settledLabel: refund
+          ? t("screen.CardTransactionsModal.typeRefund")
+          : deposit
+            ? t("screen.CardTransactionsModal.typePushToCard")
             : t("screen.CardTransactionsModal.typePayment"),
-      }),
-    )
+      });
+    })
     .sort(byPendingThenNewest);
 }
 

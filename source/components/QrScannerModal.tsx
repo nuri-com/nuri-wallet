@@ -7,7 +7,6 @@ import * as Clipboard from "expo-clipboard";
 import {
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   NuriScope,
@@ -23,6 +22,7 @@ import { createScanHold } from "./qrScanHold";
 import type { QrScannerProps } from "../types/debug";
 import { extractAddressFromQR, parseQr } from "../lib/qr";
 import { t } from "../lib/i18n";
+import AppFooter from "./AppFooter";
 
 type Props = QrScannerProps;
 
@@ -343,14 +343,7 @@ const QrScannerModal: React.FC<Props> = ({
             </Text>
           </View>
 
-          <Footer
-            safeAreaBottom
-            chrome="canvas"
-            direction="column"
-            align="stretch"
-            paddingBottom="lg"
-            paddingX="lg"
-          >
+          <AppFooter canvas>
             {/* Paste and Upload are the only actions: the scanner accepts what it
               can act on, and anything typed by hand belongs on the rail's own
               send screen, which knows the currency. */}
@@ -372,7 +365,7 @@ const QrScannerModal: React.FC<Props> = ({
                 onDecoded={onUploadDecoded}
               />
             </View>
-          </Footer>
+          </AppFooter>
         </RNView>
       </RNView>
     </DsSheetHost>

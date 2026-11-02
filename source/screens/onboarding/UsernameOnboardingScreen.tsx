@@ -20,6 +20,7 @@ import {
 } from "../../services/auth/PasskeyNativeModuleService";
 import { t } from "../../lib/i18n";
 import { useKeyboardHeight } from "../../lib/useKeyboardHeight";
+import { bottomGapPx } from "../../lib/ui/bottomGap";
 import {
   acquireUsernameAssertionLock,
   completeUsernamePasskeyAssertion,
@@ -34,7 +35,6 @@ type Props = {
 };
 
 const FOOTER_KEYBOARD_GAP = 24;
-const FOOTER_BOTTOM_MIN = 48;
 const PREFETCH_RETRY_MS = 2500;
 const CLAIM_BUSY_TRANSITION_TIMEOUT_MS = 5000;
 
@@ -265,9 +265,7 @@ const UsernameOnboardingScreen: React.FC<Props> = ({ onSubmit, busy, externalErr
   }, [markClaimSubmitted, passkeyPrefetch, retryPrefetch, submitControl]);
 
   const footerBottomPadding =
-    keyboardHeight > 0
-      ? keyboardHeight + FOOTER_KEYBOARD_GAP
-      : Math.max(insets.bottom, FOOTER_BOTTOM_MIN);
+    keyboardHeight > 0 ? keyboardHeight + FOOTER_KEYBOARD_GAP : bottomGapPx(insets.bottom);
   const submitLabel = submitControl?.label ?? t("screen.UsernamePicker.continue");
   // Keep Continue actionable while native preparation is unavailable. The
   // native handler reports the missing preparation and joins/restarts the

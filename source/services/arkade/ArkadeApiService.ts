@@ -257,6 +257,9 @@ export type ArkadeLnurlStatusResponse = {
   max_sendable_msat?: number;
   has_published_invoice?: boolean;
   invoice_expires_at_ms?: number;
+  /** Older servers omit both. */
+  invited_by?: string | null;
+  invitees?: Array<{ username: string; invited_at_ms: number }>;
 };
 
 export type ArkadeLnurlSetProfileResponse = {
@@ -870,6 +873,8 @@ export async function arkadeBootstrapClaimRegister(
     evm_address?: string;
     arkade_address?: string;
     btc_address?: string;
+    /** The inviter from an invite link; the server records it for a new user only. */
+    referrer?: string;
   },
 ): Promise<ArkadeLnurlRegisterResponse> {
   const res = await fetchWithTimeout(
@@ -893,6 +898,8 @@ export async function arkadeLnurlRegister(
     evm_address?: string;
     arkade_address?: string;
     btc_address?: string;
+    /** The inviter from an invite link; the server records it for a new user only. */
+    referrer?: string;
   },
 ): Promise<ArkadeLnurlRegisterResponse> {
   const res = await fetchWithTimeout("lnurlRegister", buildSignerUrl("/arkade/lnurl/register"), {
@@ -959,6 +966,26 @@ export async function arkadeLnurlNames(
 
 // Usernames starting with what the user typed (see the server's /arkade/lnurl/search).
 // No login: like the other by-name lookups, limited per address by the server.
+export type ArkadeLightningLimitsResponse = {
+  ok?: boolean;
+  send?: { min_sats?: number; max_sats?: number } | null;
+  receive?: { min_sats?: number; max_sats?: number } | null;
+};
+
+// The Lightning limits from the solver's live card (the server's
+// /arkade/lightning/limits). No login: they are the solver's public terms.
+export async function arkadeLightningLimits(): Promise<ArkadeLightningLimitsResponse> {
+  const res = await fetchWithTimeout(
+    "lightningLimits",
+    buildSignerUrl("/arkade/lightning/limits"),
+    {
+      method: "GET",
+      headers: buildHeaders(false),
+    },
+  );
+  return parseJsonResponse<ArkadeLightningLimitsResponse>("lightningLimits", res);
+}
+
 export async function arkadeLnurlSearch(query: string): Promise<ArkadeLnurlSearchResponse> {
   const res = await fetchWithTimeout("lnurlSearch", buildSignerUrl("/arkade/lnurl/search"), {
     method: "POST",

@@ -3,6 +3,7 @@ import type React from "react";
 
 import { Button, ButtonText, Header, IconButton, Text, Topbar, TopbarTrailing, View } from "@ds";
 import { t } from "../lib/i18n";
+import AppFooter from "./AppFooter";
 import DsSheetHost from "./DsSheetHost";
 
 type Props = {
@@ -34,10 +35,12 @@ const PasskeyContinueOrSwitchModal: React.FC<Props> = ({
           </TopbarTrailing>
         </Topbar>
       </Header>
-      <View direction="column" align="stretch" gap="md" paddingX="lg" paddingBottom="lg">
+      <View direction="column" align="stretch" paddingX="lg" paddingBottom="lg">
         <Text size="lg" emphasis>
           {t("screen.PasskeyContinueOrSwitchModal.title")}
         </Text>
+      </View>
+      <AppFooter>
         <Button
           size="lg"
           variant="solid"
@@ -59,7 +62,7 @@ const PasskeyContinueOrSwitchModal: React.FC<Props> = ({
         >
           <ButtonText>{t("screen.PasskeyContinueOrSwitchModal.useOtherPasskey")}</ButtonText>
         </Button>
-      </View>
+      </AppFooter>
     </DsSheetHost>
   );
 };

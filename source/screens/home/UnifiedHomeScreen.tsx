@@ -73,7 +73,7 @@ import {
   formatFiat,
   heldWithHome,
   satsToFiatIn,
-  sumKnown,
+  sumAvailable,
 } from "../../lib/currency/displayFiat";
 import { useHomeCurrency } from "../../lib/currency/useHomeCurrency";
 import { t } from "../../lib/i18n";
@@ -125,6 +125,7 @@ import { evmRecipientLookup } from "../../services/pay/evmRecipientLookup";
 import { type PayIntent, payIntentBalances, payIntentRecipient } from "../../lib/pay/payIntent";
 import { PayIntentGate, fencePayIntentResets } from "../../lib/pay/payIntentGate";
 import { takePayIntent } from "../../lib/pay/payIntentStore";
+import { nuriLightningAddress } from "../../lib/pay/nuriUsername";
 import { resolveEnsName } from "../../lib/qr/resolveEns";
 import {
   ark as arkDestination,
@@ -344,6 +345,15 @@ const RAIL_SWAP_ASSET: Partial<Record<RailKey, SwapAssetId>> = {
   onchain: BTC_ONCHAIN_ASSET,
 };
 
+/**
+ * The history a rail's own row opens. Both bitcoin rails open the one Bitcoin
+ * history, which lists them together; the card's dollar pocket opens the card.
+ */
+function historyRailFor(rowRail: RailKey): RailKey | "bitcoin" {
+  if (rowRail === "onchain" || rowRail === "arkade") return "bitcoin";
+  return rowRail === "visaUsd" ? "visa" : rowRail;
+}
+
 // One figure, two writings. Everywhere an amount shares its line with other
 // text — a row, a sheet, a history entry — it states the ISO code, which reads
 // the same in every language. The balance region is the exception: its figure is
@@ -493,7 +503,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // arkade rail's pending-sweep row.
   const unlockState = useArkadeReceiveUnlockState();
   // Which rail's transaction list is open.
-  const [historyRail, setHistoryRail] = useState<RailKey | null>(null);
+  const [historyRail, setHistoryRail] = useState<RailKey | "bitcoin" | null>(null);
   // Euro/dollar that has left the wallet and not settled — the rails' in-flight
   // rows, and the history modal's own pending section.
   const [moneyInFlight, setMoneyInFlight] = useState<MoneyInFlight[]>([]);
@@ -972,7 +982,9 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // Which bitcoin rail a Move from Bitcoin spends: the funded one.
   const btcRail: "onchain" | "arkade" = onchainActive && onchainSats > 0 ? "onchain" : "arkade";
   const overviewImages = { bitcoin: BTC_LOGO, cash: EUR_FLAG, banking: VISA_LOGO };
-  const total = formatFiat(sumKnown(overviewGroups.map((group) => group.amountHome)), home, {
+  // The total counts what is known: a source that cannot be read is left out
+  // rather than turning the whole balance into a dash.
+  const total = formatFiat(sumAvailable(overviewGroups.map((group) => group.amountHome)), home, {
     style: "glyph",
   });
   const homeFlag = home === "USD" ? USD_FLAG : EUR_FLAG;
@@ -1024,7 +1036,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           const rowRail = row.key.slice(row.key.lastIndexOf("-") + 1) as RailKey;
           rows.push({
             key: row.key,
-            onPress: () => setHistoryRail(rowRail === "visaUsd" ? "visa" : rowRail),
+            onPress: () => setHistoryRail(historyRailFor(rowRail)),
             label: t(`screen.HomeScreen.${row.label}`),
             amount: `${sign} ${figure}`,
             converted,
@@ -1036,7 +1048,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       if (key === "onchain" && pendingVtxoSats > 0) {
         rows.push({
           key: "pending-vtxo-balance",
-          onPress: () => setHistoryRail("arkade"),
+          onPress: () => setHistoryRail("bitcoin"),
           label: t("screen.BitcoinTransactionsModal.pendingBalanceLabel"),
           amount: satsStr(pendingVtxoSats),
           converted: homeStr(satsToHome(pendingVtxoSats)),
@@ -1340,23 +1352,24 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
 
   // What the open home card holds, one row per rail: Bitcoin = Onchain and
   // Lightning, Cash = euro and dollar, Visa & Banking = the money on the card in
-  // each currency it holds. Tapping a row opens that rail's history.
+  // each currency it holds. Tapping a row opens its rail's history, except the
+  // bitcoin rows: Bitcoin has one history for both rails, opened below them.
   const groupBalanceRows: WealthBalanceRow[] = useMemo(() => {
     if (openRail === "onchain") {
+      // The two bitcoin rows state their own balances only: the one history
+      // below lists both rails together, so a row of its own is not a way in.
       return [
         {
           key: "onchain",
           label: t("screen.HomeScreen.rowOnchain"),
           image: BTC_LOGO,
           figure: listSatsStr(onchainSats),
-          onPress: () => setHistoryRail("onchain"),
         },
         {
           key: "arkade",
           label: t("screen.HomeScreen.rowLightning"),
           image: LIGHTNING_LOGO,
           figure: listSatsStr(arkadeSats),
-          onPress: () => setHistoryRail("arkade"),
         },
       ];
     }
@@ -1652,18 +1665,26 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
 
   const receiveAddress = (() => {
     switch (receiveRail) {
+      // The Lightning address first: any Lightning wallet can pay it, and it
+      // lands in Arkade (server-owned receive, claimed with the app closed).
       case "arkade":
         return {
           primary: {
+            label: t("screen.HomeScreen.receiveLabelLightning"),
+            value: username ? nuriLightningAddress(username) : null,
+          },
+          secondary: {
             label: t("screen.HomeScreen.receiveLabelInstant"),
             value: addressSnapshot.currentAddress,
           },
           ...(addressSnapshot.musig2Address
             ? {
-                secondary: {
-                  label: t("screen.HomeScreen.receiveLabelOnchain"),
-                  value: addressSnapshot.musig2Address,
-                },
+                more: [
+                  {
+                    label: t("screen.HomeScreen.receiveLabelOnchain"),
+                    value: addressSnapshot.musig2Address,
+                  },
+                ],
               }
             : {}),
         };
@@ -1943,6 +1964,26 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       return undefined;
     },
     [wirexBankReady, wirexSend.startSepaTo, cardPayout.startWith],
+  );
+
+  // Send again on a row of a contact's history (#1793): close Address book and
+  // Settings, then the same send that row's Send again opens in the activity.
+  const sendAgainFromContact = useCallback((run: () => void) => {
+    setAddressBookOpen(false);
+    closeSettings();
+    setTimeout(run, MODAL_HANDOFF_DELAY_MS);
+  }, []);
+  const sendAgainCashFromContact = useCallback(
+    (address: string, rail: "wallet" | "dollar") =>
+      sendAgainFromContact(() =>
+        routeSendRef.current({ destinations: [baseDestination(address)], person: null }, [rail]),
+      ),
+    [sendAgainFromContact],
+  );
+  const sendAgainBankFromContact = useCallback(
+    (counterparty: WirexBankCounterparty) =>
+      sendAgainFromContact(() => handleSendAgain(counterparty)),
+    [sendAgainFromContact, handleSendAgain],
   );
 
   // "Add to address book" on an activity row: close the history and open the
@@ -2522,7 +2563,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                       carouselRailKey === "visa"
                         ? "visa"
                         : carouselRailKey === "onchain"
-                          ? btcRail
+                          ? "bitcoin"
                           : cashRail,
                     )
                   }
@@ -2576,7 +2617,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         balances={groupBalanceRows}
         onReceive={() => receiveFromRail(openRail)}
         onSend={() => onCardButton("send")}
-        onHistory={() => setHistoryRail(openRail)}
+        onHistory={() => setHistoryRail(openRail === "onchain" ? "bitcoin" : openRail)}
         extra={pendingSweepExtra ?? cardFoundExtra}
       />
 
@@ -2625,6 +2666,8 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         onPay={payFromAddressBook}
         saveRequest={addressBookSaveRequest}
         onSaveRequestHandled={clearAddressBookSaveRequest}
+        onSendAgainCash={sendAgainCashFromContact}
+        onSendAgainBank={sendAgainBankFromContact}
       />
 
       <ReceiveModal
@@ -2635,6 +2678,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         title={t("screen.HomeScreen.receiveTitle")}
         primary={receiveAddress.primary}
         secondary={receiveAddress.secondary}
+        more={"more" in receiveAddress ? receiveAddress.more : undefined}
         isGenerating={addressSnapshot.isGeneratingAddress}
         emptyText={t("screen.HomeScreen.receiveEmpty")}
         // Only the arkade rail derives its address here, so only it can fail
@@ -2657,6 +2701,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
 
       <LightningInvoiceSheet
         visible={showLightningInvoiceSheet}
+        lightningAddress={username ? nuriLightningAddress(username) : null}
         onClose={() => setShowLightningInvoiceSheet(false)}
         onCreateInvoice={async (amountSats) => {
           // The server receive API states an expiry only when it has one; the
@@ -3198,17 +3243,14 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       />
 
       <BitcoinTransactionsModal
-        visible={historyRail === "arkade" || historyRail === "onchain"}
+        visible={historyRail === "bitcoin"}
         onClose={() => setHistoryRail(null)}
-        rail={historyRail === "onchain" ? "onchain" : "arkade"}
-        address={
-          historyRail === "onchain" ? addressSnapshot.musig2Address : addressSnapshot.currentAddress
-        }
-        // Which on-chain addresses' rows belong to this rail. A row is
-        // classified against the address it was read for, so the rail states
-        // its own membership rather than the list inferring it. History only:
-        // `address` above stays the address the rail is paid at.
-        historyAddresses={historyRail === "onchain" ? [addressSnapshot.musig2Address] : undefined}
+        // One history for both bitcoin rails: the on-chain rows of the MuSig2
+        // wallet and of the Arkade boarding address, plus the Arkade wallet's
+        // own off-chain history, in one timeline.
+        rail="bitcoin"
+        address={addressSnapshot.currentAddress}
+        historyAddresses={[addressSnapshot.currentAddress, addressSnapshot.musig2Address]}
       />
 
       <WalletTransactionsModal
@@ -3408,6 +3450,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         onSubmit={(email) => void onboarding.submitEmail(email)}
         busy={onboarding.busy}
         failed={onboarding.failed}
+        emailInUse={onboarding.emailInUse}
       />
     </>
   );

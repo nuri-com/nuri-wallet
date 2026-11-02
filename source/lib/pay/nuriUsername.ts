@@ -14,10 +14,15 @@ import { isEnsName } from "../qr/resolveEns";
 const LIGHTNING_SUFFIX = "@nuri.com";
 const ENS_SUFFIX = `.${ENS_PARENT_DOMAIN}`;
 
+/** The `<name>@nuri.com` Lightning address of a Nuri username. */
+export function nuriLightningAddress(username: string): string {
+  return `${username.trim().toLowerCase()}${LIGHTNING_SUFFIX}`;
+}
+
 /**
- * A Nuri user's own `<name>@nuri.com` Lightning address. Lightning receive is
- * not available, so a payment to one cannot arrive: it is never offered or paid
- * as Lightning; the name it carries is paid at the user's Arkade address.
+ * A Nuri user's own `<name>@nuri.com` Lightning address. From inside Nuri it
+ * is never paid as Lightning: the name it carries is paid at the user's Arkade
+ * address, which is direct and needs no swap.
  */
 export function isNuriLightningAddress(input: string): boolean {
   const value = String(input || "")

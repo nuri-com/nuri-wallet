@@ -61,7 +61,10 @@ const BrandStatusView: FC<Props> = ({ title, amount, caption, illustration, foot
       justify="between"
       gap="lg"
       paddingX="lg"
-      paddingBottom="lg"
+      // A CTA here sits on the host's bottom edge: the host gives the app's one
+      // bottom gap (inset + lib/ui/bottomGap), exactly as AppFooter does. Without
+      // a CTA the view keeps its own breathing room above whatever follows.
+      {...(footer ? {} : { paddingBottom: "lg" as const })}
       fill="grow"
     >
       <View direction="column" align="center" gap="md" paddingTop="lg">

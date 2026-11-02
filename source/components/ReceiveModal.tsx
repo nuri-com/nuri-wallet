@@ -1,14 +1,13 @@
 // @component receive
 // One receive sheet for every rail (DS surface): a read-only address field with
-// a transfer-vertical accessory to flip between two addresses, the QR below,
-// Request + Share. Bitcoin flips lightning <-> on-chain; Wallet flips the ENS
-// name <-> EVM address. Emin's UX, DS components.
+// a transfer-vertical accessory to step through the rail's addresses, the QR
+// below, Request + Share. Bitcoin steps Lightning address -> Arkade -> on-chain;
+// Wallet flips the ENS name <-> EVM address. Emin's UX, DS components.
 import React, { useEffect, useState } from "react";
 import { Share } from "react-native";
 import {
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   Pressable,
@@ -23,6 +22,7 @@ import AddressQrTile from "./AddressQrTile";
 import DsSheetHost from "./DsSheetHost";
 import { copyToClipboard } from "../lib/copyToClipboard";
 import { t } from "../lib/i18n";
+import AppFooter from "./AppFooter";
 
 /** One selectable address. `value` may be absent while it is still loading. */
 export type ReceiveAddress = {
@@ -40,6 +40,8 @@ type Props = {
   primary: ReceiveAddress;
   /** Omit on rails that expose a single address — the flip accessory hides. */
   secondary?: ReceiveAddress;
+  /** Further addresses after `secondary`, in the order the flip visits them. */
+  more?: ReceiveAddress[];
   isGenerating?: boolean;
   emptyText: string;
   /**
@@ -59,26 +61,29 @@ const ReceiveModal: React.FC<Props> = ({
   title,
   primary,
   secondary,
+  more,
   isGenerating = false,
   emptyText,
   errorText,
   onRetry,
   onRequest,
 }) => {
-  const [showSecondary, setShowSecondary] = useState(false);
+  const [faceIndex, setFaceIndex] = useState(0);
 
   useEffect(() => {
-    if (!visible) setShowSecondary(false);
+    if (!visible) setFaceIndex(0);
   }, [visible]);
 
-  // Fall back to the other address when the selected one does not exist yet
-  // (no username registered). Single-address rails pass no `secondary`, so the
-  // fallback and the flip accessory both collapse to the primary.
-  const effectiveSecondary = Boolean(secondary) && (showSecondary || !primary.value);
-  const selected = effectiveSecondary && secondary ? secondary : primary;
+  // Only addresses that exist are offered (no username registered means no
+  // Lightning address yet); with none loaded the primary shows its placeholder.
+  // Single-address rails pass no `secondary`, so the flip accessory hides.
+  const faces = [primary, ...(secondary ? [secondary] : []), ...(more ?? [])].filter(
+    (face) => face.value,
+  );
+  const selected = faces.length > 0 ? faces[faceIndex % faces.length] : primary;
   const qrValue = selected.value ?? "";
   const qrCode = selected.qrValue !== undefined ? (selected.qrValue ?? "") : qrValue;
-  const canSwitch = Boolean(primary.value && secondary?.value);
+  const canSwitch = faces.length > 1;
   // A failed derivation is not the same as "no address yet": it says so, and it
   // offers the retry, because nothing else in the app re-runs the derivation.
   const showRetry = !qrValue && !isGenerating && Boolean(errorText) && Boolean(onRetry);
@@ -157,7 +162,7 @@ const ReceiveModal: React.FC<Props> = ({
                 icon="transfer-vertical"
                 variant="soft"
                 accessibilityLabel={t("component.ReceiveModal.switchAddressType")}
-                onPress={() => setShowSecondary(!effectiveSecondary)}
+                onPress={() => setFaceIndex((index) => (index + 1) % faces.length)}
               />
             ) : null}
           </View>
@@ -183,7 +188,7 @@ const ReceiveModal: React.FC<Props> = ({
         </View>
       </Scroll>
 
-      <Footer safeAreaBottom direction="column" align="stretch" paddingBottom="lg" paddingX="lg">
+      <AppFooter>
         <View direction="row" gap="sm" distribute="even">
           <Button
             size="lg"
@@ -203,7 +208,7 @@ const ReceiveModal: React.FC<Props> = ({
             <ButtonText>{t("common.share")}</ButtonText>
           </Button>
         </View>
-      </Footer>
+      </AppFooter>
     </DsSheetHost>
   );
 };

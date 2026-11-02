@@ -162,7 +162,6 @@ export async function buildBitcoinSendPsbt(
       feePerByte: feeRate,
       bip69: true,
       createTx: true,
-      // @ts-expect-error @scure/btc-signer@2.0.1 types say number, runtime requires bigint
       dust: DUST_SATS,
     },
   );

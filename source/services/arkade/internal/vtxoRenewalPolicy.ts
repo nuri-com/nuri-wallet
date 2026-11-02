@@ -9,7 +9,7 @@
 // the coin — `expiresAt`, read through the SDK's `isVtxoExpiringSoon`
 // (node_modules/@arkade-os/sdk/dist/chunk-ZTGTQP2W.js) — never the server's
 // `/v1/info` batch defaults, which describe a fresh batch, not this coin's.
-import { isRecoverable, isSpendable, isVtxoExpiringSoon } from "@arkade-os/sdk";
+import { isVtxoExpiringSoon, isVtxoSpent } from "@arkade-os/sdk";
 import {
   buildArkadeServerDecayLeaves,
   buildArkadeServerDecayVtxoScript,
@@ -52,7 +52,9 @@ export function selectArkadeVtxoRenewalCandidates<T>(
     if (!vtxo || typeof vtxo !== "object") continue;
     if (candidates.length >= ARKADE_VTXO_RENEWAL_MAX_INPUTS) break;
     const coin = vtxo as unknown as SdkVtxo;
-    if (!isSpendable(coin) || isRecoverable(coin)) continue;
+    // SDK 0.5 removed `isSpendable` (= `!isVtxoSpent`) and `isRecoverable`
+    // (= swept and unspent), so skipping spent or swept coins is the same rule.
+    if (isVtxoSpent(coin) || (coin as { isSwept?: boolean }).isSwept) continue;
     if (!isVtxoExpiringSoon(coin, thresholdMs)) continue;
     candidates.push(vtxo);
     sats += vtxoSats(vtxo);

@@ -83,7 +83,21 @@ export default function BiometricLockModal({ visible }: Props) {
   }, [handleWalletAccess, visible]);
 
   return (
-    <FullscreenLayer visible={visible}>
+    <FullscreenLayer
+      visible={visible}
+      footer={
+        <Button
+          size="lg"
+          variant="solid"
+          accent="lilac"
+          disabled={busy}
+          onPress={() => void handleWalletAccess("button")}
+          accessibilityLabel={t("screen.SecureKeyStorage.accessWalletTitle")}
+        >
+          <ButtonText>{t("screen.SecureKeyStorage.accessWalletTitle")}</ButtonText>
+        </Button>
+      }
+    >
       <View direction="column" align="center" gap="xl" paddingTop="lg">
         <BrandDisplayTitle>{t("screen.BiometricLockModal.headline")}</BrandDisplayTitle>
       </View>
@@ -97,17 +111,6 @@ export default function BiometricLockModal({ visible }: Props) {
           {hint}
         </Text>
       ) : null}
-
-      <Button
-        size="lg"
-        variant="solid"
-        accent="lilac"
-        disabled={busy}
-        onPress={() => void handleWalletAccess("button")}
-        accessibilityLabel={t("screen.SecureKeyStorage.accessWalletTitle")}
-      >
-        <ButtonText>{t("screen.SecureKeyStorage.accessWalletTitle")}</ButtonText>
-      </Button>
     </FullscreenLayer>
   );
 }

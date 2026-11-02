@@ -4,7 +4,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
-  Footer,
   Header,
   IconButton,
   Scroll,
@@ -28,6 +27,7 @@ import {
 import { startSepaInFlight } from "../../../services/money/announce";
 import { startMovePill } from "../../../services/wallet/CardTransferPill";
 import { wirexService, type WirexPayoutCard } from "../../../services/wirex/WirexService";
+import AppFooter from "../../../components/AppFooter";
 
 type Props = {
   visible: boolean;
@@ -224,15 +224,7 @@ const CardPayoutAmountModal: React.FC<Props> = ({
         </View>
       </Scroll>
 
-      <Footer
-        safeAreaBottom
-        chrome="canvas"
-        direction="column"
-        align="stretch"
-        paddingBottom="sm"
-        paddingX="lg"
-        gap="sm"
-      >
+      <AppFooter canvas>
         <Button
           size="lg"
           variant="solid"
@@ -249,7 +241,7 @@ const CardPayoutAmountModal: React.FC<Props> = ({
               })
             : t("screen.CardPayout.sendCtaLabelNoAmount", { last4: card?.last4 ?? "" })}
         </Button>
-      </Footer>
+      </AppFooter>
     </DsSheetHost>
   );
 };

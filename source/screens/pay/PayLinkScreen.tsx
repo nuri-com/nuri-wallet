@@ -20,7 +20,6 @@ import {
   Button,
   ButtonText,
   ButtonIcon,
-  Footer,
   Header,
   IconButton,
   Screen,
@@ -28,6 +27,7 @@ import {
   Text,
   Topbar,
   TopbarTrailing,
+  useNuriSafeAreaInsets,
   View,
 } from "@ds";
 import GotPaidIllustration from "../../assets/illustrations/gotpaid.svg";
@@ -48,6 +48,7 @@ import {
   paySourceDecimals,
 } from "../../lib/pay/payTarget";
 import { parsePayLink } from "../../lib/pay/payLinkPath";
+import { hasStoredKey } from "../../lib/secureKeyStorage";
 import { type PayIntent } from "../../lib/pay/payIntent";
 import { usePayLinkAppHandoff } from "../../lib/pay/payAppHandoff";
 import { PAY_WALLET_AVAILABLE } from "../../lib/pay/payWallet";
@@ -66,6 +67,8 @@ import {
 import { usePayLinkTarget } from "./hooks/usePayLinkTarget";
 import { usePayOrderStatus } from "./hooks/usePayOrderStatus";
 import { usePayWalletSwap } from "./hooks/usePayWalletSwap";
+import AppFooter from "../../components/AppFooter";
+import { bottomGapToken } from "../../lib/ui/bottomGap";
 
 const K = "screen.PayLink";
 
@@ -98,6 +101,9 @@ const SOURCE_LOOK: Record<
 
 /** Sources the page pays without the keypad: the wallet panel or a bare address. */
 const NO_KEYPAD = new Set<PaySourceAsset>(["EVM_WALLET", "EVM_ANY"]);
+
+/** Whether this origin holds a wallet: the same check the app's own launch makes. */
+const hasWalletOnThisOrigin = (): Promise<boolean> => hasStoredKey("ethereum");
 
 /** What the link asks for: its currency (`?to=`) and a fixed amount (`?amount=`). */
 function initialLink(): ReturnType<typeof parsePayLink> {
@@ -148,6 +154,7 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
   const { target, busy, failed, request, reset } = usePayLinkTarget();
   // A short screen compacts the keypad before it scrolls.
   const keypadFit = useKeypadFit();
+  const insets = useNuriSafeAreaInsets();
   const [link] = useState(initialLink);
   const { settle } = link;
   // A link with an amount fixes it: no keypad, the recipient's figure is what
@@ -214,7 +221,7 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
     () => ({ username, settle, amount: link.amount, explicit: link.explicit }),
     [username, settle, link.amount, link.explicit],
   );
-  usePayLinkAppHandoff(appIntent, Boolean(recipient) && !desktop);
+  usePayLinkAppHandoff(appIntent, Boolean(recipient) && !desktop, hasWalletOnThisOrigin);
   const look = source ? SOURCE_LOOK[source] : null;
   const needsAmount = rail ? railRequiresAmount(rail) : false;
   // The typed figure has to be expressible in the asset's own smallest unit,
@@ -330,14 +337,20 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
           ) : null}
         </Header>
 
-        <Scroll onLayout={keypadFit.onViewportLayout}>
+        {/* With the amount form the footer owns the bottom edge. Every other
+            state (status screens, wallet panel, payment target) ends in the
+            scroll, so the scroll adds the bottom inset and the content the app's
+            one gap, the same place AppFooter puts its buttons. */}
+        <Scroll onLayout={keypadFit.onViewportLayout} safeAreaBottom={!showForm}>
           <View
             onLayout={keypadFit.onContentLayout}
             direction="column"
             align="stretch"
             gap={keypadFit.compact ? "sm" : "lg"}
             paddingX="lg"
-            paddingBottom={keypadFit.compact ? "sm" : "lg"}
+            paddingBottom={
+              showForm ? (keypadFit.compact ? "sm" : "lg") : bottomGapToken(insets.bottom)
+            }
             fill="grow"
           >
             <View direction="column" align="stretch" gap="lg" fill="grow">
@@ -409,12 +422,6 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
                 />
               ) : null}
 
-              {rail?.kind === "evm-any" && !target && !overlay ? (
-                <Text size="sm" muted align="center">
-                  {t(`${K}.anyTokenHint`)}
-                </Text>
-              ) : null}
-
               {rail && target && !overlay && order?.state !== "settled" ? (
                 <PayTargetView
                   target={target}
@@ -441,14 +448,7 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
         </Scroll>
 
         {showForm ? (
-          <Footer
-            safeAreaBottom
-            direction="column"
-            align="stretch"
-            gap="sm"
-            paddingX="lg"
-            paddingBottom="sm"
-          >
+          <AppFooter>
             <Button
               size="lg"
               variant="solid"
@@ -460,7 +460,7 @@ const PayLinkScreen: React.FC<Props> = ({ username }) => {
               <ButtonIcon name="chevron-right" />
               <ButtonText>{t(`${K}.continue`)}</ButtonText>
             </Button>
-          </Footer>
+          </AppFooter>
         ) : null}
       </View>
 

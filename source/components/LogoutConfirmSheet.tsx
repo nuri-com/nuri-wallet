@@ -1,10 +1,11 @@
 // "Log out?" confirmation in front of a logout.
 import type React from "react";
 
-import { Button, ButtonText, Footer, Header, Text, Topbar, TopbarTitle, View } from "@ds";
+import { Button, ButtonText, Header, Text, Topbar, TopbarTitle, View } from "@ds";
 
 import DsSheetHost from "./DsSheetHost";
 import { t } from "../lib/i18n";
+import AppFooter from "./AppFooter";
 
 type Props = {
   visible: boolean;
@@ -26,15 +27,7 @@ const LogoutConfirmSheet: React.FC<Props> = ({ visible, onClose, onConfirm, busy
         {t("screen.LogoutConfirm.body")}
       </Text>
     </View>
-    <Footer
-      safeAreaBottom
-      chrome="canvas"
-      direction="column"
-      align="stretch"
-      gap="sm"
-      paddingBottom="sm"
-      paddingX="lg"
-    >
+    <AppFooter canvas>
       <Button size="lg" variant="solid" accent="orange" disabled={busy} onPress={onConfirm}>
         <ButtonText>
           {busy ? t("screen.LogoutConfirm.confirmBusy") : t("screen.LogoutConfirm.confirm")}
@@ -45,7 +38,7 @@ const LogoutConfirmSheet: React.FC<Props> = ({ visible, onClose, onConfirm, busy
           <ButtonText>{t("screen.LogoutConfirm.cancel")}</ButtonText>
         </Button>
       )}
-    </Footer>
+    </AppFooter>
   </DsSheetHost>
 );
 

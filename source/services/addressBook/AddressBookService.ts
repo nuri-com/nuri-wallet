@@ -63,6 +63,20 @@ export function getAddressBook(): Promise<AddressBook> {
 }
 
 /**
+ * Whether `book` is still the open book of the signed-in wallet. Never opens
+ * one: false while a reset runs, after it, or once another book replaced it.
+ */
+export async function isOpenAddressBook(book: AddressBook): Promise<boolean> {
+  const current = instance;
+  if (resetting || !current) return false;
+  try {
+    return (await current) === book && instance === current && !resetting;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Forget the current wallet's address book: close the instance (zeroizes its
  * keys, drops decrypted contacts, rejects queued calls). The next
  * getAddressBook() opens the book of whichever wallet is signed in then.

@@ -5,7 +5,6 @@ import * as Clipboard from "expo-clipboard";
 import {
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   Scroll,
@@ -27,6 +26,7 @@ import { normalizeIbanInput } from "../../../lib/ibanFormat";
 import { t } from "../../../lib/i18n";
 import { isValidIban } from "../../../lib/validation";
 import { wirexService } from "../../../services/wirex/WirexService";
+import AppFooter from "../../../components/AppFooter";
 
 export type SepaRecipientData = {
   iban: string;
@@ -460,14 +460,7 @@ const SepaRecipientModal: React.FC<Props> = ({
         </View>
       </Scroll>
 
-      <Footer
-        safeAreaBottom
-        chrome="canvas"
-        direction="column"
-        align="stretch"
-        paddingBottom="sm"
-        paddingX="lg"
-      >
+      <AppFooter canvas>
         <Button
           size="lg"
           variant="solid"
@@ -477,7 +470,7 @@ const SepaRecipientModal: React.FC<Props> = ({
         >
           <ButtonText>{t("screen.SepaRecipientModal.continueLabel")}</ButtonText>
         </Button>
-      </Footer>
+      </AppFooter>
     </DsSheetHost>
   );
 };

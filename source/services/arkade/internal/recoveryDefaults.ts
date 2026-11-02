@@ -538,9 +538,7 @@ export async function installArkadeRecoveryDefaultWallet(
       indexerProvider: wallet.indexerProvider as Parameters<
         typeof ContractManager.create
       >[0]["indexerProvider"],
-      contractRepository: storage.contractRepository as unknown as Parameters<
-        typeof ContractManager.create
-      >[0]["contractRepository"],
+      contractRepository: storage.contractRepository,
       walletRepository: storage.walletRepository,
       watcherConfig: wallet.watcherConfig as Parameters<
         typeof ContractManager.create

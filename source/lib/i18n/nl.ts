@@ -178,6 +178,8 @@ export const nl = {
     },
     BitcoinTransactionsModal: {
       title: "Bitcoin-activiteit",
+      errorRateLimited:
+        "De Bitcoin-geschiedenis is nu bezet. De getoonde rijen zijn nog steeds juist.",
       pendingBalanceLabel: "Bitcoin in behandeling",
     },
     BitcoinReceiveModal: {
@@ -245,6 +247,8 @@ export const nl = {
       openAccountEmailBusy: "Je account wordt ingericht…",
       openAccountDeployingTitle: "Je account wordt ingericht",
       openAccountDeployingBody: "Even geduld, je account wordt aangemaakt en de verificatie start.",
+      openAccountEmailInUse:
+        "Dit e-mailadres wordt al door een ander account gebruikt. Gebruik een ander e-mailadres.",
       openAccountDeployFailed: "We konden je account niet inrichten. Probeer het opnieuw.",
       verificationInProgress: "Verificatie bezig",
       continueVerification: "Verificatie voortzetten",
@@ -308,6 +312,7 @@ export const nl = {
       empty: "Nog geen transacties",
       errorDefault: "Transacties konden niet worden geladen",
       typeRefund: "Terugbetaling",
+      typePushToCard: "Storting op kaart",
       typePayment: "Betaling",
       statusPending: "In behandeling",
       statusFailed: "Geweigerd",
@@ -550,7 +555,7 @@ export const nl = {
       exceedsBalanceHint: "Hoger dan het beschikbare saldo",
     },
     HomeScreen: {
-      greeting: "Welkom %{name}!",
+      greeting: "Welkom %{name}",
       scanA11yLabel: "QR-code scannen",
       details: "Details",
       detailsBank: "Bankgegevens",
@@ -581,6 +586,7 @@ export const nl = {
       railIban: "IBAN",
       railVisa: "Visa",
       receiveTitle: "Ontvangen",
+      receiveLabelLightning: "Lightning",
       receiveLabelInstant: "Direct",
       receiveLabelOnchain: "Onchain",
       receiveLabelEvm: "EVM-adres",
@@ -656,6 +662,7 @@ export const nl = {
       addDestination: "Adres, IBAN, kaart of Lightning toevoegen",
       removeDestination: "Verwijderen",
       payName: "%{name} betalen",
+      historyEmpty: "Nog geen betalingen met %{name}",
       destinationCount: "%{first} +%{count}",
       kind_lightning: "Lightning-adres",
       kind_evm: "EVM-adres",
@@ -686,6 +693,8 @@ export const nl = {
     },
     Settings: {
       payLink: "Betaallink",
+      invite: "Vrienden uitnodigen",
+      inviteCopy: "Uitnodigingslink kopiëren",
       bankCards: "Bank en kaarten",
       bankCardsBody: "Verifieer je account en krijg een IBAN en een Visa-kaart.",
       activate: "Activeren",
@@ -807,8 +816,8 @@ export const nl = {
       statusFailed: "Mislukt",
       sendAgain: "Opnieuw versturen",
       addToAddressBook: "Toevoegen aan adresboek",
-      contactReceived: "%{name} ontving",
-      contactSent: "%{name} stuurde",
+      contactFrom: "Van %{name}",
+      contactTo: "Aan %{name}",
     },
     ReceiveModal: {
       request: "Verzoek",

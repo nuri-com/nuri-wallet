@@ -5,7 +5,6 @@ import { Keyboard, View as RNView, StyleSheet } from "react-native";
 import {
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   NuriScope,
@@ -51,6 +50,7 @@ import {
   type TzStablePayment,
   tzPaymentLapsed,
 } from "../../../services/remit/RemitService";
+import AppFooter from "../../../components/AppFooter";
 
 type Props = WalletSendStablecoinProps;
 
@@ -560,14 +560,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
           </View>
         </Scroll>
 
-        <Footer
-          safeAreaBottom
-          direction="column"
-          align="stretch"
-          paddingBottom="sm"
-          paddingX="lg"
-          gap="sm"
-        >
+        <AppFooter>
           <Button
             size="lg"
             variant="solid"
@@ -587,7 +580,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
           >
             <ButtonText>{ctaLabel}</ButtonText>
           </Button>
-        </Footer>
+        </AppFooter>
       </DsSheetHost>
     </>
   );

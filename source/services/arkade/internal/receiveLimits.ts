@@ -1,19 +1,22 @@
 // What the Lightning receive corridor will actually quote.
 //
-// These are not our policy — they are the beta solver's, discovered by probing
-// the live callback. Below the floor it answers `amount_out_of_range`; above
-// the ceiling it adds its fee ON TOP of the card's max and the quote fails.
-//
-// The card advertises 500..50000, but neither bound is usable in practice:
-//   - 501 sats is refused, 502 mints. The exact edge drifts with the solver's
-//     own costs, so the floor here keeps a small margin above it.
-//   - 50000 always fails, because the fee is added on top of the cap. The
-//     highest amount observed to mint is 49830.
+// These are not our policy: they are the solver card's bounds moved inward by
+// the margins probed live against the 500..50000 sat, 30 bps card, where 501
+// was refused (502 minted) and the fee lands on top of the cap (49830 was the
+// highest amount that minted):
+//   floor   = card min + 5
+//   ceiling = card max - fee at the cap - 20
+// server-arkade-v4 derives the same bounds from its configured card
+// (`receiveLimitsFromCards`); these mirror the current 500..100000 sat card.
 //
 // Enforcing them in the wallet turns a useless "HTTP 400" from the payer's
 // wallet into a bound the user can see BEFORE they hand out an invoice.
-export const ARKADE_RECEIVE_MIN_SATS = 505;
-export const ARKADE_RECEIVE_MAX_SATS = 49_830;
+// The live limits follow the solver's card (lightningLimitsStore); these
+// constants are their fallback.
+import { ARKADE_RECEIVE_MAX_SATS, ARKADE_RECEIVE_MIN_SATS } from "../../../config/constants";
+import { getArkadeLightningLimits } from "./lightningLimitsStore";
+
+export { ARKADE_RECEIVE_MAX_SATS, ARKADE_RECEIVE_MIN_SATS };
 
 export type ReceiveAmountProblem = "below_min" | "above_max" | null;
 
@@ -23,8 +26,9 @@ export function checkReceiveAmountSats(sats: number): ReceiveAmountProblem {
   if (!Number.isFinite(sats)) return sats > 0 ? "above_max" : "below_min";
   if (sats <= 0) return "below_min";
   const whole = Math.trunc(sats);
-  if (whole < ARKADE_RECEIVE_MIN_SATS) return "below_min";
-  if (whole > ARKADE_RECEIVE_MAX_SATS) return "above_max";
+  const { minSats, maxSats } = getArkadeLightningLimits().receive;
+  if (whole < minSats) return "below_min";
+  if (whole > maxSats) return "above_max";
   return null;
 }
 
@@ -39,15 +43,18 @@ export function isReceivableAmountSats(sats: number): boolean {
 export class ArkadeReceiveAmountError extends Error {
   readonly problem: Exclude<ReceiveAmountProblem, null>;
   readonly amountSats: number;
-  readonly minSats = ARKADE_RECEIVE_MIN_SATS;
-  readonly maxSats = ARKADE_RECEIVE_MAX_SATS;
+  readonly minSats: number;
+  readonly maxSats: number;
 
   constructor(problem: Exclude<ReceiveAmountProblem, null>, amountSats: number) {
+    const { minSats, maxSats } = getArkadeLightningLimits().receive;
     super(
       problem === "below_min"
-        ? `amount_sats ${amountSats} is below the corridor minimum of ${ARKADE_RECEIVE_MIN_SATS}`
-        : `amount_sats ${amountSats} is above the corridor maximum of ${ARKADE_RECEIVE_MAX_SATS}`,
+        ? `amount_sats ${amountSats} is below the corridor minimum of ${minSats}`
+        : `amount_sats ${amountSats} is above the corridor maximum of ${maxSats}`,
     );
+    this.minSats = minSats;
+    this.maxSats = maxSats;
     this.name = "ArkadeReceiveAmountError";
     this.problem = problem;
     this.amountSats = amountSats;

@@ -19,9 +19,10 @@ export type BitcoinTransactionsProps = {
    * Which bitcoin rail's activity this is. The two rails are separate accounts —
    * the arkade wallet and the MuSig2 on-chain one — and the fetch returns both,
    * so without this each rail's list showed the other's transactions as well.
-   * Omitted = both, which is what the app did before the rails were separate.
+   * "bitcoin" is the one history the Bitcoin screen opens: both rails in one
+   * timeline, each transaction once. Omitted = both as well, without the merge.
    */
-  rail?: "arkade" | "onchain";
+  rail?: "arkade" | "onchain" | "bitcoin";
 };
 
 export type TxInput = {

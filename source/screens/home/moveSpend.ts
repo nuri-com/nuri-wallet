@@ -19,7 +19,7 @@
 // test. `moveSpend.contract.test.ts` imports the real ones and asserts these
 // still match, so the copies cannot drift unnoticed.
 
-import { ARKADE_LIGHTNING_MAX_SEND_SATS } from "../../config/constants";
+import { getArkadeLightningLimits } from "../../services/arkade/internal/lightningLimitsStore";
 import type { SwapAmountBounds } from "../../services/swapkit/SwapAmountBounds";
 
 /** Mirror of LIGHTNING_TO_BITCOIN_MIN_SATS. */
@@ -73,9 +73,10 @@ export function moveSourceAmount(input: {
 export function moveTransferBounds(
   fromKey?: string | null,
   toKey?: string | null,
+  lightningMaxSats: number = getArkadeLightningLimits().send.maxSats,
 ): SwapAmountBounds | null {
   if (fromKey !== "arkade" || toKey !== "onchain") return null;
-  return { min: MOVE_CORRIDOR_MIN_SATS, max: ARKADE_LIGHTNING_MAX_SEND_SATS };
+  return { min: MOVE_CORRIDOR_MIN_SATS, max: lightningMaxSats };
 }
 
 /**

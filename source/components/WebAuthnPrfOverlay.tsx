@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, View as RNView } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button, ButtonText, View } from "@ds";
 import BrandDisplayTitle from "./BrandDisplayTitle";
 import { EventBus } from "../services/events/AppEventBusService";
@@ -10,7 +9,7 @@ import {
   resolvePrfRequest,
 } from "../services/auth/WebAuthnPrfService";
 import WalletLockIllustration from "../assets/illustrations/wallet-lock.svg";
-import { Layer } from "./LayerHost";
+import FullscreenLayer from "./FullscreenLayer";
 import PasskeyWebAuthnPrfView, {
   type PasskeyWebAuthnPrfAssertionResult,
   type PasskeyWebAuthnPrfCreateResult,
@@ -29,8 +28,6 @@ export default function WebAuthnPrfOverlay() {
   // Mirror state in a ref so the EventBus listener (subscribed once) reads the
   // latest active request without re-subscribing on every change.
   const activeRef = useRef<WebAuthnPrfRequestPayload | null>(null);
-
-  const insets = useSafeAreaInsets();
 
   const setActiveRequest = useCallback((next: WebAuthnPrfRequestPayload | null) => {
     activeRef.current = next;
@@ -98,72 +95,52 @@ export default function WebAuthnPrfOverlay() {
   // above them — the WebView reports cancel/errors via onError, which dismisses
   // the layer.
   return (
-    <Layer
+    <FullscreenLayer
       visible={!!active}
       onRequestClose={() => {
         if (activeRef.current) handleError(activeRef.current.id, "webauthn_prf_overlay_cancelled");
       }}
-    >
-      {active ? (
-        <View chrome="canvas" direction="column" align="stretch" fill="grow">
-          <RNView style={[styles.title, { paddingTop: insets.top + 48 }]}>
-            <BrandDisplayTitle>{active.title}</BrandDisplayTitle>
-          </RNView>
-          {/* Centered behind the transparent overlay WebView; pointerEvents none
-              so taps reach the in-WebView button. */}
-          <RNView style={styles.illustration} pointerEvents="none">
-            <WalletLockIllustration width={240} height={240} />
-          </RNView>
-          <RNView style={styles.spacer} />
-          {/* The DS Button is always visible, so the screen never renders
-              without its button while the WebView loads. The transparent overlay
-              WebView sits on top to take the tap — WKWebView needs the in-page
-              user-activation for navigator.credentials. */}
-          <RNView style={[styles.footer, { paddingBottom: insets.bottom + 24 }]}>
-            <RNView>
-              <Button size="lg" variant="solid" accent="lilac" onPress={() => {}}>
-                <ButtonText>{active.buttonLabel}</ButtonText>
-              </Button>
-              <RNView style={StyleSheet.absoluteFill}>
-                <PasskeyWebAuthnPrfView
-                  key={active.id}
-                  overlay
-                  mode={active.mode}
-                  buttonLabel={active.buttonLabel}
-                  challengeB64u={active.challengeB64u}
-                  credIdB64u={active.credIdB64u}
-                  rpId={active.rpId}
-                  prfSalt={active.prfSalt}
-                  requestPrf={active.requestPrf}
-                  label={active.label}
-                  onCreateResult={(result) => handleCreateResult(active.id, result)}
-                  onAssertionResult={(result) => handleAssertionResult(active.id, result)}
-                  onError={(message) => handleError(active.id, message)}
-                />
-              </RNView>
+      footer={
+        active ? (
+          // The DS Button is always visible, so the screen never renders
+          // without its button while the WebView loads. The transparent overlay
+          // WebView sits on top to take the tap: WKWebView needs the in-page
+          // user activation for navigator.credentials.
+          <RNView>
+            <Button size="lg" variant="solid" accent="lilac" onPress={() => {}}>
+              <ButtonText>{active.buttonLabel}</ButtonText>
+            </Button>
+            <RNView style={StyleSheet.absoluteFill}>
+              <PasskeyWebAuthnPrfView
+                key={active.id}
+                overlay
+                mode={active.mode}
+                buttonLabel={active.buttonLabel}
+                challengeB64u={active.challengeB64u}
+                credIdB64u={active.credIdB64u}
+                rpId={active.rpId}
+                prfSalt={active.prfSalt}
+                requestPrf={active.requestPrf}
+                label={active.label}
+                onCreateResult={(result) => handleCreateResult(active.id, result)}
+                onAssertionResult={(result) => handleAssertionResult(active.id, result)}
+                onError={(message) => handleError(active.id, message)}
+              />
             </RNView>
           </RNView>
-        </View>
+        ) : null
+      }
+    >
+      {active ? (
+        <>
+          <View direction="column" align="center" paddingTop="lg">
+            <BrandDisplayTitle>{active.title}</BrandDisplayTitle>
+          </View>
+          <View direction="column" align="center" justify="center" fill="grow">
+            <WalletLockIllustration width={240} height={240} />
+          </View>
+        </>
       ) : null}
-    </Layer>
+    </FullscreenLayer>
   );
 }
-
-const styles = StyleSheet.create({
-  title: {
-    paddingHorizontal: 24,
-    alignItems: "center",
-  },
-  illustration: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  spacer: {
-    flex: 1,
-  },
-  footer: {
-    paddingHorizontal: 24,
-    paddingTop: 16,
-  },
-});

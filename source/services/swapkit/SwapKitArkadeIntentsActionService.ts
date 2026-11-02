@@ -30,15 +30,15 @@ import {
   type ArkadeLightningSendRecord,
 } from "../arkade/internal/lightningSendStore";
 import { createArkadeServerSwapIntent } from "../arkade/internal/swapIntents";
-// Stable @arkade-os/swap keeps the covenant/recovery primitives on the package ROOT; the
-// `/protocol` subpath they were split onto existed only on the 0.1.0-rc line and does not
-// resolve on stable.
+// @arkade-os/swap 0.1 keeps the covenant/recovery primitives on `/protocol`; the package root
+// is the swap client only.
 import { ArkAddress, contractSigner, provisionRefundKey } from "@arkade-os/sdk";
 import {
-  lightningSendVtxoScript,
+  lightningSendContract,
   findLockupVtxos,
   pushRefundWithoutReceiver,
-} from "@arkade-os/swap";
+  registerLockupContract,
+} from "@arkade-os/swap/protocol";
 import { getOrCreateWallet } from "../arkade/internal/walletCache";
 
 const SOURCE = "services/swapkit/SwapKitArkadeIntentsActionService.ts";
@@ -92,11 +92,13 @@ const LOCKUP_SHAPE_VARIANTS: readonly (undefined | "preTimelockedRefund")[] = [
 export function rebuildLockupPkScript(
   params: LockupParams,
   expectedAddress: string,
-): { pkScript: string; contract: ReturnType<typeof lightningSendVtxoScript> } | null {
+): { pkScript: string; contract: ReturnType<typeof lightningSendContract> } | null {
   const contractParams = {
     solverPubkey: hexToBytes(params.solverPubkey),
     refundLocktime: params.refundLocktime,
-    serverPubkey: hexToBytes(params.serverPubkey),
+    // The wire spells this `serverPubkey`; the covenant builder calls the same key
+    // `operatorPubkey`.
+    operatorPubkey: hexToBytes(params.serverPubkey),
     paymentHash: params.paymentHash,
     claimDelay: params.claimDelay,
     emulatorPubkey: hexToBytes(params.emulatorPubkey),
@@ -114,7 +116,7 @@ export function rebuildLockupPkScript(
     return null;
   }
   for (const legacy of LOCKUP_SHAPE_VARIANTS) {
-    const contract = lightningSendVtxoScript(
+    const contract = lightningSendContract(
       legacy === undefined ? contractParams : { ...contractParams, legacy },
     );
     const pkScript = bytesToHex(contract.pkScript).toLowerCase();
@@ -395,7 +397,12 @@ export async function refundArkadeIntentsLockup(
 
   const wallet = await getOrCreateWallet();
   const swapPkScriptHex = bytesToHex(script.pkScript);
-  const vtxos = await findLockupVtxos(wallet.indexerProvider, script.pkScript);
+  // 0.1 reads the lockup's outputs from the wallet's registered contract row, not the indexer
+  // directly, so register the rebuilt covenant first. Registration is keyed by script and
+  // first-writer-wins, and it hydrates the row from the indexer before the read below.
+  const contracts = await wallet.getContractManager();
+  await registerLockupContract(contracts, script, record.lockupAddress);
+  const vtxos = await findLockupVtxos(contracts, script.pkScript);
   if (vtxos.length === 0) {
     const recovered = deps.onEmptyLockup
       ? await deps.onEmptyLockup({
@@ -413,43 +420,73 @@ export async function refundArkadeIntentsLockup(
     throw new Error("Arkade Intents refund lockup is empty");
   }
 
-  const returnedSats = vtxos.reduce((total, vtxo) => total + Number(vtxo.value || 0), 0);
+  // swap 0.1.0-rc.33 spends at most 16 lockup outputs per push (the largest) and
+  // reports the rest as `left`. Push one bounded batch at a time, each with its
+  // own intent and approval for exactly the sats it moves, until the lockup is
+  // empty. A run that stops part way throws; the retry reads only the outputs
+  // still at the lockup.
+  const sender = await contractSigner(wallet, record.senderDescriptor);
+  let remaining = [...vtxos];
+  let firstTxid = "";
+  let returnedSats = 0;
+  while (remaining.length > 0) {
+    const batch = refundBatch(remaining);
+    const batchSats = batch.reduce((total, vtxo) => total + Number(vtxo.value || 0), 0);
 
-  const swapIntentId = await createArkadeServerSwapIntent({
-    kind: "lightning_refund",
-    finalRecipient: record.refundAddress,
-    finalAmountSats: returnedSats,
-    fundingAddress: record.refundAddress,
-    fundingAmountSats: returnedSats,
-    provider: "arkade_intents",
-    rfqId,
-    lockupAddress: record.lockupAddress,
-    op: "ln_pay_refund",
-  });
+    const swapIntentId = await createArkadeServerSwapIntent({
+      kind: "lightning_refund",
+      finalRecipient: record.refundAddress,
+      finalAmountSats: batchSats,
+      fundingAddress: record.refundAddress,
+      fundingAmountSats: batchSats,
+      provider: "arkade_intents",
+      rfqId,
+      lockupAddress: record.lockupAddress,
+      op: "ln_pay_refund",
+    });
 
-  if (deps.onBeforePush) {
-    await deps.onBeforePush({ swapPkScriptHex, paymentHash: params.paymentHash, rfqId });
+    if (deps.onBeforePush) {
+      await deps.onBeforePush({ swapPkScriptHex, paymentHash: params.paymentHash, rfqId });
+    }
+
+    const pushed = await withOutgoingBrowserApproval(
+      {
+        kind: "lightning_refund",
+        title: "Return Failed Lightning Payment",
+        recipient: record.refundAddress,
+        amountSats: batchSats,
+        finalAmountSats: batchSats,
+        note: deps.approvalNote ?? "Returning a Lightning payment the receiver never claimed.",
+        source: "swap",
+        approvalScope: "direct_send_session",
+        swapIntentId,
+      },
+      () =>
+        pushRefundWithoutReceiver(wallet.arkProvider, { contract: script, sender, vtxos: batch }),
+      { opId: deps.opId ?? rfqId, detail: `flow=arkade.refund rfq=${rfqId} sats=${batchSats}` },
+    );
+    // The batch fits one push, so the library must have taken all of it.
+    if (pushed.left !== 0 || pushed.spent.length !== batch.length) {
+      throw new Error(
+        `arkade_intents refund moved ${pushed.spent.length} of ${batch.length} lockup outputs`,
+      );
+    }
+    log(`refund pushed ${pushed.amount} sats for rfq ${rfqId}`, { arkTxid: pushed.txid });
+    if (!firstTxid) firstTxid = pushed.txid;
+    returnedSats += pushed.amount;
+    const spent = new Set(pushed.spent.map((vtxo) => `${vtxo.txid}:${vtxo.vout}`));
+    remaining = remaining.filter((vtxo) => !spent.has(`${vtxo.txid}:${vtxo.vout}`));
   }
 
-  const sender = await contractSigner(wallet, record.senderDescriptor);
-  const { arkTxid, amount } = await withOutgoingBrowserApproval(
-    {
-      kind: "lightning_refund",
-      title: "Return Failed Lightning Payment",
-      recipient: record.refundAddress,
-      amountSats: returnedSats,
-      finalAmountSats: returnedSats,
-      note: deps.approvalNote ?? "Returning a Lightning payment the receiver never claimed.",
-      source: "swap",
-      approvalScope: "direct_send_session",
-      swapIntentId,
-    },
-    // Stable `pushRefundWithoutReceiver` takes the covenant as `script` and returns the id
-    // as `arkTxid`; the 0.1.0-rc line named them `contract` and `txid`. Same call, same result.
-    () => pushRefundWithoutReceiver(wallet.arkProvider, { script, sender, vtxos }),
-    { opId: deps.opId ?? rfqId, detail: `flow=arkade.refund rfq=${rfqId} sats=${returnedSats}` },
-  );
-  log(`refund pushed ${amount} sats for rfq ${rfqId}`, { arkTxid });
+  return { arkTxid: firstTxid, swapPkScriptHex, returnedSats, recovered: false };
+}
 
-  return { arkTxid, swapPkScriptHex, returnedSats, recovered: false };
+/** swap's per-push input cap (`MAX_LOCKUP_SPEND_INPUTS` in 0.1.0-rc.33, not exported). */
+export const ARKADE_REFUND_MAX_INPUTS = 16;
+
+/** The outputs one refund push takes: the largest, as the library picks them. */
+function refundBatch<T extends { value: number }>(vtxos: readonly T[]): T[] {
+  return [...vtxos]
+    .sort((a, b) => Number(b.value || 0) - Number(a.value || 0))
+    .slice(0, ARKADE_REFUND_MAX_INPUTS);
 }

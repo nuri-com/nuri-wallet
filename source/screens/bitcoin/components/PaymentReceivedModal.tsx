@@ -13,6 +13,11 @@ import PasskeyWebAuthnPrfView, {
 import PopRiffleView from "../../../components/PopRiffleView";
 import { t } from "../../../lib/i18n";
 import {
+  closesUnlockScreen,
+  nextUnlockFailureStep,
+  unlockRunOutcome,
+} from "../../../lib/support/unlockFailureReport";
+import {
   armReceiveClaimPasskeyResult,
   clearArmedReceiveClaimPasskey,
 } from "../../../services/arkade/ArkadeRemoteIdentity";
@@ -33,10 +38,6 @@ type Props = {
   onUnlock: () => Promise<ArkadeReceiveUnlockResult>;
   onClose: () => void;
 };
-
-// Only pull in support once the user has genuinely failed to claim a few times
-// (passkey cancels included), not on the first stumble.
-const SUPPORT_AFTER_FAILURES = 3;
 
 function formatSats(sats: number): string {
   return String(Math.max(0, Math.trunc(Number(sats || 0))));
@@ -95,13 +96,17 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
     }
   }, [visible]);
 
-  const registerFailure = useCallback((failure: unknown) => {
-    failureCountRef.current += 1;
-    if (failureCountRef.current >= SUPPORT_AFTER_FAILURES) {
-      // After repeated failures, report to support and open the chat.
-      reportUnlockFailureToSupport(failure);
-      failureCountRef.current = 0;
-    }
+  // Support hears about a few failures on the open screen, or at once about a
+  // failure after the screen already closed; a cancelled prompt is never
+  // reported (lib/support/unlockFailureReport).
+  const registerFailure = useCallback((failure: unknown, closedEarly = false) => {
+    const step = nextUnlockFailureStep({
+      failure,
+      failuresSoFar: failureCountRef.current,
+      closedEarly,
+    });
+    failureCountRef.current = step.failures;
+    if (step.report) reportUnlockFailureToSupport(failure);
   }, []);
 
   // A signed Lightning claim closes the modal early — but only when that claim
@@ -116,10 +121,7 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
     return EventBus.on<ArkadeReceiveUnlockProgressPayload>(
       ARKADE_RECEIVE_UNLOCK_PROGRESS_EVENT,
       (payload) => {
-        const claimDone =
-          usesReceiveClaimPasskey &&
-          (payload?.phase === "claim_signed" || payload?.phase === "claim_waiting");
-        if (!claimDone && payload?.phase !== "sweep_approved") return;
+        if (!closesUnlockScreen(payload?.phase, usesReceiveClaimPasskey)) return;
         failureCountRef.current = 0;
         onClose();
       },
@@ -133,9 +135,13 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
       // sweep approved): Processing… while the round finishes, then its outcome.
       const pillId = `receive:${Date.now()}`;
       let pillShown = false;
+      // Set once the screen closed for this run: a failure after that has no
+      // screen to retry on, so it goes to support straight away.
+      let closedEarly = false;
       const offProgress = EventBus.on<ArkadeReceiveUnlockProgressPayload>(
         ARKADE_RECEIVE_UNLOCK_PROGRESS_EVENT,
-        () => {
+        (payload) => {
+          if (closesUnlockScreen(payload?.phase, usesReceiveClaimPasskey)) closedEarly = true;
           if (pillShown) return;
           pillShown = true;
           noteV2TransferPhase(pillId, "processing");
@@ -144,23 +150,24 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
       try {
         const result = await onUnlock();
         if (pillShown) noteV2TransferPhase(pillId, result.ok ? "completed" : "failed");
-        if (result.shouldCloseModal) {
+        // Reporting and closing are decided separately: a failed run that
+        // also closes the screen still goes to support (#1823 review).
+        const outcome = unlockRunOutcome(result, closedEarly);
+        if (outcome.failed) registerFailure(result, outcome.closedEarly);
+        else failureCountRef.current = 0;
+        if (outcome.close) {
           failureCountRef.current = 0;
           onClose();
-        } else if (result.ok) {
-          failureCountRef.current = 0;
-        } else {
-          registerFailure(result);
         }
       } catch (error) {
         if (pillShown) noteV2TransferPhase(pillId, "failed");
-        registerFailure(error);
+        registerFailure(error, closedEarly);
       } finally {
         offProgress();
         setRunning(false);
       }
     })();
-  }, [onClose, onUnlock, registerFailure]);
+  }, [onClose, onUnlock, registerFailure, usesReceiveClaimPasskey]);
 
   // The "Passkey Unlock" button is a transparent WebView overlay: its tap runs
   // the ceremony directly. Arm the result so the claim's signing uses it instead
@@ -188,7 +195,56 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
   );
 
   return (
-    <FullscreenLayer visible={visible} onRequestClose={onClose}>
+    <FullscreenLayer
+      visible={visible}
+      onRequestClose={onClose}
+      footer={
+        <>
+          <RNView style={styles.unlockButton}>
+            <Button
+              size="lg"
+              variant="solid"
+              accent="lilac"
+              disabled={running || state.actionableCount <= 0}
+              onPress={handleUnlock}
+              accessibilityLabel={t("screen.PaymentReceivedModal.unlockButton")}
+            >
+              <ButtonText>{t("screen.PaymentReceivedModal.unlockButton")}</ButtonText>
+            </Button>
+            {usesReceiveClaimPasskey && passkeyPrefetch && !running && state.actionableCount > 0 ? (
+              <RNView style={StyleSheet.absoluteFill}>
+                <PasskeyWebAuthnPrfView
+                  mode="assertion"
+                  overlay
+                  buttonLabel={t("screen.PaymentReceivedModal.unlockButton")}
+                  rpId={passkeyPrefetch.rpId}
+                  challengeB64u={passkeyPrefetch.challengeB64u}
+                  credIdB64u={passkeyPrefetch.credIdB64u}
+                  onAssertionResult={handlePasskeyResult}
+                  onError={handlePasskeyError}
+                />
+              </RNView>
+            ) : null}
+          </RNView>
+          {/* The boarding-claim screen must never be the only reachable surface:
+              a claim that keeps failing (unclaimable boarding topic, server
+              refusal, passkey errors) otherwise locks the user out of the app,
+              because the auto-open keeps re-presenting this full-screen layer.
+              Dismissing is just onClose: App already suppresses the auto-open
+              until the actionable work changes, and the home pending-sweep row
+              remains the explicit way back in. */}
+          <Button
+            size="lg"
+            variant="soft"
+            disabled={running}
+            onPress={onClose}
+            accessibilityLabel={t("screen.PaymentReceivedModal.laterButton")}
+          >
+            <ButtonText>{t("screen.PaymentReceivedModal.laterButton")}</ButtonText>
+          </Button>
+        </>
+      }
+    >
       <View direction="column" align="center" gap="md" paddingTop="lg">
         <BrandDisplayTitle>
           {t(
@@ -218,51 +274,6 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
             <GotPaidIllustration width={241} height={213} />
           </PopRiffleView>
         )}
-      </View>
-
-      <View direction="column" align="stretch" gap="sm">
-        <RNView style={styles.unlockButton}>
-          <Button
-            size="lg"
-            variant="solid"
-            accent="lilac"
-            disabled={running || state.actionableCount <= 0}
-            onPress={handleUnlock}
-            accessibilityLabel={t("screen.PaymentReceivedModal.unlockButton")}
-          >
-            <ButtonText>{t("screen.PaymentReceivedModal.unlockButton")}</ButtonText>
-          </Button>
-          {usesReceiveClaimPasskey && passkeyPrefetch && !running && state.actionableCount > 0 ? (
-            <RNView style={StyleSheet.absoluteFill}>
-              <PasskeyWebAuthnPrfView
-                mode="assertion"
-                overlay
-                buttonLabel={t("screen.PaymentReceivedModal.unlockButton")}
-                rpId={passkeyPrefetch.rpId}
-                challengeB64u={passkeyPrefetch.challengeB64u}
-                credIdB64u={passkeyPrefetch.credIdB64u}
-                onAssertionResult={handlePasskeyResult}
-                onError={handlePasskeyError}
-              />
-            </RNView>
-          ) : null}
-        </RNView>
-        {/* The boarding-claim screen must never be the only reachable surface:
-            a claim that keeps failing (unclaimable boarding topic, server
-            refusal, passkey errors) otherwise locks the user out of the app,
-            because the auto-open keeps re-presenting this full-screen layer.
-            Dismissing is just onClose — App already suppresses the auto-open
-            until the actionable work changes, and the home pending-sweep row
-            remains the explicit way back in. */}
-        <Button
-          size="lg"
-          variant="soft"
-          disabled={running}
-          onPress={onClose}
-          accessibilityLabel={t("screen.PaymentReceivedModal.laterButton")}
-        >
-          <ButtonText>{t("screen.PaymentReceivedModal.laterButton")}</ButtonText>
-        </Button>
       </View>
     </FullscreenLayer>
   );

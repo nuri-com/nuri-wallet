@@ -3,6 +3,7 @@ import { Pressable, StyleSheet } from "react-native";
 import { Button, ButtonText } from "@ds";
 import { PRF_SALT } from "../config/constants";
 import { WALLET_RP_ID } from "../config/passkey";
+import { isPasskeyFocusRejection } from "../lib/auth/passkeyFocus";
 import { normalizePrfOutput, zeroize } from "../lib/crypto";
 // The `.web` module explicitly: this component only ever renders in a browser,
 // and the combined PRF+signature assertion it needs exists only there.
@@ -124,6 +125,8 @@ export default function PasskeyWebAuthnPrfWeb({
       // that match on it keep working.
       const name = error instanceof Error ? error.name : "Error";
       const message = error instanceof Error ? error.message : String(error);
+      // The tap only focused the page: the button stays for the next tap.
+      if (isPasskeyFocusRejection(name, message)) return;
       onError(`error:${mode}:${name}:${message}`);
     } finally {
       setBusy(false);

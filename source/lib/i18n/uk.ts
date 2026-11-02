@@ -176,6 +176,7 @@ export const uk = {
     },
     BitcoinTransactionsModal: {
       title: "Операції Bitcoin",
+      errorRateLimited: "Історія Bitcoin зараз перевантажена. Показані рядки все ще правильні.",
       pendingBalanceLabel: "Bitcoin в очікуванні",
     },
     BitcoinReceiveModal: {
@@ -244,6 +245,8 @@ export const uk = {
       openAccountEmailBusy: "Налаштовуємо твій рахунок…",
       openAccountDeployingTitle: "Налаштовуємо твій рахунок",
       openAccountDeployingBody: "Зачекай, поки ми створюємо твій рахунок і запускаємо перевірку.",
+      openAccountEmailInUse:
+        "Ця електронна пошта вже використовується іншим рахунком. Вкажи іншу електронну пошту.",
       openAccountDeployFailed: "Не вдалося налаштувати твій рахунок. Спробуй ще раз.",
       verificationInProgress: "Перевірка триває",
       continueVerification: "Продовжити перевірку",
@@ -307,6 +310,7 @@ export const uk = {
       empty: "Операцій ще немає",
       errorDefault: "Не вдалося завантажити операції",
       typeRefund: "Повернення",
+      typePushToCard: "Поповнення картки",
       typePayment: "Платіж",
       statusPending: "В очікуванні",
       statusFailed: "Відхилено",
@@ -545,7 +549,7 @@ export const uk = {
       exceedsBalanceHint: "Перевищує доступний баланс",
     },
     HomeScreen: {
-      greeting: "Привіт, %{name}!",
+      greeting: "Привіт, %{name}",
       scanA11yLabel: "Сканувати QR-код",
       details: "Деталі",
       detailsBank: "Банківські реквізити",
@@ -576,6 +580,7 @@ export const uk = {
       railIban: "IBAN",
       railVisa: "Visa",
       receiveTitle: "Отримати",
+      receiveLabelLightning: "Lightning",
       receiveLabelInstant: "Миттєво",
       receiveLabelOnchain: "Onchain",
       receiveLabelEvm: "EVM-адреса",
@@ -651,6 +656,7 @@ export const uk = {
       addDestination: "Додати адресу, IBAN, картку або Lightning",
       removeDestination: "Видалити",
       payName: "Оплатити %{name}",
+      historyEmpty: "Ще немає платежів з %{name}",
       destinationCount: "%{first} +%{count}",
       kind_lightning: "Lightning-адреса",
       kind_evm: "EVM-адреса",
@@ -681,6 +687,8 @@ export const uk = {
     },
     Settings: {
       payLink: "Платіжне посилання",
+      invite: "Запросити друзів",
+      inviteCopy: "Скопіювати посилання-запрошення",
       bankCards: "Банк і картки",
       bankCardsBody: "Підтверди свій акаунт і отримай IBAN та картку Visa.",
       activate: "Активувати",
@@ -801,8 +809,8 @@ export const uk = {
       statusFailed: "Не вдалося",
       sendAgain: "Надіслати знову",
       addToAddressBook: "Додати в адресну книгу",
-      contactReceived: "%{name} отримав(-ла)",
-      contactSent: "%{name} надіслав(-ла)",
+      contactFrom: "Від %{name}",
+      contactTo: "До %{name}",
     },
     ReceiveModal: {
       request: "Запросити",

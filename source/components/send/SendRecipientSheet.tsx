@@ -10,7 +10,6 @@ import * as Clipboard from "expo-clipboard";
 import {
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   List,
@@ -55,6 +54,7 @@ import {
 import { isValidEvmAddress } from "../../lib/validation";
 import { evmRecipientLookup } from "../../services/pay/evmRecipientLookup";
 import { useNuriUserSearch } from "../../services/arkade/nuriUserSearch";
+import AppFooter from "../AppFooter";
 
 type Props = {
   visible: boolean;
@@ -346,14 +346,7 @@ export default function SendRecipientSheet({
           </View>
         </Scroll>
 
-        <Footer
-          safeAreaBottom
-          direction="column"
-          align="stretch"
-          paddingBottom="sm"
-          paddingX="lg"
-          gap="sm"
-        >
+        <AppFooter>
           <Button
             size="lg"
             variant="solid"
@@ -368,7 +361,7 @@ export default function SendRecipientSheet({
                 : t("screen.WalletSendStablecoinModal.ctaNext")}
             </ButtonText>
           </Button>
-        </Footer>
+        </AppFooter>
       </DsSheetHost>
       <PayoutAbroadSheet
         visible={visible && abroadOpen}

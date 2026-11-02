@@ -17,11 +17,18 @@
 
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
-import type {
-  ArkTransaction,
-  ExtendedCoin,
-  ExtendedVirtualCoin,
-  WalletRepository,
+import {
+  assertPageRequest,
+  pageResult,
+  type ArkTransaction,
+  type ExtendedCoin,
+  type ExtendedVirtualCoin,
+  type Outpoint,
+  type PageRequest,
+  type PageResult,
+  type TransactionHistoryPageCursor,
+  type TransactionHistoryPageFilter,
+  type WalletRepository,
 } from "@arkade-os/sdk";
 
 // `WalletState` is declared but not named-exported by the SDK's bundled d.ts;
@@ -129,6 +136,42 @@ const deserializeVtxo = (raw: AnyRecord): ExtendedVirtualCoin =>
     assets: deserializeAssets(raw.assets),
   }) as unknown as ExtendedVirtualCoin;
 
+// SDK 0.5 reads repositories only through bounded pages. One AsyncStorage key
+// holds a whole address bucket, so a page is the sorted bucket sliced after
+// the cursor, in the order the SDK's in-memory repository uses.
+const compareOutpoints = (a: Outpoint, b: Outpoint): number =>
+  a.txid < b.txid ? -1 : a.txid > b.txid ? 1 : a.vout - b.vout;
+
+function pageOutpoints<Item extends Outpoint>(
+  rows: Item[],
+  page: PageRequest<Outpoint>,
+): PageResult<Item, Outpoint> {
+  assertPageRequest(page);
+  const after = page.after;
+  const selected = rows
+    .filter((row) => after === undefined || compareOutpoints(row, after) > 0)
+    .sort(compareOutpoints)
+    .slice(0, page.limit + 1);
+  return pageResult(selected, page.limit, ({ txid, vout }) => ({ txid, vout }));
+}
+
+const historyCursorOf = (tx: ArkTransaction): TransactionHistoryPageCursor => ({
+  createdAt: tx.createdAt,
+  key: tx.key,
+});
+
+function compareHistoryCursors(
+  a: TransactionHistoryPageCursor,
+  b: TransactionHistoryPageCursor,
+): number {
+  if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+  for (const field of ["boardingTxid", "commitmentTxid", "arkTxid"] as const) {
+    if (a.key[field] < b.key[field]) return -1;
+    if (a.key[field] > b.key[field]) return 1;
+  }
+  return 0;
+}
+
 /**
  * Wallet repository persisting to the app's AsyncStorage adapter.
  *
@@ -136,7 +179,7 @@ const deserializeVtxo = (raw: AnyRecord): ExtendedVirtualCoin =>
  * layout, so upgrading does not strand a user's cached wallet data.
  */
 export class AsyncStorageWalletRepository implements WalletRepository {
-  readonly version = 1 as const;
+  readonly version = 2 as const;
 
   constructor(private readonly storage: ArkadeKeyValueStorage) {}
 
@@ -149,6 +192,13 @@ export class AsyncStorageWalletRepository implements WalletRepository {
       console.error(`Failed to parse VTXOs for address ${address}:`, error);
       return [];
     }
+  }
+
+  async getVtxosPage(
+    address: string,
+    page: PageRequest<Outpoint>,
+  ): Promise<PageResult<ExtendedVirtualCoin, Outpoint>> {
+    return pageOutpoints(await this.getVtxos(address), page);
   }
 
   async saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
@@ -181,7 +231,25 @@ export class AsyncStorageWalletRepository implements WalletRepository {
     }
   }
 
-  async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
+  async getUtxosPage(
+    address: string,
+    page: PageRequest<Outpoint>,
+  ): Promise<PageResult<ExtendedCoin, Outpoint>> {
+    return pageOutpoints(await this.getUtxos(address), page);
+  }
+
+  saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void>;
+  saveUtxos(utxosByAddress: ReadonlyMap<string, ExtendedCoin[]>): Promise<void>;
+  async saveUtxos(
+    addressOrBatch: string | ReadonlyMap<string, ExtendedCoin[]>,
+    utxos: ExtendedCoin[] = [],
+  ): Promise<void> {
+    // SDK 0.5.0-rc.30 added the batch form (several boarding addresses in one call).
+    if (typeof addressOrBatch !== "string") {
+      for (const [address, list] of addressOrBatch) await this.saveUtxos(address, list);
+      return;
+    }
+    const address = addressOrBatch;
     const stored = await this.getUtxos(address);
     for (const utxo of utxos) {
       const existing = stored.findIndex((u) => u.txid === utxo.txid && u.vout === utxo.vout);
@@ -207,6 +275,23 @@ export class AsyncStorageWalletRepository implements WalletRepository {
       console.error(`Failed to parse transactions for address ${address}:`, error);
       return [];
     }
+  }
+
+  async getTransactionHistoryPage(
+    filter: TransactionHistoryPageFilter,
+    page: PageRequest<TransactionHistoryPageCursor>,
+  ): Promise<PageResult<ArkTransaction, TransactionHistoryPageCursor>> {
+    assertPageRequest(page);
+    const after = page.after;
+    const rows = (await this.getTransactionHistory(filter.address))
+      .filter(
+        (tx) =>
+          (filter.since === undefined || tx.createdAt >= filter.since) &&
+          (after === undefined || compareHistoryCursors(historyCursorOf(tx), after) > 0),
+      )
+      .sort((a, b) => compareHistoryCursors(historyCursorOf(a), historyCursorOf(b)))
+      .slice(0, page.limit + 1);
+    return pageResult(rows, page.limit, historyCursorOf);
   }
 
   async saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {

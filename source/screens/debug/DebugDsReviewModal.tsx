@@ -19,7 +19,6 @@ import {
   Button,
   ButtonIcon,
   ButtonText,
-  Footer,
   Header,
   IconAvatar,
   IconButton,
@@ -55,6 +54,7 @@ import {
   View,
 } from "@ds";
 import type { DebugDsReviewProps } from "../../types/debug";
+import AppFooter from "../../components/AppFooter";
 
 const noop = () => {};
 
@@ -164,18 +164,11 @@ function FullSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
           </View>
         </Scroll>
 
-        <Footer
-          safeAreaBottom
-          chrome="canvas"
-          direction="column"
-          align="stretch"
-          paddingBottom="sm"
-          paddingX="lg"
-        >
+        <AppFooter canvas>
           <Button size="lg" variant="solid" accent="lilac" onPress={onClose}>
             Done
           </Button>
-        </Footer>
+        </AppFooter>
       </DsModalPanel>
     </DsModal>
   );

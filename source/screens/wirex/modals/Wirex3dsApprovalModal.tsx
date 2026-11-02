@@ -41,6 +41,37 @@ const Wirex3dsApprovalModal: React.FC<Props> = ({
     <FullscreenLayer
       visible={visible && challenge != null}
       onRequestClose={approved ? onDone : onClose}
+      footer={
+        approved ? (
+          <Button size="lg" variant="solid" accent="lilac" onPress={onDone}>
+            <ButtonText>{t("screen.Wirex3dsApproval.doneLabel")}</ButtonText>
+          </Button>
+        ) : (
+          <>
+            <Button
+              size="lg"
+              variant="solid"
+              accent="lilac"
+              disabled={busy}
+              onPress={onApprove}
+              accessibilityLabel={t("screen.Wirex3dsApproval.approveA11yLabel")}
+            >
+              <ButtonIcon name="check-circle" />
+              <ButtonText>{t("screen.Wirex3dsApproval.approveLabel")}</ButtonText>
+            </Button>
+            <Button
+              size="lg"
+              variant="soft"
+              disabled={busy}
+              onPress={onDecline}
+              accessibilityLabel={t("screen.Wirex3dsApproval.declineA11yLabel")}
+            >
+              <ButtonIcon name="cross" />
+              <ButtonText>{t("screen.Wirex3dsApproval.declineLabel")}</ButtonText>
+            </Button>
+          </>
+        )
+      }
     >
       <View direction="column" align="center" gap="md" paddingTop="lg">
         <BrandDisplayTitle>
@@ -75,38 +106,6 @@ const Wirex3dsApprovalModal: React.FC<Props> = ({
       <View direction="column" align="center" justify="center" fill="grow">
         <Image source={ILLUSTRATION} style={styles.illustration} resizeMode="contain" />
       </View>
-
-      {approved ? (
-        <View direction="column" align="stretch" gap="sm">
-          <Button size="lg" variant="solid" accent="lilac" onPress={onDone}>
-            <ButtonText>{t("screen.Wirex3dsApproval.doneLabel")}</ButtonText>
-          </Button>
-        </View>
-      ) : (
-        <View direction="column" align="stretch" gap="sm">
-          <Button
-            size="lg"
-            variant="solid"
-            accent="lilac"
-            disabled={busy}
-            onPress={onApprove}
-            accessibilityLabel={t("screen.Wirex3dsApproval.approveA11yLabel")}
-          >
-            <ButtonIcon name="check-circle" />
-            <ButtonText>{t("screen.Wirex3dsApproval.approveLabel")}</ButtonText>
-          </Button>
-          <Button
-            size="lg"
-            variant="soft"
-            disabled={busy}
-            onPress={onDecline}
-            accessibilityLabel={t("screen.Wirex3dsApproval.declineA11yLabel")}
-          >
-            <ButtonIcon name="cross" />
-            <ButtonText>{t("screen.Wirex3dsApproval.declineLabel")}</ButtonText>
-          </Button>
-        </View>
-      )}
     </FullscreenLayer>
   );
 };

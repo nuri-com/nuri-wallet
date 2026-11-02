@@ -8,7 +8,6 @@ import { FlatList, View as RNView, StyleSheet } from "react-native";
 import {
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   Text,
@@ -119,6 +118,7 @@ type Props = {
 const LOCAL_BACKUP_RELAY = String(process.env.EXPO_PUBLIC_NOSTR_BACKUP_RELAY || "").trim();
 
 import { DEFAULT_NOSTR_RELAYS } from "../config/endpoints";
+import AppFooter from "./AppFooter";
 const DEFAULT_RELAYS = [LOCAL_BACKUP_RELAY, ...DEFAULT_NOSTR_RELAYS].filter(Boolean);
 
 const SUPPORT_CONTACT_LABEL = "Nuri";
@@ -1850,15 +1850,7 @@ const NostrChatModal: React.FC<Props> = ({
       {/* The composer is a direct panel child, not wrapped in a manual
         keyboard-padding view: the DS Modal already shrinks the panel by the
         keyboard, so any padding here would double-offset it. */}
-      <Footer
-        safeAreaBottom
-        chrome="canvas"
-        direction="column"
-        align="stretch"
-        gap="sm"
-        paddingBottom="sm"
-        paddingX="lg"
-      >
+      <AppFooter canvas>
         {displayStatus ? (
           <Text size="md" muted align="center">
             {displayStatus}
@@ -1883,7 +1875,7 @@ const NostrChatModal: React.FC<Props> = ({
             {t("screen.NostrChatModal.sendButtonLabel")}
           </TextFieldButton>
         </TextField>
-      </Footer>
+      </AppFooter>
       <LogoutConfirmSheet
         visible={showSwitchPasskeyConfirm}
         busy={switchingPasskey}

@@ -177,6 +177,7 @@ export const tr = {
     },
     BitcoinTransactionsModal: {
       title: "Bitcoin hareketleri",
+      errorRateLimited: "Bitcoin geçmişi şu anda yoğun. Gösterilen satırlar hâlâ doğru.",
       pendingBalanceLabel: "Bekleyen Bitcoin",
     },
     BitcoinReceiveModal: {
@@ -245,6 +246,8 @@ export const tr = {
       openAccountEmailBusy: "Hesabın hazırlanıyor…",
       openAccountDeployingTitle: "Hesabın hazırlanıyor",
       openAccountDeployingBody: "Hesabın kurulurken ve doğrulama başlarken lütfen bekle.",
+      openAccountEmailInUse:
+        "Bu e-posta zaten başka bir hesapta kullanılıyor. Lütfen farklı bir e-posta kullan.",
       openAccountDeployFailed: "Hesabını kuramadık. Lütfen tekrar dene.",
       verificationInProgress: "Doğrulama sürüyor",
       continueVerification: "Doğrulamaya devam et",
@@ -308,6 +311,7 @@ export const tr = {
       empty: "Henüz işlem yok",
       errorDefault: "İşlemler yüklenemedi",
       typeRefund: "İade",
+      typePushToCard: "Karta para yatırma",
       typePayment: "Ödeme",
       statusPending: "Bekliyor",
       statusFailed: "Reddedildi",
@@ -542,7 +546,7 @@ export const tr = {
       exceedsBalanceHint: "Kullanılabilir bakiyeyi aşıyor",
     },
     HomeScreen: {
-      greeting: "Selam %{name}!",
+      greeting: "Selam %{name}",
       scanA11yLabel: "QR kodu tara",
       details: "Ayrıntılar",
       detailsBank: "Banka bilgileri",
@@ -573,6 +577,7 @@ export const tr = {
       railIban: "IBAN",
       railVisa: "Visa",
       receiveTitle: "Al",
+      receiveLabelLightning: "Lightning",
       receiveLabelInstant: "Anında",
       receiveLabelOnchain: "Onchain",
       receiveLabelEvm: "EVM adresi",
@@ -648,6 +653,7 @@ export const tr = {
       addDestination: "Adres, IBAN, kart veya Lightning ekle",
       removeDestination: "Kaldır",
       payName: "%{name} kişisine öde",
+      historyEmpty: "%{name} ile henüz ödeme yok",
       destinationCount: "%{first} +%{count}",
       kind_lightning: "Lightning adresi",
       kind_evm: "EVM adresi",
@@ -678,6 +684,8 @@ export const tr = {
     },
     Settings: {
       payLink: "Ödeme bağlantısı",
+      invite: "Arkadaşlarını davet et",
+      inviteCopy: "Davet bağlantısını kopyala",
       bankCards: "Banka ve kartlar",
       bankCardsBody: "Hesabını doğrula, bir IBAN ve bir Visa kart al.",
       activate: "Etkinleştir",
@@ -798,8 +806,8 @@ export const tr = {
       statusFailed: "Başarısız",
       sendAgain: "Tekrar gönder",
       addToAddressBook: "Adres defterine ekle",
-      contactReceived: "%{name} aldı",
-      contactSent: "%{name} gönderdi",
+      contactFrom: "%{name} kişisinden",
+      contactTo: "%{name} kişisine",
     },
     ReceiveModal: {
       request: "İste",

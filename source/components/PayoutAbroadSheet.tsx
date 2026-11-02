@@ -13,7 +13,6 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   List,
@@ -56,6 +55,7 @@ import {
   listTzOptions,
   type ZapRemitCountry,
 } from "../services/remit/RemitService";
+import AppFooter from "./AppFooter";
 
 const K = "component.PayoutAbroadSheet";
 
@@ -393,18 +393,11 @@ export default function PayoutAbroadSheet({ visible, payWith, onClose, onDone }:
       </Scroll>
 
       {method && !picking && !failed ? (
-        <Footer
-          safeAreaBottom
-          chrome="canvas"
-          direction="column"
-          align="stretch"
-          paddingBottom="sm"
-          paddingX="lg"
-        >
+        <AppFooter canvas>
           <Button size="lg" variant="solid" accent="lilac" disabled={!complete} onPress={finish}>
             <ButtonText>{t(`${K}.continue`)}</ButtonText>
           </Button>
-        </Footer>
+        </AppFooter>
       ) : null}
     </DsSheetHost>
   );

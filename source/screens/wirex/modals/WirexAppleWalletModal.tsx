@@ -11,7 +11,6 @@ import {
   Button,
   ButtonIcon,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   Scroll,
@@ -24,6 +23,7 @@ import {
 import DsSheetHost from "../../../components/DsSheetHost";
 import Spinner from "../../../components/Spinner";
 import { t } from "../../../lib/i18n";
+import AppFooter from "../../../components/AppFooter";
 
 type Props = {
   visible: boolean;
@@ -133,14 +133,7 @@ const WirexAppleWalletModal: React.FC<Props> = ({
         </View>
       </Scroll>
 
-      <Footer
-        safeAreaBottom
-        chrome="canvas"
-        direction="column"
-        align="stretch"
-        paddingBottom="sm"
-        paddingX="lg"
-      >
+      <AppFooter canvas>
         <Button
           size="lg"
           variant="solid"
@@ -152,7 +145,7 @@ const WirexAppleWalletModal: React.FC<Props> = ({
           <ButtonIcon name="wallet" />
           <ButtonText>{t("screen.CardScreen.appleWalletCta")}</ButtonText>
         </Button>
-      </Footer>
+      </AppFooter>
     </DsSheetHost>
   );
 };

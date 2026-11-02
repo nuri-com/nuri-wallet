@@ -34,16 +34,20 @@ const APPROVAL_SPENDERS = [LIFI_DIAMOND, COW_VAULT_RELAYER] as const;
  * from GET https://li.quest/v1/chains, field `permit2Proxy`, for every chain
  * this wallet signs EVM calls on (the sweep chains, which include every pay
  * link chain). A chain missing here has no permit option.
+ *
+ * LI.FI redeployed the proxy on all of these chains (the previous one was
+ * 0x89c6340B1a1f4b25D36cd8B063D49045caF3f818) and its API now names only the
+ * new one, so a stale entry here refuses every permit swap.
  */
 const LIFI_PERMIT2_PROXY: Readonly<Record<number, `0x${string}`>> = {
-  1: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
-  10: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
-  56: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
-  100: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
-  137: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
-  8453: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
-  42161: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
-  43114: "0x89c6340B1a1f4b25D36cd8B063D49045caF3f818",
+  1: "0x8eEd5E28216C0Bc6F817df40Ae6CA11C2294CC1c",
+  10: "0x8eEd5E28216C0Bc6F817df40Ae6CA11C2294CC1c",
+  56: "0x8eEd5E28216C0Bc6F817df40Ae6CA11C2294CC1c",
+  100: "0x8eEd5E28216C0Bc6F817df40Ae6CA11C2294CC1c",
+  137: "0x8eEd5E28216C0Bc6F817df40Ae6CA11C2294CC1c",
+  8453: "0x8eEd5E28216C0Bc6F817df40Ae6CA11C2294CC1c",
+  42161: "0x8eEd5E28216C0Bc6F817df40Ae6CA11C2294CC1c",
+  43114: "0x8eEd5E28216C0Bc6F817df40Ae6CA11C2294CC1c",
 };
 
 const LIFI_PERMIT2_PROXY_ABI = parseAbi([

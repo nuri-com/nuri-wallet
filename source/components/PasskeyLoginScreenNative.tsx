@@ -1,14 +1,11 @@
 // @screen auth.login.native
 // biome-ignore lint/correctness/noUnusedImports: React needed for JSX fragments
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { StyleSheet, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WALLET_RP_ID } from "../config/passkey";
 import { CEREMONY_DEADLINE_CODE, withCeremonyDeadline } from "../lib/auth/passkeyCeremonyDeadline";
 import { normalizePrfOutput, zeroize } from "../lib/crypto";
 import { t } from "../lib/i18n";
 import { formatWalletPasskeyLabel } from "../lib/passkeyLabels";
-import { resolveActionsBottom } from "../lib/passkeyActionsLayout";
 import { getBitcoinAddress } from "../lib/secureKeyStorage";
 import {
   arkadeBootstrapClaimAuth,
@@ -23,7 +20,8 @@ import {
   getWalletPasskeyPrfAssertion,
   useExistingWalletPasskey,
 } from "../services/auth/PasskeyNativeModuleService";
-import { Button, ButtonText, Pressable, Text } from "@ds";
+import { Button, ButtonText, Pressable, Text, View as DsView } from "@ds";
+import AppFooter from "./AppFooter";
 import PasskeyContinueOrSwitchModal from "./PasskeyContinueOrSwitchModal";
 import type { PasskeyLoginScreenProps } from "./PasskeyLoginScreen";
 
@@ -52,13 +50,6 @@ export default function PasskeyLoginScreenNative({
   onAttemptStart,
 }: Props) {
   const prfRef = useRef<Uint8Array | null>(null);
-  // The actions block is absolutely positioned, so it paints under the system
-  // navigation bar unless we add its inset. On a 3-button nav bar that is 126px
-  // (42dp @ 420dpi), which swallowed the whole "Use existing Passkey" row.
-  // Same Math.max(inset, MIN) shape UsernameOnboardingScreen already uses, so
-  // gesture-nav devices (small inset) keep the original 32px breathing room.
-  const insets = useSafeAreaInsets();
-  const actionsBottom = resolveActionsBottom(insets.bottom);
   const targetedAutoStartRef = useRef<string | null>(null);
   const [targetedAction, setTargetedAction] = useState<TargetedAction>({ kind: "checking" });
   const [busy, setBusy] = useState(false);
@@ -430,31 +421,35 @@ export default function PasskeyLoginScreenNative({
     const disabled = busy || !["sign-in", "claim"].includes(targetedAction.kind);
 
     return (
-      <View style={[styles.actions, { bottom: actionsBottom }]}>
-        <Button
-          size="lg"
-          variant="solid"
-          accent="neutral"
-          disabled={disabled}
-          onPress={() =>
-            void (targetedAction.kind === "claim" ? runTargetedClaim() : runTargetedRestore())
-          }
-          accessibilityLabel={buttonLabel}
-        >
-          <ButtonText>{buttonLabel}</ButtonText>
-        </Button>
-        {statusMessage ? (
-          <Text size="sm" align="center">
-            {statusMessage}
-          </Text>
-        ) : null}
-      </View>
+      <>
+        <DsView fill="grow" />
+        <AppFooter>
+          <Button
+            size="lg"
+            variant="solid"
+            accent="neutral"
+            disabled={disabled}
+            onPress={() =>
+              void (targetedAction.kind === "claim" ? runTargetedClaim() : runTargetedRestore())
+            }
+            accessibilityLabel={buttonLabel}
+          >
+            <ButtonText>{buttonLabel}</ButtonText>
+          </Button>
+          {statusMessage ? (
+            <Text size="sm" align="center">
+              {statusMessage}
+            </Text>
+          ) : null}
+        </AppFooter>
+      </>
     );
   }
 
   return (
     <>
-      <View style={[styles.actions, { bottom: actionsBottom }]}>
+      <DsView fill="grow" />
+      <AppFooter>
         <Button
           size="lg"
           variant="solid"
@@ -483,7 +478,7 @@ export default function PasskeyLoginScreenNative({
             {footerMessage}
           </Text>
         ) : null}
-      </View>
+      </AppFooter>
       <PasskeyContinueOrSwitchModal
         visible={showContinueModal}
         displayName={displayName}
@@ -494,13 +489,3 @@ export default function PasskeyLoginScreenNative({
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  actions: {
-    position: "absolute",
-    left: 16,
-    right: 16,
-    gap: 16,
-    zIndex: 3,
-  },
-});

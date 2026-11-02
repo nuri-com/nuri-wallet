@@ -81,6 +81,22 @@ export function sumKnown(values: readonly (number | null)[]): number | null {
   return values.reduce<number>((sum, value) => sum + (value ?? 0), 0);
 }
 
+/**
+ * Sum of the parts that are known: a part that could not be read is left out,
+ * so a total still shows the money that IS known instead of turning into a
+ * dash. Null only when nothing is known, so an empty reading never reads as 0.
+ */
+export function sumAvailable(values: readonly (number | null)[]): number | null {
+  let sum = 0;
+  let known = false;
+  for (const value of values) {
+    if (value === null || !Number.isFinite(value)) continue;
+    sum += value;
+    known = true;
+  }
+  return known ? sum : null;
+}
+
 /** Two decimals, no grouping — the compact list writing. */
 export const ungroupedFiat = (value: number): string =>
   Math.max(0, Number.isFinite(value) ? value : 0).toFixed(2);

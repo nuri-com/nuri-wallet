@@ -2,7 +2,7 @@ import type { FC } from "react";
 import { useState } from "react";
 import { StyleSheet, View as RNView } from "react-native";
 
-import { Button, ButtonText, Footer, Header, IconButton, Topbar, TopbarTrailing } from "@ds";
+import { Button, ButtonText, Header, IconButton, Topbar, TopbarTrailing } from "@ds";
 
 import GeldsackIllustration from "../../assets/illustrations/geldsack.svg";
 import BrandStatusView from "../../components/BrandStatusView";
@@ -10,6 +10,7 @@ import DsSheetHost from "../../components/DsSheetHost";
 import { t } from "../../lib/i18n";
 import { claimSwapKitSweep } from "../../services/swapkit/SwapKitV2SweepService";
 import type { SwapKitV2SweepResult } from "../../services/swapkit/SwapKitV2SweepService";
+import AppFooter from "../../components/AppFooter";
 
 /**
  * Fullscreen "we found money of yours!" claim sheet (swap_sweep) on the shared
@@ -120,7 +121,7 @@ const SweepClaimSheet: FC<Props> = ({ visible, onClose, result, amountText, onCl
         />
       </RNView>
 
-      <Footer safeAreaBottom direction="column" align="stretch" paddingBottom="sm" paddingX="lg">
+      <AppFooter>
         <Button
           size="lg"
           variant="solid"
@@ -135,7 +136,7 @@ const SweepClaimSheet: FC<Props> = ({ visible, onClose, result, amountText, onCl
             {busy ? t("screen.SweepClaimSheet.claiming") : t("screen.SweepClaimSheet.cta")}
           </ButtonText>
         </Button>
-      </Footer>
+      </AppFooter>
     </DsSheetHost>
   );
 };

@@ -6,7 +6,6 @@ import * as Clipboard from "expo-clipboard";
 import {
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   NuriScope,
@@ -41,10 +40,9 @@ import { btcSpotPriceService } from "../../../services/pricing/BtcSpotPriceServi
 import { log } from "../../../services/logging/LoggerService";
 import {
   ARKADE_BITCOIN_ONCHAIN_MIN_SEND_SATS,
-  ARKADE_LIGHTNING_MAX_SEND_SATS,
-  ARKADE_LIGHTNING_MIN_SEND_SATS,
   BITCOIN_LNURL_MIN_SEND_SATS,
 } from "../../../config/constants";
+import { useArkadeLightningLimits } from "../../../services/arkade/lightningLimits";
 import { EventBus } from "../../../services/events/AppEventBusService";
 import { PendingBitcoinSendsStore } from "../../../services/bitcoin/PendingBitcoinSendsStore";
 import {
@@ -154,6 +152,7 @@ import { rememberNuriPayment } from "../../../services/addressBook/nuriContactSy
 import { createRecipientLookupGate } from "../../../lib/pay/recipientLookupGate";
 import type { BitcoinSendProps } from "../../../types/bitcoin";
 import { groupCount } from "../../../lib/formatting";
+import AppFooter from "../../../components/AppFooter";
 
 type Props = BitcoinSendProps;
 
@@ -196,6 +195,8 @@ export default function BitcoinSendScreen({
   balanceOptions,
   onPickBalance,
 }: Props) {
+  // The solver's live limits (lightningLimits.ts); a re-render follows a change.
+  const lightningSendLimits = useArkadeLightningLimits(visible).send;
   type InputMode = "sats" | "fiat";
   const [toAddress, setToAddress] = useState(presetAddress ?? "");
   // A short screen compacts the keypad before it scrolls.
@@ -1071,24 +1072,27 @@ export default function BitcoinSendScreen({
     onChangeB: handleFiatChange,
   });
 
-  const describeRemitRefusal = useCallback((refusal: RemitInvoiceRefusal): string => {
-    switch (refusal) {
-      case "amount_missing":
-        return t("screen.BitcoinSendScreen.errorInvoiceAmountMissing");
-      case "exceeds_balance":
-        return t("screen.BitcoinSendScreen.errorExceedsBalance");
-      case "below_corridor_minimum":
-        return t("screen.BitcoinSendScreen.minimumSatsLabel", {
-          amount: String(ARKADE_LIGHTNING_MIN_SEND_SATS),
-        });
-      case "above_corridor_maximum":
-        return t("screen.BitcoinSendScreen.maximumSatsLabel", {
-          amount: groupCount(ARKADE_LIGHTNING_MAX_SEND_SATS),
-        });
-      default:
-        return t("screen.BitcoinSendScreen.errorSendFailed");
-    }
-  }, []);
+  const describeRemitRefusal = useCallback(
+    (refusal: RemitInvoiceRefusal): string => {
+      switch (refusal) {
+        case "amount_missing":
+          return t("screen.BitcoinSendScreen.errorInvoiceAmountMissing");
+        case "exceeds_balance":
+          return t("screen.BitcoinSendScreen.errorExceedsBalance");
+        case "below_corridor_minimum":
+          return t("screen.BitcoinSendScreen.minimumSatsLabel", {
+            amount: String(lightningSendLimits.minSats),
+          });
+        case "above_corridor_maximum":
+          return t("screen.BitcoinSendScreen.maximumSatsLabel", {
+            amount: groupCount(lightningSendLimits.maxSats),
+          });
+        default:
+          return t("screen.BitcoinSendScreen.errorSendFailed");
+      }
+    },
+    [lightningSendLimits.minSats, lightningSendLimits.maxSats],
+  );
 
   const handleConfirm = useCallback(() => {
     paymentTimingStart("send");
@@ -1167,10 +1171,8 @@ export default function BitcoinSendScreen({
         isValidBitcoinAddressMainnet(addr);
       if (isBolt11 || isLnurl || arkadeToBitcoinAddress || (isRemit && !paysBySwap(zapRecipient))) {
         const ceiling = Math.min(
-          isLnurl
-            ? (lnurlMaxSats ?? ARKADE_LIGHTNING_MAX_SEND_SATS)
-            : ARKADE_LIGHTNING_MAX_SEND_SATS,
-          ARKADE_LIGHTNING_MAX_SEND_SATS,
+          isLnurl ? (lnurlMaxSats ?? lightningSendLimits.maxSats) : lightningSendLimits.maxSats,
+          lightningSendLimits.maxSats,
         );
         if (currentSats > ceiling) {
           setErrorMessage(
@@ -1487,8 +1489,8 @@ export default function BitcoinSendScreen({
               invoiceSats: mintedSats,
               acceptedSats: mintedSats,
               maxSpendableSats,
-              minSats: ARKADE_LIGHTNING_MIN_SEND_SATS,
-              maxSats: ARKADE_LIGHTNING_MAX_SEND_SATS,
+              minSats: lightningSendLimits.minSats,
+              maxSats: lightningSendLimits.maxSats,
               fundingSatsFor: maxFundAmountSats,
             });
             if (mintRefusal) throw new Error(describeRemitRefusal(mintRefusal));
@@ -1567,8 +1569,8 @@ export default function BitcoinSendScreen({
             invoiceSats: pending.sats,
             acceptedSats: pending.sats,
             maxSpendableSats,
-            minSats: ARKADE_LIGHTNING_MIN_SEND_SATS,
-            maxSats: ARKADE_LIGHTNING_MAX_SEND_SATS,
+            minSats: lightningSendLimits.minSats,
+            maxSats: lightningSendLimits.maxSats,
             fundingSatsFor: maxFundAmountSats,
           });
           if (payRefusal) throw new Error(describeRemitRefusal(payRefusal));
@@ -1800,6 +1802,7 @@ export default function BitcoinSendScreen({
     bitcoinAddressMinSats,
     arkMinSats,
     lnurlMaxSats,
+    lightningSendLimits.maxSats,
     // The shilling figure the invoice is minted for. Without it here, confirm
     // would close over the amount as it stood when the recipient was entered.
     remitAmount,
@@ -2078,9 +2081,9 @@ export default function BitcoinSendScreen({
   // three places for them to disagree about what is payable.
   const lightningBounds = resolveLightningBounds({
     corridorMinSats: isRecipientLnurl
-      ? Math.max(BITCOIN_LNURL_MIN_SEND_SATS, ARKADE_LIGHTNING_MIN_SEND_SATS)
-      : ARKADE_LIGHTNING_MIN_SEND_SATS,
-    corridorMaxSats: ARKADE_LIGHTNING_MAX_SEND_SATS,
+      ? Math.max(BITCOIN_LNURL_MIN_SEND_SATS, lightningSendLimits.minSats)
+      : lightningSendLimits.minSats,
+    corridorMaxSats: lightningSendLimits.maxSats,
     // A BOLT11 states an amount rather than a band, so only an LNURL recipient
     // contributes one.
     providerMinSats: isRecipientLnurl ? lnurlMinSats : null,
@@ -2512,7 +2515,7 @@ export default function BitcoinSendScreen({
           </View>
         </Scroll>
 
-        <Footer safeAreaBottom direction="column" align="stretch" paddingBottom="sm" paddingX="lg">
+        <AppFooter>
           {manualEntryActive ? (
             <Button
               size="lg"
@@ -2528,32 +2531,54 @@ export default function BitcoinSendScreen({
             >
               <ButtonText>{t("screen.BitcoinSendScreen.ctaNext")}</ButtonText>
             </Button>
+          ) : sendFailed ? (
+            // A failed send offers only the two ways forward: leave, or go back
+            // to the form and try again. Nothing on the screen stays editable.
+            <View direction="row" distribute="even" gap="sm">
+              <Button
+                size="lg"
+                variant="soft"
+                onPress={() => void closeAndNotifyRefresh()}
+                accessibilityLabel={t("common.close")}
+              >
+                <ButtonText>{t("common.close")}</ButtonText>
+              </Button>
+              <Button
+                size="lg"
+                variant="solid"
+                accent="lilac"
+                disabled={busy}
+                onPress={clearSendFailure}
+                accessibilityLabel={t("common.tryAgain")}
+              >
+                <ButtonText>{t("common.tryAgain")}</ButtonText>
+              </Button>
+            </View>
           ) : (
             <Button
               size="lg"
               variant="solid"
               accent="lilac"
-              onPress={sendFailed ? clearSendFailure : handleConfirm}
+              onPress={handleConfirm}
               disabled={
                 busy ||
-                (!sendFailed &&
-                  (exceedsBalance ||
-                    exceedsSettleableForOffboard ||
-                    isBelowArkadeOnchainMinimum ||
-                    isBelowArkSendMinimum ||
-                    isBelowLnurlMinimum ||
-                    isAboveLightningMaximum ||
-                    invoiceUnpayable ||
-                    zapBandLabel !== null ||
-                    remitQuoting ||
-                    remitQuoteFailed ||
-                    (currentSats <= 0 && !isRecipientBolt11)))
+                exceedsBalance ||
+                exceedsSettleableForOffboard ||
+                isBelowArkadeOnchainMinimum ||
+                isBelowArkSendMinimum ||
+                isBelowLnurlMinimum ||
+                isAboveLightningMaximum ||
+                invoiceUnpayable ||
+                zapBandLabel !== null ||
+                remitQuoting ||
+                remitQuoteFailed ||
+                (currentSats <= 0 && !isRecipientBolt11)
               }
             >
-              <ButtonText>{sendFailed ? t("common.tryAgain") : ctaLabel}</ButtonText>
+              <ButtonText>{ctaLabel}</ButtonText>
             </Button>
           )}
-        </Footer>
+        </AppFooter>
       </DsSheetHost>
       <PayoutAbroadSheet
         visible={visible && !handedOff && abroadOpen}

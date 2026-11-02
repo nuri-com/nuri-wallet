@@ -176,6 +176,8 @@ export const es = {
     },
     BitcoinTransactionsModal: {
       title: "Actividad de Bitcoin",
+      errorRateLimited:
+        "El historial de Bitcoin está ocupado ahora mismo. Las filas mostradas siguen siendo correctas.",
       pendingBalanceLabel: "Bitcoin pendiente",
     },
     BitcoinReceiveModal: {
@@ -246,6 +248,7 @@ export const es = {
       openAccountDeployingTitle: "Configurando tu cuenta",
       openAccountDeployingBody:
         "Espera mientras se despliega tu cuenta y comienza la verificación.",
+      openAccountEmailInUse: "Este correo ya lo usa otra cuenta. Usa un correo diferente.",
       openAccountDeployFailed: "No pudimos configurar tu cuenta. Inténtalo de nuevo.",
       verificationInProgress: "Verificación en curso",
       continueVerification: "Continuar verificación",
@@ -309,6 +312,7 @@ export const es = {
       empty: "Aún no hay transacciones",
       errorDefault: "No se pudieron cargar las transacciones",
       typeRefund: "Reembolso",
+      typePushToCard: "Depósito en tarjeta",
       typePayment: "Pago",
       statusPending: "Pendiente",
       statusFailed: "Rechazado",
@@ -550,7 +554,7 @@ export const es = {
       exceedsBalanceHint: "Supera el saldo disponible",
     },
     HomeScreen: {
-      greeting: "¡Bienvenido, %{name}!",
+      greeting: "Bienvenido, %{name}",
       scanA11yLabel: "Escanear código QR",
       details: "Detalles",
       detailsBank: "Datos bancarios",
@@ -581,6 +585,7 @@ export const es = {
       railIban: "IBAN",
       railVisa: "VISA",
       receiveTitle: "Recibir",
+      receiveLabelLightning: "Lightning",
       receiveLabelInstant: "Instantáneo",
       receiveLabelOnchain: "Onchain",
       receiveLabelEvm: "Dirección EVM",
@@ -657,6 +662,7 @@ export const es = {
       addDestination: "Añadir dirección, IBAN, tarjeta o Lightning",
       removeDestination: "Quitar",
       payName: "Pagar a %{name}",
+      historyEmpty: "Aún no hay pagos con %{name}",
       destinationCount: "%{first} +%{count}",
       kind_lightning: "Dirección Lightning",
       kind_evm: "Dirección EVM",
@@ -687,6 +693,8 @@ export const es = {
     },
     Settings: {
       payLink: "Enlace de pago",
+      invite: "Invitar amigos",
+      inviteCopy: "Copiar enlace de invitación",
       bankCards: "Banco y tarjetas",
       bankCardsBody: "Verifica tu cuenta y consigue un IBAN y una tarjeta Visa.",
       activate: "Activar",
@@ -807,8 +815,8 @@ export const es = {
       statusFailed: "Fallido",
       sendAgain: "Enviar de nuevo",
       addToAddressBook: "Añadir a la agenda",
-      contactReceived: "%{name} recibió",
-      contactSent: "%{name} envió",
+      contactFrom: "De %{name}",
+      contactTo: "Para %{name}",
     },
     ReceiveModal: {
       request: "Solicitar",

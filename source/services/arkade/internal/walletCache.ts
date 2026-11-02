@@ -260,7 +260,7 @@ export async function getOrCreateWallet(): Promise<ArkadeWallet> {
                 // per-IP 429 bursts) falls over per-call instead of pinning the
                 // wallet to a dead Esplora for its whole life.
                 onchainProvider: buildArkadeOnchainProvider(onchainEsploraUrl),
-                storage: storage as unknown as Parameters<typeof Wallet.create>[0]["storage"],
+                storage,
                 settlementConfig: false,
               }),
             );

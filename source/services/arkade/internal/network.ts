@@ -1,9 +1,6 @@
 // Internal network inference + URL probe helpers shared by prod-tier and debug-tier arkade code.
 import type { Network } from "./legacySwapTypes";
-// SDK 0.5 renamed `ArkInfo` to `ArkInfo` (same shape, including `fees` and
-// `scheduledSession` read below). Aliased so the local `ArkInfoRaw` wire type
-// and every usage keep their names.
-import type { ArkInfo } from "@arkade-os/sdk";
+import type { ArkadeInfo } from "@arkade-os/sdk";
 import { MEMPOOL_API_BASE_URL } from "../../../config/endpoints";
 import { errMsg } from "../../../lib/errorMessage";
 import { ARKADE_NODE_INFO_TIMEOUT_MS } from "./constants";
@@ -153,7 +150,7 @@ export function buildWalletNodeCandidates(configuredNodeUrl: string): string[] {
   return normalizedConfigured ? [normalizedConfigured] : [];
 }
 
-export function parseArkNodeInfo(fromServer: ArkInfoRaw): ArkInfo {
+export function parseArkNodeInfo(fromServer: ArkInfoRaw): ArkadeInfo {
   return {
     boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
     checkpointTapscript: fromServer.checkpointTapscript ?? "",
@@ -168,7 +165,7 @@ export function parseArkNodeInfo(fromServer: ArkInfoRaw): ArkInfo {
     digest: fromServer.digest ?? "",
     dust: BigInt(fromServer.dust ?? 0),
     fees: {
-      intentFee: (fromServer.fees?.intentFee ?? {}) as ArkInfo["fees"]["intentFee"],
+      intentFee: (fromServer.fees?.intentFee ?? {}) as ArkadeInfo["fees"]["intentFee"],
       txFeeRate: fromServer.fees?.txFeeRate ?? "",
     },
     forfeitAddress: fromServer.forfeitAddress ?? "",
@@ -182,7 +179,7 @@ export function parseArkNodeInfo(fromServer: ArkInfoRaw): ArkInfo {
             nextEndTime: BigInt(fromServer.scheduledSession.nextEndTime ?? 0),
             period: BigInt(fromServer.scheduledSession.period ?? 0),
             fees: (fromServer.scheduledSession.fees ?? {}) as NonNullable<
-              ArkInfo["scheduledSession"]
+              ArkadeInfo["scheduledSession"]
             >["fees"],
           }
         : undefined,
@@ -201,12 +198,12 @@ export function parseArkNodeInfo(fromServer: ArkInfoRaw): ArkInfo {
 /** How long a read of the node's info is reused. It changes rarely (fees,
  *  floors, keys); every send read it fresh and waited for it. */
 const NODE_INFO_REUSE_MS = 60_000;
-let recentNodeInfo: { nodeUrl: string; at: number; info: Promise<ArkInfo> } | null = null;
+let recentNodeInfo: { nodeUrl: string; at: number; info: Promise<ArkadeInfo> } | null = null;
 
 /** The node's info, read at most once a minute (a read in flight is shared,
  *  a failed read is not kept). Fetching it ahead (warmArkadeSend) lets a send
  *  that follows skip the wait. */
-export function getRecentArkNodeInfo(nodeUrl: string): Promise<ArkInfo> {
+export function getRecentArkNodeInfo(nodeUrl: string): Promise<ArkadeInfo> {
   const now = Date.now();
   if (
     recentNodeInfo &&
@@ -224,7 +221,7 @@ export function getRecentArkNodeInfo(nodeUrl: string): Promise<ArkInfo> {
   return info;
 }
 
-export async function fetchArkNodeInfoWithRetry(nodeUrl: string): Promise<ArkInfo> {
+export async function fetchArkNodeInfoWithRetry(nodeUrl: string): Promise<ArkadeInfo> {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= ARKADE_NODE_INFO_RETRIES; attempt += 1) {
     emitTrace({

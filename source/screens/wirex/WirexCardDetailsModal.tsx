@@ -14,7 +14,6 @@ import {
   AlertIcon,
   Button,
   ButtonText,
-  Footer,
   Header,
   type IconName,
   IconButton,
@@ -43,6 +42,7 @@ import { cardTabHolderName, cardTabOffersIssueOnly } from "../../lib/wirex/cardS
 import { type WirexCardLimit, wirexService } from "../../services/wirex/WirexService";
 import WirexCardLimitEditor from "./WirexCardLimitEditor";
 import WirexCloseCardConfirm from "./WirexCloseCardConfirm";
+import AppFooter from "../../components/AppFooter";
 
 type WirexDetailsTab = "card" | "bank";
 type ActivePage = "details" | "limit" | "close";
@@ -559,7 +559,7 @@ const WirexCardDetailsModal: React.FC<Props> = ({
       </Scroll>
 
       {showIssueCta || showCloseCta ? (
-        <Footer safeAreaBottom direction="column" align="stretch" paddingBottom="sm" paddingX="lg">
+        <AppFooter>
           {showCloseCta ? (
             <Button
               size="lg"
@@ -584,7 +584,7 @@ const WirexCardDetailsModal: React.FC<Props> = ({
               <ButtonText>{t("screen.WirexCard.issueNewCard")}</ButtonText>
             </Button>
           ) : null}
-        </Footer>
+        </AppFooter>
       ) : null}
     </DsSheetHost>
   );

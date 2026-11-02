@@ -1,10 +1,10 @@
 // @screen wirex.open-account-email
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
+import { Platform } from "react-native";
 import {
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   Text,
@@ -17,7 +17,9 @@ import {
 import type { TextFieldHandle } from "@ds";
 import DsSheetHost from "../../../components/DsSheetHost";
 import Spinner from "../../../components/Spinner";
+import { focusAndroidTextInput } from "../../../lib/androidFocus";
 import { t } from "../../../lib/i18n";
+import AppFooter from "../../../components/AppFooter";
 
 const K = "screen.CardScreen";
 // Shape check only; the server is the authority on deliverability.
@@ -29,20 +31,49 @@ type Props = {
   onSubmit: (email: string) => void;
   busy: boolean;
   failed: boolean;
+  emailInUse: boolean;
 };
 
-const WirexEmailEntryModal: React.FC<Props> = ({ visible, onClose, onSubmit, busy, failed }) => {
+const WirexEmailEntryModal: React.FC<Props> = ({
+  visible,
+  onClose,
+  onSubmit,
+  busy,
+  failed,
+  emailInUse,
+}) => {
   const [email, setEmail] = useState("");
+  // The email the last failure belongs to. Once the user edits it, the old
+  // "could not set up" line no longer describes what is in the field.
+  const [submittedEmail, setSubmittedEmail] = useState<string | null>(null);
   const emailFieldRef = useRef<TextFieldHandle>(null);
+  const stopAndroidFocus = useRef<(() => void) | null>(null);
   const valid = EMAIL_RE.test(email.trim());
+  const showFailure = failed && submittedEmail === email.trim();
 
   // This component stays mounted across open/close (only the sheet's children
   // unmount), so typed state would silently survive into the next open while
   // the native field remounts empty — and this email becomes the permanent
   // account identity. Never let a hidden stale value submit.
   useEffect(() => {
-    if (!visible) setEmail("");
+    if (visible) return;
+    setEmail("");
+    setSubmittedEmail(null);
+    stopAndroidFocus.current?.();
+    stopAndroidFocus.current = null;
   }, [visible]);
+  useEffect(() => () => stopAndroidFocus.current?.(), []);
+
+  // Android ignores a single focus() right after the page animates in and the
+  // keyboard never opens; the shared helper retries until it does.
+  const focusEmail = () => {
+    if (Platform.OS !== "android") {
+      emailFieldRef.current?.focus();
+      return;
+    }
+    stopAndroidFocus.current?.();
+    stopAndroidFocus.current = focusAndroidTextInput(emailFieldRef, { delayMs: 0 });
+  };
 
   return (
     // While the account is being set up, closing mid-flight would orphan the
@@ -53,7 +84,7 @@ const WirexEmailEntryModal: React.FC<Props> = ({ visible, onClose, onSubmit, bus
       mode="full"
       dismissible={!busy}
       onOpenComplete={() => {
-        if (!busy) emailFieldRef.current?.focus();
+        if (!busy) focusEmail();
       }}
     >
       <Header safeAreaTop chrome="canvas">
@@ -92,9 +123,9 @@ const WirexEmailEntryModal: React.FC<Props> = ({ visible, onClose, onSubmit, bus
             paddingBottom="lg"
             fill="grow"
           >
-            {failed ? (
+            {showFailure ? (
               <Text size="sm" emphasis>
-                {t(`${K}.openAccountDeployFailed`)}
+                {t(`${K}.${emailInUse ? "openAccountEmailInUse" : "openAccountDeployFailed"}`)}
               </Text>
             ) : null}
 
@@ -113,24 +144,22 @@ const WirexEmailEntryModal: React.FC<Props> = ({ visible, onClose, onSubmit, bus
             />
           </View>
 
-          <Footer
-            safeAreaBottom
-            direction="column"
-            align="stretch"
-            paddingBottom="sm"
-            paddingX="lg"
-          >
+          <AppFooter>
             <Button
               size="lg"
               variant="solid"
               accent="lilac"
               disabled={!valid}
-              onPress={() => onSubmit(email.trim())}
+              onPress={() => {
+                const next = email.trim();
+                setSubmittedEmail(next);
+                onSubmit(next);
+              }}
               accessibilityLabel={t(`${K}.openAccountEmailSubmit`)}
             >
               <ButtonText>{t(`${K}.openAccountEmailSubmit`)}</ButtonText>
             </Button>
-          </Footer>
+          </AppFooter>
         </>
       )}
     </DsSheetHost>

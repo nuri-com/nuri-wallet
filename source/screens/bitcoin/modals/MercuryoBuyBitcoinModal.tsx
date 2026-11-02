@@ -4,7 +4,6 @@ import { Platform, Keyboard } from "react-native";
 import {
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   Scroll,
@@ -42,6 +41,7 @@ import {
 import { startMercuryoOrderTracking } from "../../../services/mercuryo/MercuryoPendingTracker";
 import { t } from "../../../lib/i18n";
 import { groupCount } from "../../../lib/formatting";
+import AppFooter from "../../../components/AppFooter";
 type Props = MercuryoBuyBitcoinProps;
 
 /**
@@ -295,7 +295,7 @@ const MercuryoBuyBitcoinModal: React.FC<Props> = ({ visible, onClose, bitcoinAdd
         </View>
       </Scroll>
 
-      <Footer safeAreaBottom direction="column" align="stretch" paddingBottom="sm" paddingX="lg">
+      <AppFooter>
         <Button
           size="lg"
           variant="solid"
@@ -310,7 +310,7 @@ const MercuryoBuyBitcoinModal: React.FC<Props> = ({ visible, onClose, bitcoinAdd
               : t("screen.MercuryoBuyBitcoinModal.buyBitcoin")}
           </ButtonText>
         </Button>
-      </Footer>
+      </AppFooter>
     </DsSheetHost>
   );
 };

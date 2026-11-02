@@ -5,7 +5,6 @@ import { startMovePill } from "../../../services/wallet/CardTransferPill";
 
 import {
   Button,
-  Footer,
   Header,
   IconButton,
   Scroll,
@@ -25,6 +24,7 @@ import { t } from "../../../lib/i18n";
 
 import { wirexService } from "../../../services/wirex/WirexService";
 import { pickSepaDebitToken, sepaEstimateDebit } from "../../../lib/wirex/sepa";
+import AppFooter from "../../../components/AppFooter";
 
 type DebitToken = { tokenAddress: string; tokenSymbol: string; balance: number };
 
@@ -329,15 +329,7 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
         </View>
       </Scroll>
 
-      <Footer
-        safeAreaBottom
-        chrome="canvas"
-        direction="column"
-        align="stretch"
-        paddingBottom="sm"
-        paddingX="lg"
-        gap="sm"
-      >
+      <AppFooter canvas>
         <Button
           size="lg"
           variant="solid"
@@ -358,7 +350,7 @@ const SepaAmountConfirmationModal: React.FC<Props> = ({
                 name: firstName,
               })}
         </Button>
-      </Footer>
+      </AppFooter>
     </DsSheetHost>
   );
 };

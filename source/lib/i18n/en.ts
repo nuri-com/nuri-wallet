@@ -176,6 +176,7 @@ export const en = {
     },
     BitcoinTransactionsModal: {
       title: "Bitcoin Activity",
+      errorRateLimited: "Bitcoin history is busy right now. The rows shown are still correct.",
       pendingBalanceLabel: "Pending Bitcoin",
     },
     BitcoinReceiveModal: {
@@ -244,6 +245,8 @@ export const en = {
       openAccountDeployingTitle: "Setting up your account",
       openAccountDeployingBody:
         "Please wait while your account is deployed and verification starts.",
+      openAccountEmailInUse:
+        "This email is already used by another account. Please use a different email.",
       openAccountDeployFailed: "We could not set up your account. Please try again.",
       verificationInProgress: "Verification in progress",
       continueVerification: "Continue Verification",
@@ -308,6 +311,7 @@ export const en = {
       empty: "No transactions yet",
       errorDefault: "Failed to load transactions",
       typeRefund: "Refund",
+      typePushToCard: "Push to card deposit",
       typePayment: "Payment",
       statusPending: "Pending",
       statusFailed: "Declined",
@@ -547,7 +551,7 @@ export const en = {
       exceedsBalanceHint: "Exceeds available balance",
     },
     HomeScreen: {
-      greeting: "Welcome %{name}!",
+      greeting: "Welcome %{name}",
       scanA11yLabel: "Scan QR code",
       details: "Details",
       detailsBank: "Bank details",
@@ -578,6 +582,7 @@ export const en = {
       railIban: "IBAN",
       railVisa: "Visa",
       receiveTitle: "Receive",
+      receiveLabelLightning: "Lightning",
       receiveLabelInstant: "Instant",
       receiveLabelOnchain: "Onchain",
       receiveLabelEvm: "EVM address",
@@ -652,6 +657,7 @@ export const en = {
       addDestination: "Add address, IBAN, card or Lightning",
       removeDestination: "Remove",
       payName: "Pay %{name}",
+      historyEmpty: "No payments with %{name} yet",
       destinationCount: "%{first} +%{count}",
       kind_lightning: "Lightning address",
       kind_evm: "EVM address",
@@ -682,6 +688,8 @@ export const en = {
     },
     Settings: {
       payLink: "Payment link",
+      invite: "Invite friends",
+      inviteCopy: "Copy invite link",
       bankCards: "Bank and Cards",
       bankCardsBody: "Verify your account and get an IBAN and a Visa card.",
       activate: "Activate",
@@ -802,8 +810,8 @@ export const en = {
       statusFailed: "Failed",
       sendAgain: "Send again",
       addToAddressBook: "Add to address book",
-      contactReceived: "%{name} received",
-      contactSent: "%{name} sent",
+      contactFrom: "From %{name}",
+      contactTo: "To %{name}",
     },
     ReceiveModal: {
       request: "Request",

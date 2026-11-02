@@ -7,7 +7,6 @@ import React, { useEffect, useState, useRef } from "react";
 import {
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   Scroll,
@@ -31,6 +30,7 @@ import { getAddressBook } from "../../../services/addressBook/AddressBookService
 import { EventBus } from "../../../services/events/AppEventBusService";
 import { wirexService, type WirexPayoutCard } from "../../../services/wirex/WirexService";
 import { acceptsCardSend } from "../../addressBook/addressBookModel";
+import AppFooter from "../../../components/AppFooter";
 
 export type CardPayoutPrefill = { name: string; number: string };
 
@@ -162,18 +162,11 @@ const CardPayoutAddModal: React.FC<Props> = ({ visible, onClose, onAdded, prefil
         </View>
       </Scroll>
 
-      <Footer
-        safeAreaBottom
-        chrome="canvas"
-        direction="column"
-        align="stretch"
-        paddingBottom="sm"
-        paddingX="lg"
-      >
+      <AppFooter canvas>
         <Button size="lg" variant="solid" accent="lilac" disabled={!canSave} onPress={save}>
           <ButtonText>{t("screen.CardPayout.saveLabel")}</ButtonText>
         </Button>
-      </Footer>
+      </AppFooter>
     </DsSheetHost>
   );
 };

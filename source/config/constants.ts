@@ -44,8 +44,13 @@ export const BITCOIN_LNURL_MIN_SEND_SATS = 500;
 // mid-flow, and they are expected to move as the corridor ramps up. The max
 // mirrors the SwapKit server's cap (arkade-intents MAX_SEND_SATS, 100,000 since
 // nuri-mcp-bitcoin-swapkit#381); never above it.
+// These are now the FALLBACK: the live limits follow the solver's card
+// (services/arkade/internal/lightningLimitsStore.ts).
 export const ARKADE_LIGHTNING_MIN_SEND_SATS = 500;
 export const ARKADE_LIGHTNING_MAX_SEND_SATS = 100_000;
+// Receive fallback, the 100k card moved inward (see receiveLimits.ts).
+export const ARKADE_RECEIVE_MIN_SATS = 505;
+export const ARKADE_RECEIVE_MAX_SATS = 99_680;
 // The Lightning-legged swap into a Base stable has its own floor: the provider
 // states a fiat-denominated minimum, so the live number rides on the quote
 // (`limits.minSats`) and this is only the fallback for a quote that omits it.

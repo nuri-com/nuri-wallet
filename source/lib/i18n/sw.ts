@@ -177,6 +177,8 @@ export const sw = {
     },
     BitcoinTransactionsModal: {
       title: "Shughuli za Bitcoin",
+      errorRateLimited:
+        "Historia ya Bitcoin ina shughuli nyingi sasa. Mistari iliyoonyeshwa bado ni sahihi.",
       pendingBalanceLabel: "Bitcoin inayosubiri",
     },
     BitcoinReceiveModal: {
@@ -248,6 +250,8 @@ export const sw = {
       openAccountDeployingTitle: "Tunaandaa akaunti yako",
       openAccountDeployingBody:
         "Tafadhali subiri wakati akaunti yako inaandaliwa na uthibitishaji unaanza.",
+      openAccountEmailInUse:
+        "Barua pepe hii tayari inatumiwa na akaunti nyingine. Tafadhali tumia barua pepe nyingine.",
       openAccountDeployFailed: "Hatukuweza kuandaa akaunti yako. Tafadhali jaribu tena.",
       verificationInProgress: "Uthibitishaji unaendelea",
       continueVerification: "Endelea na Uthibitishaji",
@@ -312,6 +316,7 @@ export const sw = {
       empty: "Bado hakuna miamala",
       errorDefault: "Imeshindwa kupakia miamala",
       typeRefund: "Marejesho",
+      typePushToCard: "Amana kwenye kadi",
       typePayment: "Malipo",
       statusPending: "Inasubiri",
       statusFailed: "Imekataliwa",
@@ -549,7 +554,7 @@ export const sw = {
       exceedsBalanceHint: "Inazidi salio lililopo",
     },
     HomeScreen: {
-      greeting: "Karibu %{name}!",
+      greeting: "Karibu %{name}",
       scanA11yLabel: "Changanua msimbo wa QR",
       details: "Maelezo",
       detailsBank: "Maelezo ya benki",
@@ -580,6 +585,7 @@ export const sw = {
       railIban: "IBAN",
       railVisa: "VISA",
       receiveTitle: "Pokea",
+      receiveLabelLightning: "Lightning",
       receiveLabelInstant: "Papo hapo",
       receiveLabelOnchain: "Onchain",
       receiveLabelEvm: "Anwani ya EVM",
@@ -656,6 +662,7 @@ export const sw = {
       addDestination: "Ongeza anwani, IBAN au Lightning",
       removeDestination: "Ondoa",
       payName: "Lipa %{name}",
+      historyEmpty: "Bado hakuna malipo na %{name}",
       destinationCount: "%{first} +%{count}",
       kind_lightning: "Anwani ya Lightning",
       kind_evm: "Anwani ya EVM",
@@ -686,6 +693,8 @@ export const sw = {
     },
     Settings: {
       payLink: "Kiungo cha malipo",
+      invite: "Alika marafiki",
+      inviteCopy: "Nakili kiungo cha mwaliko",
       bankCards: "Benki na Kadi",
       bankCardsBody: "Thibitisha akaunti yako upate IBAN na kadi ya Visa.",
       activate: "Washa",
@@ -806,8 +815,8 @@ export const sw = {
       statusFailed: "Imeshindwa",
       sendAgain: "Tuma tena",
       addToAddressBook: "Ongeza kwenye kitabu cha anwani",
-      contactReceived: "%{name} amepokea",
-      contactSent: "%{name} ametuma",
+      contactFrom: "Kutoka kwa %{name}",
+      contactTo: "Kwenda kwa %{name}",
     },
     ReceiveModal: {
       request: "Omba",

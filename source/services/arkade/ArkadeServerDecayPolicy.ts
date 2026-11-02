@@ -182,7 +182,7 @@ function tapMerkleRootFromLeafEntry(entry: unknown, script: Uint8Array): Uint8Ar
   const control = entry[0] as { version?: unknown; merklePath?: unknown };
   const version = Number(control.version);
   const leafVersion = Number.isFinite(version) ? version & 0xfe : 0xc0;
-  let root = tapLeafHash(script, leafVersion);
+  let root: Uint8Array = tapLeafHash(script, leafVersion);
   const merklePath = Array.isArray(control.merklePath) ? control.merklePath : [];
   for (const sibling of merklePath) {
     const siblingBytes = bytesFromUnknown(sibling, "tapMerklePath");

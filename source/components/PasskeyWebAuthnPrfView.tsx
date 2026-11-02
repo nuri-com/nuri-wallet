@@ -4,6 +4,7 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { Button, ButtonText, NuriScope, Text, useNuriTheme, View } from "@ds";
 import { PRF_SALT } from "../config/constants";
 import { WALLET_RP_ID } from "../config/passkey";
+import { PASSKEY_FOCUS_REJECTION_SOURCE } from "../lib/auth/passkeyFocus";
 import { normalizePrfOutput, zeroize } from "../lib/crypto";
 import PasskeyWebAuthnPrfWeb from "./PasskeyWebAuthnPrfWeb";
 
@@ -241,6 +242,13 @@ function buildHtml(opts: {
           } catch(e) {
             var name = e && e.name ? e.name : "Error";
             var msg = e && e.message ? e.message : String(e);
+            // The tap only gave this page its focus (lib/auth/passkeyFocus):
+            // keep the button for the next tap instead of failing the ceremony.
+            if (name === "NotAllowedError" && /${PASSKEY_FOCUS_REJECTION_SOURCE}/i.test(msg)) {
+              post("info:focus_retry");
+              setBusy(false);
+              return;
+            }
             post("error:" + mode + ":" + name + ":" + msg);
             setBusy(false);
           }
@@ -357,6 +365,9 @@ function PasskeyWebAuthnPrfViewInner({
         onAttemptStart?.();
         return;
       }
+
+      // Focus refusal: the page keeps its button for another tap, no error.
+      if (data === "info:focus_retry") return;
 
       if (data.startsWith("create:")) {
         const [, prfB64u, credId, credPubkey] = data.split(":");

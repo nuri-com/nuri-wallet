@@ -18,6 +18,7 @@
  */
 
 import * as React from "react";
+import { Keyboard, Platform, View as RNView, StyleSheet } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { NuriSafeAreaProvider, NuriThemeProvider, OverlayProvider, ToastProvider } from "@ds";
@@ -25,6 +26,39 @@ import { NuriSafeAreaProvider, NuriThemeProvider, OverlayProvider, ToastProvider
 import CopyToastBridge from "./CopyToastBridge";
 import OtaUpdateAutoApplyBridge from "./OtaUpdateAutoApplyBridge";
 import V2MoveStatusBridge from "./V2MoveStatusBridge";
+import {
+  reportAppFrameLayout,
+  reportKeyboardHidden,
+  reportKeyboardShown,
+} from "../lib/ui/androidKeyboardFrame";
+
+/**
+ * Android only: measures the app frame (the same box the overlay outlet fills)
+ * and whether the keyboard is up, so a full page can tell when the window shrank
+ * for the keyboard on top of the DS lifting it (lib/ui/androidKeyboardFrame).
+ * Raw View: an invisible measuring layer, which the DS does not model.
+ */
+function AndroidAppFrameProbe() {
+  React.useEffect(() => {
+    const show = Keyboard.addListener("keyboardDidShow", (e) =>
+      reportKeyboardShown(e.endCoordinates.height),
+    );
+    const hide = Keyboard.addListener("keyboardDidHide", () => reportKeyboardHidden());
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return (
+    <RNView
+      pointerEvents="none"
+      style={StyleSheet.absoluteFill}
+      onLayout={(e) =>
+        reportAppFrameLayout(e.nativeEvent.layout.width, e.nativeEvent.layout.height)
+      }
+    />
+  );
+}
 
 export default function DsOverlayRoot({ children }: { children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
@@ -39,6 +73,7 @@ export default function DsOverlayRoot({ children }: { children: React.ReactNode 
             <CopyToastBridge />
             <OtaUpdateAutoApplyBridge />
             <V2MoveStatusBridge />
+            {Platform.OS === "android" ? <AndroidAppFrameProbe /> : null}
             {children}
           </ToastProvider>
         </OverlayProvider>

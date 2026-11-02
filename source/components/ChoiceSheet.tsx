@@ -12,7 +12,6 @@ import {
   Button,
   ButtonIcon,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   List,
@@ -35,6 +34,7 @@ import type { Accent, IconName, ModalMode } from "@ds";
 
 import DsSheetHost from "./DsSheetHost";
 import { t } from "../lib/i18n";
+import AppFooter from "./AppFooter";
 
 export type ChoiceSheetItem<K extends string> = {
   key: K;
@@ -143,14 +143,7 @@ export default function ChoiceSheet<K extends string>({
       </Scroll>
 
       {footerAction ? (
-        <Footer
-          safeAreaBottom
-          chrome="canvas"
-          direction="column"
-          align="stretch"
-          paddingBottom="sm"
-          paddingX="lg"
-        >
+        <AppFooter canvas>
           <Button
             size="lg"
             variant="solid"
@@ -160,7 +153,7 @@ export default function ChoiceSheet<K extends string>({
             <ButtonText>{footerAction.label}</ButtonText>
             {footerAction.icon ? <ButtonIcon name={footerAction.icon} /> : null}
           </Button>
-        </Footer>
+        </AppFooter>
       ) : null}
     </DsSheetHost>
   );

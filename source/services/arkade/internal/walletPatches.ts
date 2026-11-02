@@ -13,8 +13,7 @@ import {
   validateVtxoTxGraph,
 } from "@arkade-os/sdk";
 import { ExpoArkProvider } from "@arkade-os/sdk/adapters/expo";
-// SDK 0.5 renamed `ArkInfo` to `ArkInfo`; same shape.
-import type { ArkInfo } from "@arkade-os/sdk";
+import type { ArkadeInfo } from "@arkade-os/sdk";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { base64 } from "@scure/base";
 import { bytesToHex } from "../../../lib/bytes";
@@ -113,14 +112,14 @@ export interface PatchableOnchainProvider {
 }
 
 export class PrefetchedExpoArkProvider extends ExpoArkProvider {
-  private prefetchedInfo: ArkInfo | null;
+  private prefetchedInfo: ArkadeInfo | null;
 
-  constructor(serverUrl: string, prefetchedInfo: ArkInfo | null) {
+  constructor(serverUrl: string, prefetchedInfo: ArkadeInfo | null) {
     super(serverUrl);
     this.prefetchedInfo = prefetchedInfo;
   }
 
-  async getInfo(): Promise<ArkInfo> {
+  async getInfo(): Promise<ArkadeInfo> {
     if (this.prefetchedInfo) {
       const out = this.prefetchedInfo;
       this.prefetchedInfo = null;

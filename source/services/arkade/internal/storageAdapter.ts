@@ -1,6 +1,15 @@
 // Storage adapters for the Arkade SDK wallet. Owns the wallet contract
 // repository, swap repository, and swap task queue caches.
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  assertPageRequest,
+  pageResult,
+  type Contract,
+  type ContractFilter,
+  type ContractRepository,
+  type PageRequest,
+  type PageResult,
+} from "@arkade-os/sdk";
 // SDK 0.5 removed `WalletRepositoryImpl`; ported locally (same storage keys).
 import { AsyncStorageWalletRepository } from "./asyncStorageWalletRepository";
 import { AsyncStorageTaskQueue } from "@arkade-os/sdk/worker/expo";
@@ -14,19 +23,6 @@ import {
 } from "../ArkadeRecoveryBackupService";
 import { logArkadeWalletSignTrace } from "./logging";
 import { truncateForLog } from "./utils";
-
-type ArkadeContractFilter = {
-  script?: string | string[];
-  state?: string | string[];
-  type?: string | string[];
-};
-
-type ArkadeStoredContract = {
-  script?: string;
-  state?: string;
-  type?: string;
-  [key: string]: unknown;
-};
 
 type ArkadeSwapFilter = {
   id?: string | string[];
@@ -112,8 +108,12 @@ class ArkadeV4StorageAdapter {
   }
 }
 
-class ArkadeV4ContractRepository {
-  readonly version = 1 as const;
+// SDK 0.5 reads contracts only through `getContractsPage` (repository
+// version 3). The rows stay in the one `collection:contracts` key they always
+// lived in, so contracts already on devices load unchanged; a row written
+// before `watch` existed reads as "watched", as the SDK requires.
+class ArkadeV4ContractRepository implements ContractRepository {
+  readonly version = 3 as const;
 
   private readonly storage = new ArkadeV4StorageAdapter();
 
@@ -121,23 +121,24 @@ class ArkadeV4ContractRepository {
 
   private writeQueue: Promise<void> = Promise.resolve();
 
-  private async readAllContracts(): Promise<ArkadeStoredContract[]> {
+  private async readAllContracts(): Promise<Contract[]> {
     const raw = await this.storage.getItem(this.key);
     if (!raw) return [];
     try {
       const parsed: unknown = JSON.parse(raw);
-      return Array.isArray(parsed) ? (parsed as ArkadeStoredContract[]) : [];
+      return Array.isArray(parsed) ? (parsed as Contract[]) : [];
     } catch {
       return [];
     }
   }
 
-  private async writeAllContracts(contracts: ArkadeStoredContract[]): Promise<void> {
+  private async writeAllContracts(contracts: Contract[]): Promise<void> {
     await this.storage.setItem(this.key, JSON.stringify(contracts));
   }
 
-  private matchesFilter(contract: ArkadeStoredContract, filter?: ArkadeContractFilter): boolean {
+  private matchesFilter(contract: Contract, filter?: ContractFilter): boolean {
     if (!filter) return true;
+    // An empty array matches nothing, as the SDK's own backends treat it.
     const matches = (value: unknown, expected?: string | string[]) => {
       if (expected === undefined) return true;
       const current = String(value || "");
@@ -148,16 +149,32 @@ class ArkadeV4ContractRepository {
     return (
       matches(contract?.script, filter.script) &&
       matches(contract?.state, filter.state) &&
-      matches(contract?.type, filter.type)
+      matches(contract?.type, filter.type) &&
+      matches(contract?.watch ?? "watched", filter.watch)
     );
   }
 
-  async getContracts(filter?: ArkadeContractFilter): Promise<ArkadeStoredContract[]> {
+  /** Every stored contract matching `filter`, for the app's own maintenance reads. */
+  async getContracts(filter?: ContractFilter): Promise<Contract[]> {
     const contracts = await this.readAllContracts();
     return contracts.filter((contract) => this.matchesFilter(contract, filter));
   }
 
-  async saveContract(contract: ArkadeStoredContract): Promise<void> {
+  /** Bounded contracts in script order; `after` is the exclusive script cursor. */
+  async getContractsPage(
+    filter: ContractFilter | undefined,
+    page: PageRequest,
+  ): Promise<PageResult<Contract>> {
+    assertPageRequest(page);
+    const after = page.after;
+    const rows = (await this.getContracts(filter))
+      .filter((contract) => after === undefined || String(contract.script) > after)
+      .sort((a, b) => (a.script < b.script ? -1 : a.script > b.script ? 1 : 0))
+      .slice(0, page.limit + 1);
+    return pageResult(rows, page.limit, (contract) => contract.script);
+  }
+
+  async saveContract(contract: Contract): Promise<void> {
     const script = String(contract?.script || "").trim();
     if (!script) {
       throw new Error("contract script required");

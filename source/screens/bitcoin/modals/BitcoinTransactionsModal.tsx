@@ -1,10 +1,6 @@
 // @screen bitcoin.transactions
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Linking } from "react-native";
-import { mempoolTxUrl } from "../../../config/endpoints";
-import { formatActivityTime } from "../../../lib/transactionRowUtils";
-import { singleInputAddress } from "../../../lib/activityNames";
 import { shareCsvFile } from "../../../lib/csvExport";
 import { csvDocument, csvFileName } from "../../../lib/csv";
 import {
@@ -27,7 +23,7 @@ import {
   getBitcoinTransactionsMetaCacheKey,
 } from "../../../services/balance/transactions/cacheKeys";
 import type { BitcoinTransactionsProps, AddressTx } from "../../../types/bitcoin";
-import { classifyTransaction } from "../../../lib/bitcoin/convert";
+import { isRateLimitError } from "../../../lib/bitcoin/rateLimit";
 import type { UnifiedTransaction } from "../../../services/arkade/ArkadeTransactionHistoryService";
 import {
   getBitcoinTransactions,
@@ -39,10 +35,23 @@ import { inFlightActivityItem } from "../../../services/money/inFlightActivity";
 import { t } from "../../../lib/i18n";
 import { getArkadeWalletSummarySnapshot } from "../../../services/arkade/ArkadeWalletService";
 import SwapStatusDetailSheet from "../../swapkit/SwapStatusDetailSheet";
-import { swapRow, useSwapLegs } from "../../../services/swapkit/swapActivity";
+import { useSwapLegs } from "../../../services/swapkit/swapActivity";
+import {
+  arkadeActivityItem,
+  arkadeHistoryRows,
+  bitcoinListTxs,
+  onchainActivityItem,
+} from "../../../services/bitcoin/bitcoinActivityItems";
 import { groupCount } from "../../../lib/formatting";
 
 type Props = BitcoinTransactionsProps;
+
+// A rate-limited read backs off instead of asking again straight away: the
+// per-IP limit is what produced the 429, so an immediate second request only
+// deepens it. One wait, then at most two automatic retries per open; a pull to
+// refresh is always the user's own call.
+const RATE_LIMIT_RETRY_MS = 30_000;
+const MAX_RATE_LIMIT_RETRIES = 2;
 
 const BitcoinTransactionsModal: React.FC<Props> = ({
   visible,
@@ -62,11 +71,28 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
   // The fiat column is in the display currency; each row is priced at its own
   // time in it.
   const homeSym = useHomeCurrency();
-  const inFlight = useInFlightRows(rail === "onchain" ? ["onchain"] : ["arkade"]);
+  const inFlight = useInFlightRows(
+    // The one Bitcoin history is both rails, so it carries both rails' money in
+    // flight; a per-rail list carries its own only.
+    rail === "onchain" ? ["onchain"] : rail === "arkade" ? ["arkade"] : ["onchain", "arkade"],
+  );
   const [exportingCsv, setExportingCsv] = useState(false);
   const [arkadeTxs, setArkadeTxs] = useState<UnifiedTransaction[]>([]);
   // Pending topup swap row tapped → live "where is my money?" sheet for it.
   const [detailOrderId, setDetailOrderId] = useState<string | null>(null);
+  // One refresh at a time: a pull, a focus refresh and a backoff retry must not
+  // stack into the request burst that rate-limits the history in the first place.
+  const refreshInFlightRef = useRef(false);
+  // Which request owns the state. A response that arrives after the sheet was
+  // closed or reopened is discarded instead of overwriting the newer list.
+  const refreshSeqRef = useRef(0);
+  const rateLimitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rateLimitRetriesRef = useRef(0);
+  const visibleRef = useRef(visible);
+  const refreshAllRef = useRef<(mode: "head" | "full") => Promise<void>>(async () => {});
+  useEffect(() => {
+    visibleRef.current = visible;
+  }, [visible]);
   // Load ALL transactions; no pagination UI
 
   // Which addresses' rows belong in this list. Normalized to a stable key first
@@ -86,6 +112,17 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
     () => new Set(railAddressKey ? railAddressKey.split("|") : []),
     [railAddressKey],
   );
+  // The wallet's own addresses as a list, for the "does this tx pay anyone
+  // else" test the combined history needs.
+  const ownAddresses = useMemo(() => Array.from(railAddresses), [railAddresses]);
+  // The onchain transactions that an Arkade deposit already accounts for.
+  const boardingDepositTxids = useMemo(
+    () =>
+      arkadeTxs
+        .filter((row) => row.boarding && row.boardingTxid)
+        .map((row) => String(row.boardingTxid)),
+    [arkadeTxs],
+  );
 
   const cacheKey = useMemo(() => (address || "").trim().toLowerCase(), [address]);
   const hasAddress = !!cacheKey;
@@ -93,12 +130,28 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
   const arkadeCacheKey = useMemo(() => getArkadeTransactionsCacheKey(address), [address]);
   const dbMetaKey = useMemo(() => getBitcoinTransactionsMetaCacheKey(address), [address]);
 
+  // One wait, then a bounded number of automatic retries. Cancelled when the
+  // sheet closes, so a dismissed history never fetches in the background.
+  const scheduleRateLimitRetry = useCallback(() => {
+    if (rateLimitRetriesRef.current >= MAX_RATE_LIMIT_RETRIES) return;
+    if (rateLimitTimerRef.current) return;
+    rateLimitRetriesRef.current += 1;
+    rateLimitTimerRef.current = setTimeout(() => {
+      rateLimitTimerRef.current = null;
+      if (visibleRef.current) void refreshAllRef.current("head");
+    }, RATE_LIMIT_RETRY_MS);
+  }, []);
+
   // Single fetch path for the modal — calls the BitcoinTransactionsService
   // wrapper which fans out to legacy onchain + arkade, prefetches fiat prices,
   // and returns unified data. The per-source state slots below (txs /
   // arkadeTxs) stay because the existing renderer reads them directly.
   const refreshAll = useCallback(
     async (legacyMode: "head" | "full") => {
+      if (refreshInFlightRef.current) return;
+      refreshInFlightRef.current = true;
+      const seq = refreshSeqRef.current + 1;
+      refreshSeqRef.current = seq;
       console.log("[BitcoinTransactionsModal] refreshAll enter", {
         hasAddress,
         legacyMode,
@@ -111,31 +164,16 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
           legacyMode,
           prefetchFiatPrices: true,
         });
+        // Closed or reopened while this was in flight: the newer list owns the
+        // state, so this answer is discarded rather than written over it.
+        if (seq !== refreshSeqRef.current) return;
         console.log("[BitcoinTransactionsModal] refreshAll got", {
           rowCount: result.rows.length,
           legacyFilteredCount: result.legacyFiltered.length,
           isFullCache: result.isFullCache,
           hasError: !!result.error,
         });
-        const arkadeRows: UnifiedTransaction[] = [];
-        for (const row of result.rows) {
-          if (row.source !== "arkade") continue;
-          arkadeRows.push({
-            id: row.id,
-            type: row.type,
-            amountSats: row.amountSats,
-            timestamp: row.timestamp,
-            status: row.status,
-            source: "arkade",
-            kind: row.kind,
-            txid: row.txid,
-            isMigrationTx: row.isMigrationTx,
-            counterpartyScripts: row.counterpartyScripts,
-            ...(row.counterpartyAddresses
-              ? { counterpartyAddresses: row.counterpartyAddresses }
-              : {}),
-          });
-        }
+        const arkadeRows = arkadeHistoryRows(result.rows);
         // A refresh that fetched nothing never replaces what is already shown.
         // Transaction history only grows, so an empty result means the fetch
         // failed — mempool.space rate-limits under the polling this screen does
@@ -157,20 +195,64 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
         if (legacyMode === "full" && hasAddress && !result.error) {
           setIsFullCache(true);
         }
-        if (result.error) setError(result.error);
+        if (result.error) {
+          // A rate-limited read says nothing about the history: keep the rows
+          // already shown, say plainly that the list is busy, and back off
+          // instead of retrying straight away.
+          if (isRateLimitError(result.error)) {
+            setError(t("screen.BitcoinTransactionsModal.errorRateLimited"));
+            scheduleRateLimitRetry();
+          } else {
+            setError(result.error);
+          }
+        } else {
+          rateLimitRetriesRef.current = 0;
+        }
         setPricesVersion((v) => v + 1);
       } catch (e) {
+        if (seq !== refreshSeqRef.current) return;
         console.log(
           "[BitcoinTransactionsModal] refreshAll threw",
           e instanceof Error ? e.message : String(e),
         );
-        setError(e instanceof Error ? e.message : "Failed to load transactions");
+        const message = e instanceof Error ? e.message : "Failed to load transactions";
+        if (isRateLimitError(message)) {
+          setError(t("screen.BitcoinTransactionsModal.errorRateLimited"));
+          scheduleRateLimitRetry();
+        } else {
+          setError(message);
+        }
       } finally {
+        // Only the newest request may release the guard: a superseded response
+        // must not clear it while a newer request is running.
+        if (seq === refreshSeqRef.current) refreshInFlightRef.current = false;
         setLoading(false);
         setRefreshing(false);
       }
     },
-    [address, hasAddress, arkadeCacheKey],
+    [address, hasAddress, arkadeCacheKey, scheduleRateLimitRetry],
+  );
+
+  useEffect(() => {
+    refreshAllRef.current = refreshAll;
+  }, [refreshAll]);
+
+  useEffect(() => {
+    if (visible) return;
+    // Closed: no retry is owed, and the next open starts with a clean slate.
+    // A response still in flight is superseded, so it cannot write over it.
+    refreshSeqRef.current += 1;
+    if (rateLimitTimerRef.current) clearTimeout(rateLimitTimerRef.current);
+    rateLimitTimerRef.current = null;
+    rateLimitRetriesRef.current = 0;
+    refreshInFlightRef.current = false;
+  }, [visible]);
+
+  useEffect(
+    () => () => {
+      if (rateLimitTimerRef.current) clearTimeout(rateLimitTimerRef.current);
+    },
+    [],
   );
 
   useEffect(() => {
@@ -268,19 +350,8 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
   // address emptied the arkade list of its boarding history. One shared list
   // for the renderer and the CSV export, so both show the same rows.
   const railTxs = useMemo(
-    () =>
-      (txs ?? []).filter(({ address: txAddress }) => {
-        if (!rail) return true;
-        if (railAddresses.size === 0) return true;
-        // A row belongs here exactly when it was read for one of this rail's
-        // addresses — boarding for arkade, the MuSig2 address for on-chain.
-        return railAddresses.has(
-          String(txAddress || "")
-            .trim()
-            .toLowerCase(),
-        );
-      }),
-    [txs, rail, railAddresses],
+    () => bitcoinListTxs({ txs, rail, railAddresses, ownAddresses, address, boardingDepositTxids }),
+    [txs, rail, railAddresses, address, boardingDepositTxids, ownAddresses],
   );
 
   // A display-currency switch needs every row's historical price in the new
@@ -355,46 +426,7 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
     // Arkade transactions (off-chain, lightning, boarding)
     if (rail !== "onchain" && arkadeTxs.length > 0) {
       for (const atx of arkadeTxs) {
-        const isIncoming = atx.type === "received";
-        const sign = isIncoming ? "" : "-";
-        // Anything not finalized stays pending: Arkade may reject a fresh
-        // preconfirmed VTXO when a spend requires settlement.
-        const isPending = atx.status !== "confirmed";
-        const unixSeconds = atx.timestamp ? Math.floor(atx.timestamp / 1000) : null;
-        const timeStr = formatActivityTime(null, unixSeconds);
-        const subtitle = isPending ? "Pending" : timeStr;
-        const title = isIncoming ? "Received Bitcoin" : "Send Bitcoin";
-
-        let fiatLine: string | null = null;
-        if (!isPending && unixSeconds) {
-          const fiatPrice = priceService.getCachedPriceAt(unixSeconds, homeSym);
-          if (typeof fiatPrice === "number") {
-            const fiatValue = (atx.amountSats / 1e8) * fiatPrice;
-            fiatLine = `${sign}${homeSym} ${fiatValue.toFixed(2)}`;
-          }
-        }
-
-        const _createdAt = atx.timestamp
-          ? new Date(atx.timestamp).toISOString()
-          : new Date().toISOString();
-        const swap = swapRow(swapLegs, atx.id, isIncoming);
-        list.push({
-          key: atx.id,
-          icon: atx.isMigrationTx ? "transfer-horizontal" : isIncoming ? "plus" : "arrow-up",
-          sublabel: subtitle,
-          label: atx.isMigrationTx ? "Migration" : (swap?.title ?? title),
-          ...(swap?.image ? { image: swap.image } : {}),
-          ...(swap?.sides ? { swap: swap.sides } : {}),
-          amount: `${sign}BTC ${atx.amountSats}`,
-          amountSecondary: fiatLine ?? `${homeSym} —`,
-          pending: isPending,
-          createdAt: _createdAt,
-          incoming: isIncoming,
-          counterpartyScripts: atx.counterpartyScripts,
-          ...(atx.counterpartyAddresses
-            ? { counterpartyAddresses: atx.counterpartyAddresses }
-            : {}),
-        });
+        list.push(arkadeActivityItem(atx, { homeSym, swapLegs }));
       }
     }
 
@@ -412,74 +444,9 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
     };
 
     if (railTxs.length === 0) return sortPendingFirst(list);
-    const mempoolLabel = t("component.ActivityRowActions.viewOnMempool");
-    const mapped = railTxs.map(({ tx: t, address: txAddress }) => {
-      const isPending = !t?.status?.confirmed;
-      const display = classifyTransaction(t, txAddress);
-      const isIncoming = display.isIncoming;
-      const amountSats = display.amountSats;
-
-      const blockTime = t?.status?.block_time;
-      const txTime = formatActivityTime(null, blockTime);
-      const subtitle = isPending ? "Pending" : txTime;
-      const title = isIncoming ? "Received Bitcoin" : "Send Bitcoin";
-      const _createdAt = blockTime
-        ? new Date(blockTime * 1000).toISOString()
-        : new Date().toISOString();
-
-      const onOpenExplorer = () => {
-        const url = `${mempoolTxUrl(t.txid)}?mode=details`;
-        Linking.openURL(url);
-      };
-
-      const sign = isIncoming ? "" : "-";
-      let fiatLine: string | null = null;
-      if (!isPending && t?.status?.block_time) {
-        const fiatPrice = priceService.getCachedPriceAt(t.status?.block_time as number, homeSym);
-        if (typeof fiatPrice === "number") {
-          const fiatValue = (amountSats / 1e8) * fiatPrice;
-          fiatLine = `${sign}${homeSym} ${fiatValue.toFixed(2)}`;
-        }
-      }
-
-      // Who a send paid: its one output that is not this wallet's own. A send
-      // with several such outputs names no single recipient to save.
-      const paidTo = isIncoming
-        ? []
-        : (t.vout || [])
-            .map((o: { scriptpubkey_address?: string }) => o?.scriptpubkey_address || "")
-            // Never the wallet's own addresses: a transfer between its rails
-            // (or change) has no recipient to save.
-            .filter((a: string) => a && a !== txAddress && !railAddresses.has(a.toLowerCase()));
-      // A swap's deposit address is the swap, never someone to save.
-      const swap = swapRow(swapLegs, t.txid, isIncoming);
-      const recipient = paidTo.length === 1 && !swap ? paidTo[0] : null;
-      // Who paid a receive: the one address its inputs came from, when it is
-      // not this wallet's own. The names lookup may know them (#1782).
-      const sender =
-        isIncoming && !swap ? singleInputAddress(t.vin, [txAddress, ...railAddresses]) : null;
-      return {
-        // Address-scoped: a transfer between the two on-chain rails appears in
-        // both histories, once as a send and once as a receive.
-        key: `${txAddress}:${t.txid}`,
-        icon: isIncoming ? "plus" : "arrow-up",
-        sublabel: subtitle,
-        label: swap?.title ?? title,
-        ...(swap?.image ? { image: swap.image } : {}),
-        ...(swap?.sides ? { swap: swap.sides } : {}),
-        onPress: onOpenExplorer,
-        onPressLabel: mempoolLabel,
-        saveOffer: recipient
-          ? { destination: { type: "crypto", raw: recipient, network: "bitcoin", asset: "BTC" } }
-          : null,
-        ...(sender ? { counterpartyAddress: sender } : {}),
-        amount: `${sign}BTC ${amountSats}`,
-        amountSecondary: fiatLine ?? `${homeSym} —`,
-        pending: isPending,
-        createdAt: _createdAt,
-        incoming: isIncoming,
-      } satisfies ActivityItem;
-    });
+    const mapped = railTxs.map((entry) =>
+      onchainActivityItem(entry, { homeSym, swapLegs, railAddresses }),
+    );
     return sortPendingFirst(list.concat(mapped));
   }, [railTxs, pricesVersion, inFlight, arkadeTxs, rail, homeSym, railAddresses, swapLegs]);
 

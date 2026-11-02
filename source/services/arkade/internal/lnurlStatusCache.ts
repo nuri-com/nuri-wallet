@@ -9,7 +9,7 @@ import { sha256 } from "../../../lib/crypto";
 import { errMsg } from "../../../lib/errorMessage";
 import { authStateManager } from "../../auth/AuthStateService";
 import { scopeArkadeV4StorageKey } from "../ArkadeRecoveryBackupService";
-import type { ArkadeLnurlStatus } from "../types/lnurl";
+import type { ArkadeInvitee, ArkadeLnurlStatus } from "../types/lnurl";
 import { emitTrace } from "./logging";
 import { truncateForLog } from "./utils";
 
@@ -20,6 +20,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 let cachedLnurlStatus: ArkadeLnurlStatus | null = null;
 let cachedLnurlStatusLoaded = false;
 let cachedLnurlStatusKey = "";
+
+const INVITEE_USERNAME = /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/;
+
+// The server's `invitees` (snake case) or the cached copy (camel case); a row
+// that is not a valid username is dropped.
+function toInvitees(value: unknown): ArkadeInvitee[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((row) => {
+    if (!isRecord(row)) return [];
+    const username = String(row.username || "")
+      .trim()
+      .toLowerCase();
+    if (!INVITEE_USERNAME.test(username)) return [];
+    const at = row.invitedAtMs !== undefined ? row.invitedAtMs : row.invited_at_ms;
+    return [{ username, invitedAtMs: Math.trunc(Number(at) || 0) }];
+  });
+}
 
 export function toLnurlStatus(out: unknown): ArkadeLnurlStatus {
   const record = isRecord(out) ? out : undefined;
@@ -50,6 +67,7 @@ export function toLnurlStatus(out: unknown): ArkadeLnurlStatus {
     record?.invoiceExpiresAtMs !== undefined
       ? record.invoiceExpiresAtMs
       : record?.invoice_expires_at_ms;
+  const invitedBy = record?.invitedBy !== undefined ? record.invitedBy : record?.invited_by;
   return {
     username: username ? String(username) : null,
     registered: Boolean(registered),
@@ -65,11 +83,13 @@ export function toLnurlStatus(out: unknown): ArkadeLnurlStatus {
     maxSendableMsat: Number(maxSendableMsat || 0),
     hasPublishedInvoice: Boolean(hasPublishedInvoice),
     invoiceExpiresAtMs: Number(invoiceExpiresAtMs || 0),
+    invitedBy: invitedBy ? String(invitedBy).trim().toLowerCase() : null,
+    invitees: toInvitees(record?.invitees),
   };
 }
 
 function cloneLnurlStatus(status: ArkadeLnurlStatus): ArkadeLnurlStatus {
-  return { ...status };
+  return { ...status, invitees: (status.invitees ?? []).map((row) => ({ ...row })) };
 }
 
 function isUsefulLnurlStatus(status: ArkadeLnurlStatus | null): status is ArkadeLnurlStatus {

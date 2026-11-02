@@ -9,7 +9,6 @@ import {
   AlertIcon,
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   List,
@@ -39,6 +38,7 @@ import {
   isSwapKitV2Terminal,
   type SwapKitV2OrderView,
 } from "../../services/swapkit/SwapKitV2Service";
+import AppFooter from "../../components/AppFooter";
 
 const assetLabel = (asset: string): string => {
   const code = asset.toUpperCase();
@@ -224,15 +224,7 @@ const SwapStatusDetailSheet: FC<Props> = ({ visible, onClose, orderId }) => {
           </View>
         </View>
       </Scroll>
-      <Footer
-        safeAreaBottom
-        chrome="canvas"
-        direction="column"
-        align="stretch"
-        gap="sm"
-        paddingBottom="lg"
-        paddingX="lg"
-      >
+      <AppFooter canvas>
         <Button
           size="lg"
           variant="soft"
@@ -241,7 +233,7 @@ const SwapStatusDetailSheet: FC<Props> = ({ visible, onClose, orderId }) => {
         >
           <ButtonText>{t("screen.SwapStatusSheet.contactSupport")}</ButtonText>
         </Button>
-      </Footer>
+      </AppFooter>
     </DsSheetHost>
   );
 };

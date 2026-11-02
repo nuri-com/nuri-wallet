@@ -373,6 +373,16 @@ export class WirexWithdrawUnconfirmedError extends Error {
   }
 }
 
+/** A REST call the server answered with ok:false; `code` is the server's exact error string. */
+export class WirexApiError extends Error {
+  readonly code: string;
+  constructor(message: string, code: string) {
+    super(message);
+    this.name = "WirexApiError";
+    this.code = code;
+  }
+}
+
 /** Another card withdrawal or swap is running: nothing was started. */
 export class WirexWithdrawBusyError extends Error {
   constructor() {
@@ -551,6 +561,10 @@ export const WIREX_NO_READ_SESSION_ERROR = "wirex_no_read_session";
 // Thrown instead of making a provisioning request that could not be recorded
 // durably — see guardProvisioningAttempt.
 export const WIREX_PROVISIONING_GUARD_ERROR = "wirex_provisioning_guard_unavailable";
+// Thrown when Wirex already has the entered email on another account. The pin is
+// cleared first, so the user can enter a different email.
+export const WIREX_EMAIL_IN_USE_ERROR = "wirex_account_email_in_use";
+const SERVER_EMAIL_IN_USE_CODE = "wirex_onboarding_failed:email_already_in_use";
 
 // The Wirex account is keyed by wallet+email server-side. The email is entered
 // by the user on the open-free-account screen and pinned per-wallet; it must be
@@ -823,7 +837,8 @@ class WirexService {
 
   private finalizeEnvelope<T>(envelope: RestEnvelope<T>, label: string): T {
     if (!envelope.ok) {
-      throw new Error(`${LOG_TAG} ${label} failed: ${this.getErrorString(envelope.error)}`);
+      const code = this.getErrorString(envelope.error);
+      throw new WirexApiError(`${LOG_TAG} ${label} failed: ${code}`, code);
     }
     if (envelope.data === null || envelope.data === undefined) {
       throw new Error(`${LOG_TAG} ${label} returned no data`);
@@ -1035,16 +1050,34 @@ class WirexService {
       console.log(`${LOG_TAG} onboard: joining in-flight run`);
       return this.onboardInFlight.promise;
     }
-    const promise = this.runOnboard(params).finally(() => {
-      if (this.onboardInFlight?.promise === promise) {
-        this.onboardInFlight = null;
-      }
-    });
+    const promise = this.runOnboard(params)
+      .catch((e: unknown) => this.releaseEmailIfInUse(e))
+      .finally(() => {
+        if (this.onboardInFlight?.promise === promise) {
+          this.onboardInFlight = null;
+        }
+      });
     this.onboardInFlight = { email: params.email, promise };
     return promise;
   }
 
   private onboardInFlight: { email: string; promise: Promise<WirexOnboardResult> } | null = null;
+
+  // Wirex refused the email because another account owns it, so no account
+  // exists under it for this wallet: drop the pin, or every retry would be held
+  // to the same unusable email.
+  private async releaseEmailIfInUse(e: unknown): Promise<never> {
+    if (!(e instanceof WirexApiError) || e.code !== SERVER_EMAIL_IN_USE_CODE) throw e;
+    const wallet = await getEthereumAddress();
+    if (wallet) {
+      const key = this.emailKeyFor(wallet);
+      await this.withEmailLock(wallet, async () => {
+        await deleteAuthData(key);
+        return "";
+      });
+    }
+    throw new Error(WIREX_EMAIL_IN_USE_ERROR);
+  }
 
   /**
    * Record the provisioning attempt about to be made, or refuse to make it.

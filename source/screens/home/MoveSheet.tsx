@@ -39,12 +39,10 @@ import {
   View as RNView,
   UIManager,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Bleed,
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   NuriScope,
@@ -58,6 +56,7 @@ import {
   Text,
   Topbar,
   TopbarTrailing,
+  useNuriSafeAreaInsets,
   View,
 } from "@ds";
 import AmountKeypad from "../../components/AmountKeypad";
@@ -79,6 +78,9 @@ import { moveRailPairOpen, moveRailPickOpen } from "./movePairs";
 import { type MoveSwapExecuted, useMoveSwap } from "./hooks/useMoveSwap";
 import { useMoveSwapBounds } from "./hooks/useMoveSwapBounds";
 import { swapBoundBlock } from "../../services/swapkit/SwapAmountBounds";
+import { useArkadeLightningLimits } from "../../services/arkade/lightningLimits";
+import AppFooter from "../../components/AppFooter";
+import { bottomGapToken } from "../../lib/ui/bottomGap";
 
 /** One side of a move: a balance that can give or take. */
 export type SwapRail = {
@@ -251,7 +253,7 @@ const MoveSheet: React.FC<Props> = ({
   locked = null,
   exactReceive,
 }) => {
-  const insets = useSafeAreaInsets();
+  const insets = useNuriSafeAreaInsets();
   // Which side the keypad is typing into. The other side shows its value small
   // in its own row.
   const [focus, setFocus] = useState<Side>("from");
@@ -438,10 +440,12 @@ const MoveSheet: React.FC<Props> = ({
     sendSource: from?.sendSource,
   });
   // A transfer has no quote, but arkade -> onchain still runs over the
-  // corridor and carries its band.
+  // corridor and carries its band: the live Lightning send ceiling, re-read
+  // each time the sheet opens.
+  const lightningMaxSats = useArkadeLightningLimits(visible).send.maxSats;
   const boundBlock = swapBoundBlock(
     sourceAmount,
-    priced ? bounds : moveTransferBounds(from?.key, to?.key),
+    priced ? bounds : moveTransferBounds(from?.key, to?.key, lightningMaxSats),
   );
   // Prices are on the table: the keypad steps aside for them, and the button
   // means "run this one" instead of "price it".
@@ -722,8 +726,15 @@ const MoveSheet: React.FC<Props> = ({
               </TopbarTrailing>
             </Topbar>
           </Header>
+          {/* The Scroll adds the bottom inset, this the app's one gap, so Try
+              again sits where every AppFooter button sits. */}
           <Scroll safeAreaBottom>
-            <View direction="column" align="stretch" fill="grow">
+            <View
+              direction="column"
+              align="stretch"
+              fill="grow"
+              paddingBottom={bottomGapToken(insets.bottom)}
+            >
               {overlay}
             </View>
           </Scroll>
@@ -765,17 +776,7 @@ const MoveSheet: React.FC<Props> = ({
             </View>
           </View>
 
-          {/* The footer adds the safe-area inset on top of its padding. On a
-              phone without a home indicator that inset is 0 and "sm" left the
-              buttons on the screen edge, so it gets "lg" there instead. */}
-          <Footer
-            safeAreaBottom
-            direction="column"
-            align="stretch"
-            gap="sm"
-            paddingX="lg"
-            paddingBottom={insets.bottom > 0 ? "sm" : "lg"}
-          >
+          <AppFooter>
             {/* ONE box under the cards, whatever it holds. The keypad sizes it
                 and the price takes at least that height, so the card above keeps
                 the size it had while the amount was typed — a control that grows
@@ -846,7 +847,7 @@ const MoveSheet: React.FC<Props> = ({
                 <ButtonText>{ctaLabel}</ButtonText>
               </Button>
             </View>
-          </Footer>
+          </AppFooter>
         </>
       )}
 

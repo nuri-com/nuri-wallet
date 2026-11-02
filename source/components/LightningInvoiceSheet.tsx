@@ -5,7 +5,6 @@ import { copyToClipboard } from "../lib/copyToClipboard";
 import {
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   Scroll,
@@ -33,11 +32,9 @@ import AmountDisplay, {
 import { useKeypadFit } from "../lib/useKeypadFit";
 import DsSheetHost from "./DsSheetHost";
 import { groupCount } from "../lib/formatting";
-import {
-  ARKADE_RECEIVE_MAX_SATS,
-  ARKADE_RECEIVE_MIN_SATS,
-  checkReceiveAmountSats,
-} from "../services/arkade/internal/receiveLimits";
+import { checkReceiveAmountSats } from "../services/arkade/internal/receiveLimits";
+import { useArkadeLightningLimits } from "../services/arkade/lightningLimits";
+import AppFooter from "./AppFooter";
 
 type SheetState =
   | { kind: "entering" }
@@ -189,15 +186,17 @@ const LightningInvoiceSheet: React.FC<Props> = ({
   // ever sees an opaque HTTP 400. Say so here, before an unpayable invoice is
   // handed out. An untouched field is not an error, so only a typed amount is
   // judged.
+  // The live card's limits; reading them here re-renders when they change.
+  const receiveLimits = useArkadeLightningLimits(visible).receive;
   const amountProblem = parsedAmount > 0 ? checkReceiveAmountSats(parsedAmount) : null;
   const amountProblemText =
     amountProblem === "below_min"
       ? t("screen.LightningInvoiceSheet.amountBelowMin", {
-          sats: groupCount(ARKADE_RECEIVE_MIN_SATS),
+          sats: groupCount(receiveLimits.minSats),
         })
       : amountProblem === "above_max"
         ? t("screen.LightningInvoiceSheet.amountAboveMax", {
-            sats: groupCount(ARKADE_RECEIVE_MAX_SATS),
+            sats: groupCount(receiveLimits.maxSats),
           })
         : "";
 
@@ -478,9 +477,7 @@ const LightningInvoiceSheet: React.FC<Props> = ({
         </View>
       </Scroll>
 
-      <Footer safeAreaBottom direction="column" align="stretch" paddingBottom="sm" paddingX="lg">
-        {renderFooter()}
-      </Footer>
+      <AppFooter>{renderFooter()}</AppFooter>
     </DsSheetHost>
   );
 };

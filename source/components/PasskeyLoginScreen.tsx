@@ -1,7 +1,6 @@
 // @screen auth.login
 import { Image, Linking, Platform, StyleSheet, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { IconButton, NuriScope, useNuriTheme } from "@ds";
+import { Header, IconButton, NuriScope, Screen, useNuriTheme, View as DsView } from "@ds";
 import BrandDisplayTitle from "./BrandDisplayTitle";
 import { t } from "../lib/i18n";
 import PasskeyLoginScreenNative from "./PasskeyLoginScreenNative";
@@ -60,7 +59,6 @@ function PasskeyLoginScreenContent({
   onAttemptStart,
   onDismiss,
 }: PasskeyLoginScreenProps) {
-  const insets = useSafeAreaInsets();
   const theme = useNuriTheme();
 
   if (!visible) {
@@ -85,33 +83,39 @@ function PasskeyLoginScreenContent({
         style={styles.backgroundImage}
         resizeMode="cover"
       />
-      <View style={[styles.headlineContainer, { top: insets.top }]}>
-        <BrandDisplayTitle>{t("screen.PasskeyLoginScreen.headline")}</BrandDisplayTitle>
-      </View>
+      {/* The landing is a normal DS page: the support button sits in the
+          header row where every screen has it, the headline below it, and the
+          actions in the shared AppFooter (rendered by the content below). */}
+      <Screen>
+        <Header safeAreaTop>
+          <DsView direction="row" align="center" justify="end" paddingX="xl" paddingBottom="lg">
+            {/* ponytail: pre-auth support = WhatsApp deep link; swap for in-app
+             * nostr chat (ephemeral keypair) if we want to keep support in-app */}
+            {!targetedUsername ? (
+              <IconButton
+                icon="headphones"
+                variant="soft"
+                accessibilityLabel={t("screen.ScreenHeader.supportAccessibilityLabel")}
+                onPress={() => Linking.openURL("https://wa.me/37253687271")}
+              />
+            ) : null}
+          </DsView>
+        </Header>
+        <DsView direction="column" align="center" paddingX="lg">
+          <BrandDisplayTitle>{t("screen.PasskeyLoginScreen.headline")}</BrandDisplayTitle>
+        </DsView>
 
-      {/* ponytail: pre-auth support = WhatsApp deep link; swap for in-app
-       * nostr chat (ephemeral keypair) if we want to keep support in-app */}
-      {!targetedUsername ? (
-        <View style={[styles.supportButton, { top: insets.top }]}>
-          <IconButton
-            icon="headphones"
-            variant="soft"
-            accessibilityLabel={t("screen.ScreenHeader.supportAccessibilityLabel")}
-            onPress={() => Linking.openURL("https://wa.me/37253687271")}
-          />
-        </View>
-      ) : null}
-
-      <Content
-        footerMessage={footerMessage}
-        resetSignal={resetSignal}
-        autoOpenRestoreSignal={autoOpenRestoreSignal}
-        targetedUsername={targetedUsername}
-        onPayloadReady={onPayloadReady}
-        onError={onError}
-        onAttemptStart={onAttemptStart}
-        onDismiss={onDismiss}
-      />
+        <Content
+          footerMessage={footerMessage}
+          resetSignal={resetSignal}
+          autoOpenRestoreSignal={autoOpenRestoreSignal}
+          targetedUsername={targetedUsername}
+          onPayloadReady={onPayloadReady}
+          onError={onError}
+          onAttemptStart={onAttemptStart}
+          onDismiss={onDismiss}
+        />
+      </Screen>
     </View>
   );
 }
@@ -124,24 +128,5 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     width: "100%",
     height: "100%",
-  },
-  headlineContainer: {
-    position: "absolute",
-    left: 16,
-    right: 16,
-    zIndex: 2,
-    paddingTop: 48,
-    alignItems: "center",
-    pointerEvents: "none",
-  },
-  // Structural: an absolute top-right overlay pinned below the safe-area inset
-  // (top: insets.top) with a stacking order — DS boxes model none of position/
-  // right/zIndex, so this stays raw RN. right: 24 mirrors ScreenHeader's
-  // paddingX="xl" and no extra top padding, so the icon sits exactly where the
-  // support button sits on the home screens.
-  supportButton: {
-    position: "absolute",
-    right: 24,
-    zIndex: 3,
   },
 });

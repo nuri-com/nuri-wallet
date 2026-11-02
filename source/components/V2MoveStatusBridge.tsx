@@ -1,7 +1,7 @@
 // @screen app.v2-move-status
 import * as React from "react";
 
-import { Alert, AlertButton, AlertIcon, IconButton, Text, useToast } from "@ds";
+import { Alert, AlertButton, AlertIcon, IconButton, NuriScope, Text, useToast } from "@ds";
 import { Animated, Easing, View as RNView, type ViewStyle } from "react-native";
 
 import { COMPACT_AFTER_MS, PILL_MORPH_MS, fullPillScaleAtCompact } from "./movePillGeometry";
@@ -195,6 +195,7 @@ function MovePill({
       : move.phase === "preparing"
         ? "lilac"
         : "neutral";
+  const keepOpen = move.phase === "preparing";
   const icon =
     move.phase === "completed"
       ? "check-circle"
@@ -234,27 +235,32 @@ function MovePill({
         pointerEvents={compact ? "none" : "auto"}
         onLayout={(event) => setFullHeight(event.nativeEvent.layout.height)}
       >
-        <Alert variant="soft" accent={accent}>
-          <AlertIcon name={icon} />
-          {/* Fixed-width label so the pill does not resize (and the toast does
+        {/* "Keep app open" is an instruction, not a status: it renders in the
+            dark scope so it stands out from the light home behind it, and its
+            text is not muted. The other states keep the quiet light pill. */}
+        <NuriScope {...(keepOpen ? { mode: "dark" as const } : {})}>
+          <Alert variant="soft" accent={accent}>
+            <AlertIcon name={icon} />
+            {/* Fixed-width label so the pill does not resize (and the toast does
               not recenter) as the wording changes between Approving… /
               Executing… / Completed. */}
-          <RNView style={{ minWidth: 132 }}>
-            <Text size="md" muted>
-              {v2MoveLabel(move)}
-            </Text>
-          </RNView>
-          {onPress ? (
-            <AlertButton
-              accessibilityLabel={
-                needsUser ? t("swap.move.actionRequiredAction") : t("swap.move.view")
-              }
-              onPress={onPress}
-            >
-              {needsUser ? t("swap.move.actionRequiredAction") : t("swap.move.view")}
-            </AlertButton>
-          ) : null}
-        </Alert>
+            <RNView style={{ minWidth: 132 }}>
+              <Text size="md" muted={!keepOpen} emphasis={keepOpen}>
+                {v2MoveLabel(move)}
+              </Text>
+            </RNView>
+            {onPress ? (
+              <AlertButton
+                accessibilityLabel={
+                  needsUser ? t("swap.move.actionRequiredAction") : t("swap.move.view")
+                }
+                onPress={onPress}
+              >
+                {needsUser ? t("swap.move.actionRequiredAction") : t("swap.move.view")}
+              </AlertButton>
+            ) : null}
+          </Alert>
+        </NuriScope>
       </Animated.View>
       <Animated.View style={circleStyle} pointerEvents={compact ? "auto" : "none"}>
         <IconButton

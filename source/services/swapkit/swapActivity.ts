@@ -31,7 +31,8 @@ export type SwapLeg = {
   sent?: string;
   received?: string;
 };
-type Legs = Map<string, SwapLeg>;
+/** A wallet's swap legs by transaction hash. */
+export type Legs = Map<string, SwapLeg>;
 
 const txKey = (hash: string) => hash.trim().toLowerCase().replace(/^0x/, "");
 

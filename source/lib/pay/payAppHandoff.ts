@@ -12,6 +12,11 @@
 //     keeps the standalone window (`/?pay=@name&to=…&amount=…`);
 //   · native app: the link scheme (`nuri://pay/@name?…`), fired through a
 //     hidden frame so a phone WITHOUT the app gets no "cannot open page" dialog.
+//
+// Either way the app has to be able to PAY the link, or the payer lands on a
+// sign-in screen instead of the page (#1814): an installed PWA with no wallet
+// in it stays on the page, and a native app with no wallet sends the link
+// back here with `?browser=1`, which keeps the page from handing it over again.
 import { useEffect, useRef } from "react";
 
 import type { PayIntent } from "./payIntent";
@@ -44,6 +49,47 @@ function payIntentParams(intent: PayIntent): URLSearchParams {
   return params;
 }
 
+/**
+ * Query flag the native app adds when it hands a link back to the browser
+ * because it holds no wallet to pay it from: the page must not hand it over again.
+ */
+export const PAY_LINK_STAY_PARAM = "browser";
+
+/** The pay page for this link, marked so it stays in the browser. */
+export function payLinkBrowserUrl(intent: PayIntent, origin: string): string {
+  const base = origin.replace(/\/+$/, "");
+  const params = payIntentParams(intent);
+  params.set(PAY_LINK_STAY_PARAM, "1");
+  return `${base}/pay/@${intent.username}?${params.toString()}`;
+}
+
+/** Whether the page was opened by the app handing the link back (`?browser=1`). */
+export function staysInBrowser(search: string): boolean {
+  try {
+    return new URLSearchParams(String(search || "")).get(PAY_LINK_STAY_PARAM) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export type PayLinkHandoff = "installed-app" | "scheme" | "none";
+
+/**
+ * Where a payable link goes. The installed PWA shares this origin's storage, so
+ * the page can see whether it holds a wallet; without one the PWA would only
+ * show its sign-in screen, so the page stays. The native app is checked on its
+ * own side (it sends a link it cannot pay back with `?browser=1`).
+ */
+export function planPayLinkHandoff(opts: {
+  installed: boolean;
+  walletOnDevice: boolean;
+  staysInBrowser: boolean;
+}): PayLinkHandoff {
+  if (opts.staysInBrowser) return "none";
+  if (opts.installed) return opts.walletOnDevice ? "installed-app" : "none";
+  return "scheme";
+}
+
 /** True inside an installed PWA (the window the app was added to). */
 export function isInstalledApp(): boolean {
   if (typeof window === "undefined" || !window.matchMedia) return false;
@@ -52,33 +98,69 @@ export function isInstalledApp(): boolean {
 
 /**
  * Opens the payment link in the app, once, as soon as the page knows the link is
- * payable. Nothing happens when the app is not there: the pay page underneath is
- * the fallback.
+ * payable. Nothing happens when the app is not there or cannot pay it: the pay
+ * page underneath is the fallback. `walletOnDevice` reads this origin's wallet
+ * storage (injected so the page never imports key storage itself).
  */
-export function usePayLinkAppHandoff(intent: PayIntent | null, enabled: boolean): void {
+export function usePayLinkAppHandoff(
+  intent: PayIntent | null,
+  enabled: boolean,
+  walletOnDevice: () => Promise<boolean>,
+): void {
   const fired = useRef(false);
   useEffect(() => {
     if (!enabled || !intent || fired.current) return;
     if (typeof window === "undefined" || typeof document === "undefined") return;
     fired.current = true;
-    if (isInstalledApp()) {
-      // Same origin: this stays inside the installed window and loads the
-      // signed-in app, which opens the confirm screen for this link.
-      window.location.assign(payIntentWebUrl(intent, window.location.origin));
+    const stay = staysInBrowser(window.location.search);
+    if (stay) {
+      // Drop the flag from the address bar, so a copied link hands over again.
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete(PAY_LINK_STAY_PARAM);
+        window.history?.replaceState?.(window.history.state, "", url.pathname + url.search);
+      } catch {}
       return;
     }
-    // A phone browser: no origin change to make, so try the scheme. A frame
-    // keeps an uninstalled phone quiet (a top-level navigation to an unknown
-    // scheme shows the browser's own error page).
-    const frame = document.createElement("iframe");
-    frame.style.display = "none";
-    frame.setAttribute("aria-hidden", "true");
-    frame.src = payIntentDeepLink(intent);
-    document.body.appendChild(frame);
-    const timer = window.setTimeout(() => frame.remove(), 2_000);
+    let cancelled = false;
+    let decided = false;
+    let frame: HTMLIFrameElement | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    void (async () => {
+      const installed = isInstalledApp();
+      const hasWallet = installed ? await walletOnDevice().catch(() => false) : false;
+      if (cancelled) return;
+      decided = true;
+      const plan = planPayLinkHandoff({
+        installed,
+        walletOnDevice: hasWallet,
+        staysInBrowser: false,
+      });
+      if (plan === "installed-app") {
+        // Same origin: this stays inside the installed window and loads the
+        // signed-in app, which opens the confirm screen for this link.
+        window.location.assign(payIntentWebUrl(intent, window.location.origin));
+        return;
+      }
+      if (plan !== "scheme") return;
+      // A phone browser: no origin change to make, so try the scheme. A frame
+      // keeps an uninstalled phone quiet (a top-level navigation to an unknown
+      // scheme shows the browser's own error page).
+      const node = document.createElement("iframe");
+      node.style.display = "none";
+      node.setAttribute("aria-hidden", "true");
+      node.src = payIntentDeepLink(intent);
+      document.body.appendChild(node);
+      frame = node;
+      timer = setTimeout(() => node.remove(), 2_000);
+    })();
     return () => {
-      window.clearTimeout(timer);
-      frame.remove();
+      cancelled = true;
+      // Torn down before the wallet check answered: nothing was handed over,
+      // so the next run may still do it.
+      if (!decided) fired.current = false;
+      if (timer) clearTimeout(timer);
+      frame?.remove();
     };
-  }, [enabled, intent]);
+  }, [enabled, intent, walletOnDevice]);
 }

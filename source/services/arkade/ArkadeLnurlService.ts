@@ -11,6 +11,8 @@
 // metadata only — no secrets or assertion bytes.
 
 import { getAccountEmail } from "../../lib/accountEmail";
+import { consumePendingReferrer, getPendingReferrer } from "../../lib/referral/pendingReferrer";
+import { syncInviteContacts } from "../referral/inviteContactSync";
 import { getBitcoinAddress, getEthereumAddress } from "../../lib/secureKeyStorage";
 import { authStateManager } from "../auth/AuthStateService";
 import { EventBus } from "../events/AppEventBusService";
@@ -137,6 +139,9 @@ export async function getArkadeLnurlStatus(
   const normalized = normalizeLnurlUsername(username || "");
   const allowPrompt = options?.allowPrompt === true;
   const reason = options?.reason || "lnurl_status";
+  // The account this read belongs to: invite contacts it finds are written only
+  // while that account is still the signed-in one.
+  const credId = authStateManager.getState().walletPublicKeys?.walletPasskeyCredIdB64u ?? null;
   const assertion = await getArkadeLnurlAssertion(reason, allowPrompt);
   if (!assertion) {
     const cached = await readCachedLnurlStatus();
@@ -198,6 +203,12 @@ export async function getArkadeLnurlStatus(
   }
   writeCachedLnurlStatus(status);
   persistVerifiedWalletUsername(status);
+  syncInviteContacts(
+    status,
+    () =>
+      Boolean(credId) &&
+      authStateManager.getState().walletPublicKeys?.walletPasskeyCredIdB64u === credId,
+  );
   emitTrace({
     atMs: Date.now(),
     op: "lnurl_status",
@@ -276,7 +287,7 @@ export async function claimArkadeLnurlUsername(username: string): Promise<Arkade
     throw new Error("username must be 3-32 chars [a-z0-9._-]");
   }
   const identity = await getOrCreateArkadeIdentity();
-  const [assertion, pubCtx, local] = await Promise.all([
+  const [assertion, pubCtx, local, referrer] = await Promise.all([
     identity.getPrfSigningAssertion(false, "lnurl_register"),
     identity.getSigningPublicContext(),
     // Public cached addresses (no biometrics); register the ENS/payment-link
@@ -284,6 +295,7 @@ export async function claimArkadeLnurlUsername(username: string): Promise<Arkade
     // as optional and they are backfilled via lnurl/set-profile on the next
     // status fetch once known locally.
     getLocalProfileAddresses(),
+    getPendingReferrer(),
   ]);
   emitTrace({
     atMs: Date.now(),
@@ -298,6 +310,7 @@ export async function claimArkadeLnurlUsername(username: string): Promise<Arkade
     ...(local.evmAddress ? { evm_address: local.evmAddress } : {}),
     ...(local.arkadeAddress ? { arkade_address: local.arkadeAddress } : {}),
     ...(local.btcAddress ? { btc_address: local.btcAddress } : {}),
+    ...(referrer ? { referrer } : {}),
   };
   try {
     await arkadeLnurlRegister(assertion, payload);
@@ -314,6 +327,8 @@ export async function claimArkadeLnurlUsername(username: string): Promise<Arkade
     const fresh = await identity.getPrfSigningAssertion(true, "lnurl_register_auth_expired");
     await arkadeLnurlRegister(fresh, payload);
   }
+  // The invite was sent with this claim; the server kept or ignored it.
+  await consumePendingReferrer(referrer);
   emitTrace({
     atMs: Date.now(),
     op: "lnurl_register",

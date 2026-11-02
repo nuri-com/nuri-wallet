@@ -16,7 +16,6 @@ import {
   Button,
   ButtonIcon,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   List,
@@ -43,6 +42,7 @@ import {
   TopbarTrailing,
   View,
 } from "@ds";
+import ActivityList from "../../components/ActivityList";
 import ChoiceSheet from "../../components/ChoiceSheet";
 import DsSheetHost from "../../components/DsSheetHost";
 import { Layer } from "../../components/LayerHost";
@@ -90,6 +90,8 @@ import {
   type SaveOffer,
   type SendRoute,
 } from "./addressBookModel";
+import { type ContactActivityHandlers, useContactActivity } from "./useContactActivity";
+import AppFooter from "../../components/AppFooter";
 
 const K = "screen.AddressBook";
 
@@ -177,7 +179,7 @@ type Props = {
   /** A just-paid recipient to save: opens the add form (or the existing contact) prefilled. */
   saveRequest?: SaveOffer | null;
   onSaveRequestHandled?: () => void;
-};
+} & ContactActivityHandlers;
 
 type Draft = {
   id: string | null;
@@ -204,6 +206,8 @@ const AddressBookScreen: React.FC<Props> = ({
   onPay,
   saveRequest,
   onSaveRequestHandled,
+  onSendAgainCash,
+  onSendAgainBank,
 }) => {
   const [book, setBook] = useState<AddressBook | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -236,6 +240,17 @@ const AddressBookScreen: React.FC<Props> = ({
   const [detailMessage, setDetailMessage] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<ContactConflict[]>([]);
   const [conflictPrompt, setConflictPrompt] = useState<ContactConflict | null>(null);
+  // The payments with the open contact (#1793), picked from every history.
+  const activity = useContactActivity(visible, open !== null, {
+    onSendAgainCash,
+    onSendAgainBank,
+  });
+  const loadActivity = activity.load;
+  const openId = open?.id ?? null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reads when a contact opens
+  useEffect(() => {
+    if (openId) loadActivity();
+  }, [openId]);
 
   // Local reads only: never wait behind a relay sync that an edit started.
   const refresh = useCallback(async (target: AddressBook, q: string) => {
@@ -706,107 +721,123 @@ const AddressBookScreen: React.FC<Props> = ({
             </TopbarTrailing>
           </Topbar>
         </Header>
-        <Scroll safeAreaBottom>
-          <View direction="column" align="stretch" gap="lg" paddingX="lg" paddingBottom="lg">
-            <View direction="column" align="center" gap="sm">
-              <Image
-                source={contactAvatar(open ?? { label: "" }, "hero")}
-                style={styles.heroAvatar}
-                accessibilityIgnoresInvertColors
-              />
-              <Text size="xl" emphasis align="center">
-                {open?.label ?? ""}
+        {/* Pinned: who it is and the one action. A long history scrolls below
+            it and never pushes Pay away. */}
+        <View direction="column" align="stretch" gap="lg" paddingX="lg" paddingBottom="lg">
+          <View direction="column" align="center" gap="sm">
+            <Image
+              source={contactAvatar(open ?? { label: "" }, "hero")}
+              style={styles.heroAvatar}
+              accessibilityIgnoresInvertColors
+            />
+            <Text size="xl" emphasis align="center">
+              {open?.label ?? ""}
+            </Text>
+            {open?.nuriUsername ? (
+              <Text size="sm" muted align="center">
+                {`@${open.nuriUsername}`}
               </Text>
-              {open?.nuriUsername ? (
-                <Text size="sm" muted align="center">
-                  {`@${open.nuriUsername}`}
-                </Text>
+            ) : null}
+          </View>
+
+          {(() => {
+            // The one pay action. One payable destination pays it directly;
+            // several ask which (euro address, IBAN, Lightning, ...).
+            const payable = (open?.destinations ?? []).filter(
+              (d) => routeDestination(d, open?.label).kind !== "unsupported",
+            );
+            return (payable.length > 0 || open?.nuriUsername) && open ? (
+              <Button
+                size="lg"
+                variant="solid"
+                accent="lilac"
+                disabled={payLookupBusy}
+                onPress={() => void payContact(open)}
+              >
+                <ButtonIcon name="arrow-up" />
+                <ButtonText>{t(`${K}.payName`, { name: open.label })}</ButtonText>
+              </Button>
+            ) : null;
+          })()}
+
+          {detailMessage ? (
+            <Text size="sm" muted align="center">
+              {detailMessage}
+            </Text>
+          ) : null}
+        </View>
+        <Scroll safeAreaBottom>
+          <View direction="column" align="stretch" gap="lg" paddingBottom="lg">
+            <View direction="column" align="stretch" gap="lg" paddingX="lg">
+              {/* Details, like a phone's contact card: label, the full value, copy.
+                A Nuri user's saved addresses only name their payments; they
+                are paid by username, so none of them is shown to copy. */}
+              {(open?.nuriUsername ? [] : (open?.destinations ?? [])).map((destination, index) => (
+                <View
+                  // biome-ignore lint/suspicious/noArrayIndexKey: destinations have no id; order is stable
+                  key={index}
+                  variant="soft"
+                  radius="lg"
+                  paddingX="lg"
+                  paddingY="md"
+                  direction="row"
+                  align="center"
+                  gap="sm"
+                >
+                  <View fill="grow-shrink" direction="column" align="stretch" gap="xs">
+                    <Text size="sm" muted>
+                      {destinationLabel(destination)}
+                    </Text>
+                    <Text size="md" mono flow="wrap">
+                      {destinationValue(destination)}
+                    </Text>
+                    {(destination.type === "bank" && (destination.holder || destination.bic)) ||
+                    (destination.type === "card" && destination.holder) ? (
+                      <Text size="sm" muted>
+                        {[destination.holder, destination.type === "bank" ? destination.bic : ""]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <IconButton
+                    icon="copy"
+                    variant="ghost"
+                    accessibilityLabel={`${t("common.copy")} ${destinationLabel(destination)}`}
+                    onPress={() => copyValue(destinationValue(destination))}
+                  />
+                </View>
+              ))}
+
+              {open?.note ? (
+                <View
+                  variant="soft"
+                  radius="lg"
+                  padding="lg"
+                  direction="column"
+                  align="stretch"
+                  gap="sm"
+                >
+                  <Text size="sm" muted>
+                    {t(`${K}.note`)}
+                  </Text>
+                  <Text size="md" flow="wrap">
+                    {open.note}
+                  </Text>
+                </View>
               ) : null}
             </View>
 
-            {(() => {
-              // The one pay action. One payable destination pays it directly;
-              // several ask which (euro address, IBAN, Lightning, ...).
-              const payable = (open?.destinations ?? []).filter(
-                (d) => routeDestination(d, open?.label).kind !== "unsupported",
-              );
-              return (payable.length > 0 || open?.nuriUsername) && open ? (
-                <Button
-                  size="lg"
-                  variant="solid"
-                  accent="lilac"
-                  disabled={payLookupBusy}
-                  onPress={() => void payContact(open)}
-                >
-                  <ButtonIcon name="arrow-up" />
-                  <ButtonText>{t(`${K}.payName`, { name: open.label })}</ButtonText>
-                </Button>
-              ) : null;
-            })()}
-
-            {detailMessage ? (
-              <Text size="sm" muted align="center">
-                {detailMessage}
-              </Text>
-            ) : null}
-
-            {/* Details, like a phone's contact card: label, the full value, copy.
-                A Nuri user's saved addresses only name their payments; they
-                are paid by username, so none of them is shown to copy. */}
-            {(open?.nuriUsername ? [] : (open?.destinations ?? [])).map((destination, index) => (
-              <View
-                // biome-ignore lint/suspicious/noArrayIndexKey: destinations have no id; order is stable
-                key={index}
-                variant="soft"
-                radius="lg"
-                paddingX="lg"
-                paddingY="md"
-                direction="row"
-                align="center"
-                gap="sm"
-              >
-                <View fill="grow-shrink" direction="column" align="stretch" gap="xs">
-                  <Text size="sm" muted>
-                    {destinationLabel(destination)}
-                  </Text>
-                  <Text size="md" mono flow="wrap">
-                    {destinationValue(destination)}
-                  </Text>
-                  {(destination.type === "bank" && (destination.holder || destination.bic)) ||
-                  (destination.type === "card" && destination.holder) ? (
-                    <Text size="sm" muted>
-                      {[destination.holder, destination.type === "bank" ? destination.bic : ""]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </Text>
-                  ) : null}
-                </View>
-                <IconButton
-                  icon="copy"
-                  variant="ghost"
-                  accessibilityLabel={`${t("common.copy")} ${destinationLabel(destination)}`}
-                  onPress={() => copyValue(destinationValue(destination))}
-                />
-              </View>
-            ))}
-
-            {open?.note ? (
-              <View
-                variant="soft"
-                radius="lg"
-                padding="lg"
-                direction="column"
-                align="stretch"
-                gap="sm"
-              >
-                <Text size="sm" muted>
-                  {t(`${K}.note`)}
-                </Text>
-                <Text size="md" flow="wrap">
-                  {open.note}
-                </Text>
-              </View>
-            ) : null}
+            {/* Every payment with this person, newest first, each row opening
+                the same details as in the activity. */}
+            <ActivityList
+              active={visible && open !== null}
+              items={activity.items}
+              loading={activity.loading}
+              hideEmpty={activity.failed}
+              emptyText={t(`${K}.historyEmpty`, { name: open?.label ?? "" })}
+              onlyContact={open}
+            />
           </View>
         </Scroll>
       </DsSheetHost>
@@ -1039,14 +1070,7 @@ const AddressBookScreen: React.FC<Props> = ({
             ) : null}
           </View>
         </Scroll>
-        <Footer
-          safeAreaBottom
-          chrome="canvas"
-          direction="column"
-          align="stretch"
-          paddingX="lg"
-          paddingBottom="sm"
-        >
+        <AppFooter canvas>
           {/* Editing: Delete and Save side by side, equal width. */}
           <View direction="row" gap="sm" distribute="even">
             {draft?.id ? (
@@ -1084,7 +1108,7 @@ const AddressBookScreen: React.FC<Props> = ({
               <ButtonText>{saving ? t(`${K}.saving`) : t(`${K}.save`)}</ButtonText>
             </Button>
           </View>
-        </Footer>
+        </AppFooter>
       </DsSheetHost>
 
       {/* Nine kinds do not fit a bottom sheet (it caps its height and clips),

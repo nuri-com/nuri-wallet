@@ -29,6 +29,8 @@ import { useFinePointer } from "./lib/web/finePointer";
 import { PAY_LINK_BODY_ATTRIBUTE } from "./lib/web/payLinkFrame";
 import { parsePayIntent } from "./lib/pay/payIntent";
 import { queuePayIntent } from "./lib/pay/payIntentStore";
+import { payLinkBrowserUrl } from "./lib/pay/payAppHandoff";
+import { PAY_LINK_ORIGIN } from "./config/endpoints";
 import { hydrateAndResumeMercuryoOrders } from "./services/mercuryo/MercuryoPendingTracker";
 import {
   DEBUG_UI_ENABLED,
@@ -70,6 +72,12 @@ import {
   shouldWipeForPasskeySwitch,
 } from "./lib/auth/passkeyUsernameLink";
 import { parsePayLinkPath } from "./lib/pay/payLinkPath";
+import { parseInviteLinkPath } from "./lib/referral/inviteLink";
+import {
+  consumePendingReferrer,
+  getPendingReferrer,
+  rememberReferrer,
+} from "./lib/referral/pendingReferrer";
 import PayLinkScreen from "./screens/pay/PayLinkScreen";
 import { PayWalletProvider } from "./lib/pay/payWallet";
 import { zeroize } from "./lib/crypto";
@@ -216,6 +224,17 @@ function queueInitialPayIntent(): void {
   if (intent) queuePayIntent(intent);
 }
 
+// `/invite/@username` or `/invite/username`: keep the inviter for this device's
+// username claim, then drop the link from the address bar so a refresh opens
+// the plain app. Nothing else changes: the visitor gets the normal welcome.
+function rememberInitialInviteLink(): void {
+  if (Platform.OS !== "web" || typeof window === "undefined") return;
+  const referrer = parseInviteLinkPath(window.location.pathname);
+  if (!referrer) return;
+  void rememberReferrer(referrer).catch(() => {});
+  window.history?.replaceState?.(null, "", "/");
+}
+
 // Drop the `/@username` link from the address bar. Clearing only the React state
 // would leave the browser pointing at a claim that is finished or superseded, so
 // the next refresh or PWA reopen would re-enter the targeted flow — for a name
@@ -281,7 +300,10 @@ export default function App() {
   const [payLinkUsername] = useState(() => {
     const username = initialPayLinkUsername();
     // Read during this first render, before the home that shows it can mount.
-    if (!username) queueInitialPayIntent();
+    if (!username) {
+      queueInitialPayIntent();
+      rememberInitialInviteLink();
+    }
     return username;
   });
   // The app's own frame on the web, installed HERE rather than in `WalletApp`:
@@ -1028,9 +1050,24 @@ function WalletApp() {
             const [payPath = "", payQuery = ""] = path.split("?");
             const intent = parsePayIntent(`/${payPath}`, payQuery ? `?${payQuery}` : "");
             if (intent) {
-              queuePayIntent(intent);
-              EventBus.emit("pay:intent", intent);
+              void (async () => {
+                // The app pays a link from this device's wallet. With none here
+                // it could only show sign-in, so the link goes back to the pay
+                // page, marked so the page does not hand it over again (#1814).
+                if (!(await hasStoredKey("ethereum"))) {
+                  void Linking.openURL(payLinkBrowserUrl(intent, PAY_LINK_ORIGIN)).catch(() => {});
+                  return;
+                }
+                queuePayIntent(intent);
+                EventBus.emit("pay:intent", intent);
+              })();
             }
+            break;
+          }
+          // Someone's invite: kept for this device's username claim.
+          case "invite": {
+            const referrer = parseInviteLinkPath(`/${screenPath}`);
+            if (referrer) void rememberReferrer(referrer).catch(() => {});
             break;
           }
           case "bitcoin":
@@ -1808,18 +1845,21 @@ function WalletApp() {
     ) => {
       if (bootstrapAssertion) {
         const identity = await getOrCreateArkadeIdentity();
-        const [publicContext, evmAddress, btcAddress] = await Promise.all([
+        const [publicContext, evmAddress, btcAddress, referrer] = await Promise.all([
           identity.getSigningPublicContext(),
           getEthereumAddress(),
           getBitcoinAddress(),
+          getPendingReferrer(),
         ]);
         const registration = await arkadeBootstrapClaimRegister(bootstrapAssertion, {
           username,
           client_signer_pubkey: publicContext.clientPk33,
           ...(evmAddress ? { evm_address: evmAddress } : {}),
           ...(btcAddress ? { btc_address: btcAddress } : {}),
+          ...(referrer ? { referrer } : {}),
         });
         cacheArkadeLnurlRegistration(registration);
+        await consumePendingReferrer(referrer);
       } else {
         const identity = await getOrCreateArkadeIdentity();
         const prepared = await identity.prepareLnurlRegisterPasskey();

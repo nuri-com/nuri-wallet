@@ -1,4 +1,4 @@
-import { formatFiat, sumKnown } from "../../lib/currency/displayFiat";
+import { formatFiat, sumAvailable } from "../../lib/currency/displayFiat";
 import type { FiatCode } from "../../lib/tokens";
 
 // The home shows three cards. Each is named by the rail key that already stood
@@ -42,7 +42,10 @@ export function homeOverviewGroups(balances: {
     {
       key: "cash",
       rail: "wallet",
-      amountHome: sumKnown([balances.walletHome, balances.dollarHome]),
+      // Euro and dollar are two pockets of one card. A pocket that could not be
+      // read is left out, so the cash figure (and the total built on it) still
+      // shows the pocket that was read.
+      amountHome: sumAvailable([balances.walletHome, balances.dollarHome]),
     },
     { key: "banking", rail: "visa", amountHome: balances.wirexHome },
   ] as const;

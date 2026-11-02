@@ -18,7 +18,6 @@ import {
   Button,
   ButtonIcon,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   Scroll,
@@ -35,6 +34,8 @@ import DsSheetHost from "./DsSheetHost";
 import { copyToClipboard } from "../lib/copyToClipboard";
 import { t } from "../lib/i18n";
 import { type PaySettleCurrency, prefilledPayLinkUrl } from "../lib/pay/payLinkPath";
+import { exactBaseUnits, formatBaseUnits } from "../lib/pay/payTarget";
+import AppFooter from "./AppFooter";
 
 const K = "screen.PayLinkCreate";
 
@@ -42,7 +43,7 @@ const K = "screen.PayLinkCreate";
 export const PAY_LINK_CURRENCIES: ReadonlyArray<{ key: PaySettleCurrency; unit: string }> = [
   { key: "EURC_BASE", unit: "EURC" },
   { key: "USDC_BASE", unit: "USDC" },
-  { key: "BTC", unit: "BTC" },
+  { key: "BTC", unit: "sats" },
 ];
 
 type Props = {
@@ -55,14 +56,20 @@ type Props = {
 const PayLinkCreateSheet: React.FC<Props> = ({ visible, onClose, origin, username }) => {
   const [currency, setCurrency] = useState<PaySettleCurrency>("EURC_BASE");
   const [amount, setAmount] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const typed = amount.replace(",", ".").trim();
-  const link = prefilledPayLinkUrl(origin, username, currency, typed || null);
+  // Only the creator input uses sats. Existing URLs still encode decimal BTC.
+  const sats = currency === "BTC" && typed ? exactBaseUnits(typed, 0) : null;
+  const linkAmount = currency === "BTC" && sats !== null ? formatBaseUnits(sats, 8) : typed;
+  const link =
+    currency === "BTC" && typed && sats === null
+      ? null
+      : prefilledPayLinkUrl(origin, username, currency, linkAmount || null);
   const unit = PAY_LINK_CURRENCIES.find((c) => c.key === currency)?.unit ?? "";
 
   const close = () => {
-    setCopied(false);
+    setCopied(null);
     onClose();
   };
 
@@ -97,8 +104,9 @@ const PayLinkCreateSheet: React.FC<Props> = ({ visible, onClose, origin, usernam
                 variant={currency === option.key ? "solid" : "soft"}
                 {...(currency === option.key ? { accent: "lilac" as const } : {})}
                 onPress={() => {
+                  if ((currency === "BTC") !== (option.key === "BTC")) setAmount("");
                   setCurrency(option.key);
-                  setCopied(false);
+                  setCopied(null);
                 }}
                 accessibilityLabel={t(`${K}.asset.${option.key}`)}
               >
@@ -111,9 +119,9 @@ const PayLinkCreateSheet: React.FC<Props> = ({ visible, onClose, origin, usernam
             value={amount}
             onChangeText={(next) => {
               setAmount(next);
-              setCopied(false);
+              setCopied(null);
             }}
-            inputMode="decimal"
+            inputMode={currency === "BTC" ? "numeric" : "decimal"}
             placeholder={t(`${K}.amountPlaceholder`, { unit })}
             accessibilityLabel={t(`${K}.amountLabel`, { unit })}
           >
@@ -126,15 +134,7 @@ const PayLinkCreateSheet: React.FC<Props> = ({ visible, onClose, origin, usernam
         </View>
       </Scroll>
 
-      <Footer
-        safeAreaBottom
-        chrome="canvas"
-        direction="column"
-        align="stretch"
-        gap="sm"
-        paddingBottom="sm"
-        paddingX="lg"
-      >
+      <AppFooter canvas>
         <Button
           size="lg"
           variant="solid"
@@ -143,13 +143,13 @@ const PayLinkCreateSheet: React.FC<Props> = ({ visible, onClose, origin, usernam
           onPress={async () => {
             if (!link) return;
             // "Copied" only when the clipboard actually took it.
-            setCopied(await copyToClipboard(link));
+            setCopied((await copyToClipboard(link)) ? link : null);
           }}
         >
           <ButtonIcon name="copy" />
-          <ButtonText>{copied ? t(`${K}.copied`) : t(`${K}.copy`)}</ButtonText>
+          <ButtonText>{link && copied === link ? t(`${K}.copied`) : t(`${K}.copy`)}</ButtonText>
         </Button>
-      </Footer>
+      </AppFooter>
     </DsSheetHost>
   );
 };

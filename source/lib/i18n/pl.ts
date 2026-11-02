@@ -179,6 +179,8 @@ export const pl = {
     },
     BitcoinTransactionsModal: {
       title: "Aktywność Bitcoin",
+      errorRateLimited:
+        "Historia Bitcoin jest teraz zajęta. Wyświetlone pozycje są nadal poprawne.",
       pendingBalanceLabel: "Bitcoin w toku",
     },
     BitcoinReceiveModal: {
@@ -247,6 +249,8 @@ export const pl = {
       openAccountDeployingTitle: "Konfigurowanie konta",
       openAccountDeployingBody:
         "Poczekaj, aż konto zostanie utworzone i rozpocznie się weryfikacja.",
+      openAccountEmailInUse:
+        "Ten e-mail jest już używany przez inne konto. Użyj innego adresu e-mail.",
       openAccountDeployFailed: "Nie udało się skonfigurować konta. Spróbuj ponownie.",
       verificationInProgress: "Weryfikacja w toku",
       continueVerification: "Kontynuuj weryfikację",
@@ -311,6 +315,7 @@ export const pl = {
       empty: "Brak transakcji",
       errorDefault: "Nie udało się wczytać transakcji",
       typeRefund: "Zwrot",
+      typePushToCard: "Wpłata na kartę",
       typePayment: "Płatność",
       statusPending: "W toku",
       statusFailed: "Odrzucona",
@@ -552,7 +557,7 @@ export const pl = {
       exceedsBalanceHint: "Przekracza dostępne saldo",
     },
     HomeScreen: {
-      greeting: "Witaj %{name}!",
+      greeting: "Witaj %{name}",
       scanA11yLabel: "Skanuj kod QR",
       details: "Szczegóły",
       detailsBank: "Dane bankowe",
@@ -583,6 +588,7 @@ export const pl = {
       railIban: "IBAN",
       railVisa: "Visa",
       receiveTitle: "Odbierz",
+      receiveLabelLightning: "Lightning",
       receiveLabelInstant: "Natychmiastowe",
       receiveLabelOnchain: "Onchain",
       receiveLabelEvm: "Adres EVM",
@@ -659,6 +665,7 @@ export const pl = {
       addDestination: "Dodaj adres, IBAN, kartę lub Lightning",
       removeDestination: "Usuń",
       payName: "Zapłać %{name}",
+      historyEmpty: "Brak jeszcze płatności z %{name}",
       destinationCount: "%{first} +%{count}",
       kind_lightning: "Adres Lightning",
       kind_evm: "Adres EVM",
@@ -689,6 +696,8 @@ export const pl = {
     },
     Settings: {
       payLink: "Link do płatności",
+      invite: "Zaproś znajomych",
+      inviteCopy: "Kopiuj link z zaproszeniem",
       bankCards: "Bank i karty",
       bankCardsBody: "Zweryfikuj konto i otrzymaj IBAN oraz kartę Visa.",
       activate: "Aktywuj",
@@ -809,8 +818,8 @@ export const pl = {
       statusFailed: "Nieudane",
       sendAgain: "Wyślij ponownie",
       addToAddressBook: "Dodaj do książki adresowej",
-      contactReceived: "%{name} otrzymał(a)",
-      contactSent: "%{name} wysłał(a)",
+      contactFrom: "Od %{name}",
+      contactTo: "Do %{name}",
     },
     ReceiveModal: {
       request: "Poproś",

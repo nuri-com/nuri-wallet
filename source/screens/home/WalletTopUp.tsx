@@ -12,7 +12,7 @@
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { StyleSheet, View as RNView } from "react-native";
-import { Footer, Header, IconButton, Topbar, TopbarTitle, TopbarTrailing, View } from "@ds";
+import { Header, IconButton, Topbar, TopbarTitle, TopbarTrailing, View } from "@ds";
 import DsSheetHost from "../../components/DsSheetHost";
 import PayWalletSwapPanel from "../../components/PayWalletSwapPanel";
 import { t } from "../../lib/i18n";
@@ -26,6 +26,7 @@ import {
 } from "../../services/pay/PayWalletSwapService";
 import { runWalletTopUp } from "../../services/pay/PayWalletTopUp";
 import { usePayWalletSwap } from "../pay/hooks/usePayWalletSwap";
+import AppFooter from "../../components/AppFooter";
 
 /** How long a closed picker may wait for the wallet's connection to arrive. */
 const CONNECT_SETTLE_MS = 5_000;
@@ -141,7 +142,7 @@ const Flow: React.FC<Props> = ({ onClose, settle, payoutAddress, rail, label, fo
           </RNView>
         </PayWalletProvider>
       </View>
-      <Footer safeAreaBottom paddingBottom="sm" />
+      <AppFooter />
     </DsSheetHost>
   );
 };

@@ -8,10 +8,7 @@ import { warmV2Funding } from "./SwapKitV2FundingWarmup";
 import { isValidArkAddress } from "@arkade-os/sdk";
 import { decodeBolt11Facts } from "../../lib/bitcoin/lightning";
 import { lightningSendStartedFor } from "../arkade/lightningSendStarted";
-import {
-  ARKADE_LIGHTNING_MAX_SEND_SATS,
-  ARKADE_LIGHTNING_MIN_SEND_SATS,
-} from "../../config/constants";
+import { getArkadeLightningLimits } from "../arkade/internal/lightningLimitsStore";
 import { getEthereumAddress } from "../../lib/secureKeyStorage";
 import {
   asSwapKitV2OrderId,
@@ -68,11 +65,8 @@ export type ArkadeIntentsLightningSend = {
  */
 export function isArkadeLightningAmountInRange(sats: number): boolean {
   const amount = Math.trunc(Number(sats));
-  return (
-    Number.isFinite(amount) &&
-    amount >= ARKADE_LIGHTNING_MIN_SEND_SATS &&
-    amount <= ARKADE_LIGHTNING_MAX_SEND_SATS
-  );
+  const { minSats, maxSats } = getArkadeLightningLimits().send;
+  return Number.isFinite(amount) && amount >= minSats && amount <= maxSats;
 }
 
 function lightningQuoteRequest(args: {
@@ -225,7 +219,7 @@ export async function createArkadeIntentsLightningSend(params: {
   }
   if (!isArkadeLightningAmountInRange(invoiceSats)) {
     throw new Error(
-      `lightning invoice amount must be between ${ARKADE_LIGHTNING_MIN_SEND_SATS} and ${ARKADE_LIGHTNING_MAX_SEND_SATS} sats`,
+      `lightning invoice amount must be between ${getArkadeLightningLimits().send.minSats} and ${getArkadeLightningLimits().send.maxSats} sats`,
     );
   }
 

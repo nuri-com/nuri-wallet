@@ -203,6 +203,8 @@ export async function claimArkadeLnurlUsernameForCredId(
     maxSendableMsat: 0,
     hasPublishedInvoice: false,
     invoiceExpiresAtMs: 0,
+    invitedBy: null,
+    invitees: [],
   };
   return status;
 }

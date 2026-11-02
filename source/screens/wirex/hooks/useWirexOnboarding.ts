@@ -15,7 +15,7 @@ import { LOG_EMOJI, logWithId, warnWithId } from "../../../lib/OperationLogUtils
 import { getEthereumAddress } from "../../../lib/secureKeyStorage";
 import { wirexKycPermalink } from "../../../lib/wirex/kycPermalink";
 import { nextStepAfterApprovedOnboarding } from "../../../services/wirex/WirexOnboardingOutcome";
-import { wirexService } from "../../../services/wirex/WirexService";
+import { WIREX_EMAIL_IN_USE_ERROR, wirexService } from "../../../services/wirex/WirexService";
 
 const SOURCE = "screens/wirex/hooks/useWirexOnboarding.ts";
 
@@ -44,6 +44,8 @@ export type WirexOnboardingState = {
   emailEntryVisible: boolean;
   busy: boolean;
   failed: boolean;
+  /** The last attempt failed because the email belongs to another account. */
+  emailInUse: boolean;
   /** Open the email screen — the first-time "Open Free Account" entry point. */
   start: () => void;
   /** Close the email screen without onboarding. */
@@ -59,6 +61,7 @@ export function useWirexOnboarding(options?: WirexOnboardingOptions): WirexOnboa
   const [emailEntryVisible, setEmailEntryVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [emailInUse, setEmailInUse] = useState(false);
 
   const resolveKycIdentity = useCallback(() => {
     const username = String(authenticatedUsername || "")
@@ -122,10 +125,12 @@ export function useWirexOnboarding(options?: WirexOnboardingOptions): WirexOnboa
 
   const start = useCallback(() => {
     setFailed(false);
+    setEmailInUse(false);
     setEmailEntryVisible(true);
   }, []);
   const cancel = useCallback(() => {
     setFailed(false);
+    setEmailInUse(false);
     setEmailEntryVisible(false);
   }, []);
 
@@ -136,6 +141,7 @@ export function useWirexOnboarding(options?: WirexOnboardingOptions): WirexOnboa
       if (busy) return;
       onBeforeStart?.();
       setFailed(false);
+      setEmailInUse(false);
       setBusy(true);
       try {
         logWithId(
@@ -154,6 +160,7 @@ export function useWirexOnboarding(options?: WirexOnboardingOptions): WirexOnboa
         await onboardAndLaunchKyc(pinnedEmail, () => setEmailEntryVisible(false));
       } catch (e) {
         setFailed(true);
+        setEmailInUse(e instanceof Error && e.message === WIREX_EMAIL_IN_USE_ERROR);
         warnWithId(
           `${LOG_EMOJI.card} WirexOnboarding`,
           // Reason goes in the message (not just extra): the clean console
@@ -221,6 +228,7 @@ export function useWirexOnboarding(options?: WirexOnboardingOptions): WirexOnboa
     emailEntryVisible,
     busy,
     failed,
+    emailInUse,
     start,
     cancel,
     submitEmail,

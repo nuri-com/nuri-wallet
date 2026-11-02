@@ -5,12 +5,11 @@
 // manually here because background settlement is disabled (settlementConfig:
 // false). Signing for the migration runs through the same recoverable-approval
 // scope as the recoverable-vtxo update — see internal/receiveAutoRecover.ts.
-import { hasTerminalSpend } from "@arkade-os/sdk";
+import { isVtxoSpent } from "@arkade-os/sdk";
 
-// SDK 0.5 removed `isSpendable`; its body was `!hasTerminalSpend(vtxo)`. Kept
+// SDK 0.5 removed `isSpendable`; its body was `!hasTerminalSpend(vtxo)`, which 0.5 ships as `isVtxoSpent`. Kept
 // identical so this sweep still enrolls exactly the vtxos it did before.
-const isSpendable = (vtxo: Parameters<typeof hasTerminalSpend>[0]): boolean =>
-  !hasTerminalSpend(vtxo);
+const isSpendable = (vtxo: Parameters<typeof isVtxoSpent>[0]): boolean => !isVtxoSpent(vtxo);
 import type { ExtendedVirtualCoin } from "@arkade-os/sdk";
 import { bytesToHex, hexToBytes } from "../../lib/bytes";
 import { EventBus } from "../events/AppEventBusService";

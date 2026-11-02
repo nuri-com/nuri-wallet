@@ -15,11 +15,16 @@
  */
 
 import * as React from "react";
-import { Platform, View as RNView, useWindowDimensions } from "react-native";
+import { Platform, View as RNView, StyleSheet, useWindowDimensions } from "react-native";
 
+import {
+  doubleCountedKeyboardInset,
+  getAppFrame,
+  subscribeAppFrame,
+} from "../lib/ui/androidKeyboardFrame";
 import { noteSurfaceOpened } from "../lib/ui/openSurfaces";
 
-import { Modal, ModalPanel } from "@ds";
+import { Modal, ModalPanel, View } from "@ds";
 import type { ModalMode } from "@ds";
 
 /** Mirrors the DS Modal's sheet cap (CONTENT_MAX_FRACTION, not exported). */
@@ -36,6 +41,36 @@ export type DsSheetHostProps = {
   onOpenComplete?: () => void;
   children: React.ReactNode;
 };
+
+/**
+ * Android full page: undoes the second keyboard lift on phones whose window
+ * already shrank above the keyboard (lib/ui/androidKeyboardFrame), so the page
+ * ends at the keyboard instead of a keyboard height above it with the home
+ * showing through the gap. The content reaches down over the DS padding it no
+ * longer needs and paints the canvas there. Mounted on every Android full page
+ * whether or not the keyboard is up, so opening it never remounts the field.
+ * Raw Views: an invisible panel probe and a negative-margin extension, layout
+ * the DS does not model.
+ */
+function AndroidFullPageContent({ children }: { children: React.ReactNode }) {
+  const frame = React.useSyncExternalStore(subscribeAppFrame, getAppFrame, getAppFrame);
+  const [panelHeight, setPanelHeight] = React.useState<number | null>(null);
+  const overlap = doubleCountedKeyboardInset(frame, panelHeight);
+  return (
+    <>
+      <RNView
+        pointerEvents="none"
+        style={StyleSheet.absoluteFill}
+        onLayout={(e) => setPanelHeight(Math.round(e.nativeEvent.layout.height))}
+      />
+      <RNView style={{ flex: 1, minHeight: 0, marginBottom: -overlap }}>
+        <View chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
+          {children}
+        </View>
+      </RNView>
+    </>
+  );
+}
 
 export default function DsSheetHost({
   visible,
@@ -81,6 +116,8 @@ export default function DsSheetHost({
           <RNView style={{ height: windowHeight, minHeight: 0 }}>{children}</RNView>
         ) : mode === "sheet" ? (
           <RNView style={{ maxHeight: sheetMaxHeight, minHeight: 0 }}>{children}</RNView>
+        ) : Platform.OS === "android" ? (
+          <AndroidFullPageContent>{children}</AndroidFullPageContent>
         ) : (
           children
         )}

@@ -38,6 +38,7 @@ import ChoiceSheet from "../../components/ChoiceSheet";
 import PayLinkCreateSheet from "../../components/PayLinkCreateSheet";
 import { Layer } from "../../components/LayerHost";
 import { PAY_LINK_ORIGIN } from "../../config/endpoints";
+import { copyToClipboard } from "../../lib/copyToClipboard";
 import {
   DISPLAY_CURRENCIES,
   type DisplayCurrency,
@@ -49,6 +50,7 @@ import { LANGUAGE_OPTIONS } from "../../lib/i18n/languages";
 import { useAppLocale } from "../../lib/i18n/useAppLocale";
 import { getAppVersion } from "../../lib/loadedAppVersion";
 import { payLinkUrl } from "../../lib/pay/payLinkPath";
+import { inviteLinkUrl } from "../../lib/referral/inviteLink";
 import {
   PAY_WALLET_AVAILABLE,
   PayWalletProvider,
@@ -68,6 +70,7 @@ import {
 } from "../../services/notifications/notificationPreferences";
 import { getPermission } from "../../services/notifications/NotificationService";
 import type { VerificationRowState } from "./settingsModel";
+import { useInvitees } from "./useInvitees";
 
 const K = "screen.Settings";
 
@@ -183,13 +186,16 @@ const SettingsScreen: React.FC<Props> = ({
   const currency = useHomeCurrency();
   const [picker, setPicker] = useState<"language" | "currency" | null>(null);
   const [creatingPayLink, setCreatingPayLink] = useState(false);
+  const [inviting, setInviting] = useState(false);
   const [notifications, setNotifications] = useState<NotificationsView>(null);
+  const invitees = useInvitees(visible);
 
   // Read fresh on every open: the OS permission can change while away.
   useEffect(() => {
     if (!visible) {
       setPicker(null);
       setCreatingPayLink(false);
+      setInviting(false);
       return;
     }
     let cancelled = false;
@@ -234,6 +240,7 @@ const SettingsScreen: React.FC<Props> = ({
       ? window.location.origin
       : PAY_LINK_ORIGIN;
   const payLink = payLinkUrl(origin, username);
+  const inviteLink = inviteLinkUrl(origin, username);
   const verified = verification.state === "verified";
   const showBankCards = verification.action !== null;
 
@@ -284,6 +291,15 @@ const SettingsScreen: React.FC<Props> = ({
                       onPress={() => setCreatingPayLink(true)}
                     >
                       <ListActionText>{t(`${K}.payLink`)}</ListActionText>
+                      <ListActionTrailIcon name="chevron-right" />
+                    </ListAction>
+                  ) : null}
+                  {inviteLink ? (
+                    <ListAction
+                      accessibilityLabel={t(`${K}.invite`)}
+                      onPress={() => setInviting(true)}
+                    >
+                      <ListActionText>{t(`${K}.invite`)}</ListActionText>
                       <ListActionTrailIcon name="chevron-right" />
                     </ListAction>
                   ) : null}
@@ -413,6 +429,30 @@ const SettingsScreen: React.FC<Props> = ({
           onClose={() => setCreatingPayLink(false)}
           origin={origin}
           username={username}
+        />
+      ) : null}
+      {inviteLink ? (
+        // Your invite link and everyone who joined through it. A person opens
+        // the address book, where each of them is saved.
+        <ChoiceSheet<string>
+          visible={visible && inviting}
+          onClose={() => setInviting(false)}
+          mode="full"
+          title={t(`${K}.invite`)}
+          subtitle={inviteLink}
+          items={invitees.map((row) => ({
+            key: `user:${row.username}`,
+            label: `@${row.username}`,
+          }))}
+          footerAction={{ key: "copy", label: t(`${K}.inviteCopy`), icon: "copy" }}
+          onSelect={(key) => {
+            if (key === "copy") {
+              void copyToClipboard(inviteLink);
+              return;
+            }
+            setInviting(false);
+            onOpenAddressBook();
+          }}
         />
       ) : null}
       <ChoiceSheet<AppLocale>

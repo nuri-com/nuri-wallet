@@ -178,6 +178,8 @@ export const ptBR = {
     },
     BitcoinTransactionsModal: {
       title: "Atividade de Bitcoin",
+      errorRateLimited:
+        "O histórico Bitcoin está ocupado agora. As linhas mostradas continuam corretas.",
       pendingBalanceLabel: "Bitcoin pendente",
     },
     BitcoinReceiveModal: {
@@ -244,6 +246,7 @@ export const ptBR = {
       openAccountEmailBusy: "Configurando sua conta…",
       openAccountDeployingTitle: "Configurando sua conta",
       openAccountDeployingBody: "Aguarde enquanto sua conta é criada e a verificação começa.",
+      openAccountEmailInUse: "Este e-mail já é usado por outra conta. Use outro e-mail.",
       openAccountDeployFailed: "Não conseguimos configurar sua conta. Tente de novo.",
       verificationInProgress: "Verificação em andamento",
       continueVerification: "Continuar verificação",
@@ -308,6 +311,7 @@ export const ptBR = {
       empty: "Nenhuma transação ainda",
       errorDefault: "Não foi possível carregar as transações",
       typeRefund: "Reembolso",
+      typePushToCard: "Depósito no cartão",
       typePayment: "Pagamento",
       statusPending: "Pendente",
       statusFailed: "Recusada",
@@ -549,7 +553,7 @@ export const ptBR = {
       exceedsBalanceHint: "Passa do saldo disponível",
     },
     HomeScreen: {
-      greeting: "Bem-vindo %{name}!",
+      greeting: "Bem-vindo %{name}",
       scanA11yLabel: "Escanear QR code",
       details: "Detalhes",
       detailsBank: "Dados bancários",
@@ -580,6 +584,7 @@ export const ptBR = {
       railIban: "IBAN",
       railVisa: "Visa",
       receiveTitle: "Receber",
+      receiveLabelLightning: "Lightning",
       receiveLabelInstant: "Instantâneo",
       receiveLabelOnchain: "Onchain",
       receiveLabelEvm: "Endereço EVM",
@@ -656,6 +661,7 @@ export const ptBR = {
       addDestination: "Adicionar endereço, IBAN, cartão ou Lightning",
       removeDestination: "Remover",
       payName: "Pagar %{name}",
+      historyEmpty: "Ainda não há pagamentos com %{name}",
       destinationCount: "%{first} +%{count}",
       kind_lightning: "Endereço Lightning",
       kind_evm: "Endereço EVM",
@@ -686,6 +692,8 @@ export const ptBR = {
     },
     Settings: {
       payLink: "Link de pagamento",
+      invite: "Convidar amigos",
+      inviteCopy: "Copiar link de convite",
       bankCards: "Banco e cartões",
       bankCardsBody: "Verifique sua conta e ganhe um IBAN e um cartão Visa.",
       activate: "Ativar",
@@ -806,8 +814,8 @@ export const ptBR = {
       statusFailed: "Falhou",
       sendAgain: "Enviar de novo",
       addToAddressBook: "Adicionar aos contatos",
-      contactReceived: "%{name} recebeu",
-      contactSent: "%{name} enviou",
+      contactFrom: "De %{name}",
+      contactTo: "Para %{name}",
     },
     ReceiveModal: {
       request: "Solicitar",

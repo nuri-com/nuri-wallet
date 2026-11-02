@@ -3,7 +3,6 @@ import React, { useState } from "react";
 import {
   Button,
   ButtonText,
-  Footer,
   Header,
   IconButton,
   Scroll,
@@ -19,6 +18,7 @@ import {
   type SupportDumpAppSnapshot,
   type SupportDumpSendResult,
 } from "../services/support/SupportDumpService";
+import AppFooter from "./AppFooter";
 
 type Props = {
   visible: boolean;
@@ -121,7 +121,7 @@ const SupportDumpModal: React.FC<Props> = ({ visible, onClose, supportPubkey, ap
         </View>
       </Scroll>
 
-      <Footer safeAreaBottom direction="column" align="stretch" paddingBottom="lg" paddingX="lg">
+      <AppFooter>
         <View direction="column" align="stretch" gap="sm">
           <Button
             size="lg"
@@ -136,7 +136,7 @@ const SupportDumpModal: React.FC<Props> = ({ visible, onClose, supportPubkey, ap
             <ButtonText>{result ? "Close" : "Cancel"}</ButtonText>
           </Button>
         </View>
-      </Footer>
+      </AppFooter>
     </DsSheetHost>
   );
 };
