@@ -5,8 +5,6 @@ export const nl = {
       title: "Bitcoinbetaling ontvangen",
       unlockButton: "Ontgrendelen met passkey",
       laterButton: "Later claimen",
-      renewalTitle: "Houd je Bitcoin veilig",
-      renewalBody: "Bevestig met je passkey zodat je de toegang tot je saldo niet verliest.",
     },
     DesktopGate: {
       subtitle: "Scan de QR-code om Nuri op je telefoon te openen.",

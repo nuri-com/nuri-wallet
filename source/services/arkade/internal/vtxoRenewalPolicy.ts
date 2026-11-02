@@ -17,9 +17,18 @@ import {
 } from "../ArkadeServerDecayPolicy";
 import { bytesToHex } from "../../../lib/bytes";
 
-/** Renew a VTXO once its batch expires within this many days. */
-export const ARKADE_VTXO_RENEWAL_THRESHOLD_DAYS = 3;
-export const ARKADE_VTXO_RENEWAL_THRESHOLD_MS = ARKADE_VTXO_RENEWAL_THRESHOLD_DAYS * 86_400_000;
+/**
+ * Renew a VTXO once its batch expires within 16 d 5 h.
+ *
+ * Since arkade-os/intent-solver#259 the Arkade solver caps its Lightning pay
+ * deadline at the lockup coin's batch expiry and refuses
+ * `uncapped_route_deadline_too_short` unless that leaves
+ * (invoice CLTV + 2016 route blocks) x 600 s + 2 h. The invoice part is at most
+ * 288 blocks (the solver's MAX_CLIENT_CLTV_BLOCKS), so (288 + 2016) x 600 s +
+ * 7200 s = 16 d 2 h covers every invoice it accepts; 3 h on top renews a coin
+ * before Lightning sends and Arkade -> EUR/USD swaps start refusing it.
+ */
+export const ARKADE_VTXO_RENEWAL_THRESHOLD_MS = (16 * 24 + 5) * 3_600_000;
 /** The SDK's own per-settlement input cap (`MAX_VTXOS_PER_SETTLEMENT`, not exported). */
 export const ARKADE_VTXO_RENEWAL_MAX_INPUTS = 50;
 

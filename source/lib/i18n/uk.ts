@@ -4,8 +4,6 @@ export const uk = {
       title: "Bitcoin-платіж отримано",
       unlockButton: "Розблокувати passkey",
       laterButton: "Забрати пізніше",
-      renewalTitle: "Збережіть свій Bitcoin у безпеці",
-      renewalBody: "Підтвердьте за допомогою passkey, щоб не втратити доступ до балансу.",
     },
     DesktopGate: {
       subtitle: "Відскануй QR-код, щоб відкрити Nuri на телефоні.",

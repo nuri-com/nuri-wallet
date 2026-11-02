@@ -4,8 +4,6 @@ export const tr = {
       title: "Bitcoin ödemesi alındı",
       unlockButton: "Passkey ile aç",
       laterButton: "Sonra al",
-      renewalTitle: "Bitcoin'ini güvende tut",
-      renewalBody: "Bakiyene erişimini kaybetmemek için passkey'inle onayla.",
     },
     DesktopGate: {
       subtitle: "Nuri'yi telefonunda açmak için QR kodunu tara.",

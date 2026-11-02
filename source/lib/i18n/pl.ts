@@ -5,8 +5,6 @@ export const pl = {
       title: "Otrzymano płatność w Bitcoinie",
       unlockButton: "Odblokuj passkey",
       laterButton: "Odbierz później",
-      renewalTitle: "Zadbaj o bezpieczeństwo swoich Bitcoinów",
-      renewalBody: "Potwierdź swoim kluczem dostępu, aby nie stracić dostępu do salda.",
     },
     DesktopGate: {
       subtitle: "Zeskanuj kod QR, aby otworzyć Nuri na telefonie.",

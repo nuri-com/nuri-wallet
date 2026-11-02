@@ -1,6 +1,6 @@
 // VTXO renewal before batch expiry (#1635), run from the unlock modal.
 //
-// Settles the VTXOs whose batch expires within ARKADE_VTXO_RENEWAL_THRESHOLD_DAYS
+// Settles the VTXOs whose batch expires within ARKADE_VTXO_RENEWAL_THRESHOLD_MS
 // into a fresh batch, back to the wallet's own Ark address. It signs through
 // the same production cosigner path every outgoing settle uses —
 // `withOutgoingBrowserApproval` arms the identity's spend approval, the SDK's

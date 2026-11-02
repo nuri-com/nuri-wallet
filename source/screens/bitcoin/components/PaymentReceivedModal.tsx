@@ -3,9 +3,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, View as RNView } from "react-native";
 
 import { Button, ButtonText, Text, View } from "@ds";
+import BiometricLockModal from "../../../components/BiometricLockModal";
 import BrandDisplayTitle from "../../../components/BrandDisplayTitle";
 import GotPaidIllustration from "../../../assets/illustrations/gotpaid.svg";
-import WalletLockIllustration from "../../../assets/illustrations/wallet-lock.svg";
 import FullscreenLayer from "../../../components/FullscreenLayer";
 import PasskeyWebAuthnPrfView, {
   type PasskeyWebAuthnPrfAssertionResult,
@@ -51,11 +51,10 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
   // boarding sweep) runs its ceremony in the parent document and needs the focus.
   const usesReceiveClaimPasskey =
     state.actionableItems.length === 1 && state.actionableItems[0]?.kind === "ln_receive_claim";
-  // A renewal is not a payment: it gets its own title and says what it does.
+  // A renewal is not a payment: it shows the real wallet lock screen users
+  // already know ("Access wallet"), not a screen of its own.
   const renewal =
-    state.actionableItems.length === 1 && state.actionableItems[0]?.kind === "vtxo_renewal"
-      ? state.actionableItems[0]
-      : null;
+    state.actionableItems.length === 1 && state.actionableItems[0]?.kind === "vtxo_renewal";
   // Pre-fetched auth so the "Passkey Unlock" button itself can run the WebView
   // passkey ceremony on one tap (no second confirm screen). Null → fall back to
   // the plain button (which prompts via the overlay).
@@ -194,6 +193,24 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
     [registerFailure],
   );
 
+  // Renewal: one try, then the screen goes away whatever happened. The lock
+  // screen has no "later" button, so closing on every outcome is what keeps a
+  // failing or cancelled renewal from locking the user out; App re-offers it
+  // when the due coins change, and a failure still reaches support.
+  const handleRenewal = useCallback(async () => {
+    try {
+      const result = await onUnlock();
+      if (!result.ok) registerFailure(result, true);
+    } catch (error) {
+      registerFailure(error, true);
+    } finally {
+      failureCountRef.current = 0;
+      onClose();
+    }
+  }, [onClose, onUnlock, registerFailure]);
+
+  if (renewal) return <BiometricLockModal visible={visible} onAccess={handleRenewal} />;
+
   return (
     <FullscreenLayer
       visible={visible}
@@ -246,34 +263,16 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
       }
     >
       <View direction="column" align="center" gap="md" paddingTop="lg">
-        <BrandDisplayTitle>
-          {t(
-            renewal
-              ? "screen.PaymentReceivedModal.renewalTitle"
-              : "screen.PaymentReceivedModal.title",
-          )}
-        </BrandDisplayTitle>
-        {/* A renewal is not a payment: no amount, just what the tap does. */}
-        {renewal ? (
-          <Text size="md" muted align="center">
-            {t("screen.PaymentReceivedModal.renewalBody")}
-          </Text>
-        ) : (
-          <Text size="xl" emphasis align="center">
-            {`BTC ${formatSats(state.actionableSats)} sats`}
-          </Text>
-        )}
+        <BrandDisplayTitle>{t("screen.PaymentReceivedModal.title")}</BrandDisplayTitle>
+        <Text size="xl" emphasis align="center">
+          {`BTC ${formatSats(state.actionableSats)} sats`}
+        </Text>
       </View>
 
       <View direction="column" align="center" justify="center" fill="grow">
-        {/* Renewal shows the wallet lock exactly as the lock screen does. */}
-        {renewal ? (
-          <WalletLockIllustration width={240} height={240} />
-        ) : (
-          <PopRiffleView active={visible}>
-            <GotPaidIllustration width={241} height={213} />
-          </PopRiffleView>
-        )}
+        <PopRiffleView active={visible}>
+          <GotPaidIllustration width={241} height={213} />
+        </PopRiffleView>
       </View>
     </FullscreenLayer>
   );

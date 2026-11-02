@@ -4,9 +4,6 @@ export const de = {
       title: "Bitcoin-Zahlung erhalten",
       unlockButton: "Mit Passkey entsperren",
       laterButton: "Später claimen",
-      renewalTitle: "Halte dein Bitcoin sicher",
-      renewalBody:
-        "Bestätige mit deinem Passkey, damit du den Zugriff auf dein Guthaben nicht verlierst.",
     },
     DesktopGate: {
       subtitle: "Scanne den QR-Code, um Nuri auf deinem Handy zu öffnen.",

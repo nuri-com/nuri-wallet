@@ -4,8 +4,6 @@ export const sw = {
       title: "Malipo ya Bitcoin Yamepokelewa",
       unlockButton: "Fungua kwa Passkey",
       laterButton: "Dai baadaye",
-      renewalTitle: "Linda Bitcoin yako",
-      renewalBody: "Thibitisha kwa passkey yako ili usipoteze ufikiaji wa salio lako.",
     },
     DesktopGate: {
       subtitle: "Changanua msimbo wa QR ili kufungua Nuri kwenye simu yako.",

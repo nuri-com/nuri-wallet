@@ -19,6 +19,13 @@ import {
 // unlock entry from the passkey, and by support when even that is impossible.
 type Props = {
   visible: boolean;
+  /**
+   * Runs instead of the wallet unlock when the button is tapped. Coin renewal
+   * uses it so users see the lock screen they know; the caller decides what
+   * happens next (it closes the screen on every outcome, so nobody is stuck).
+   * Never auto-started: a passkey prompt needs the user's tap.
+   */
+  onAccess?: () => Promise<void>;
 };
 
 /**
@@ -43,31 +50,43 @@ function hintFor(result: WalletAccessResult): string | null {
   }
 }
 
-export default function BiometricLockModal({ visible }: Props) {
+export default function BiometricLockModal({ visible, onAccess }: Props) {
   const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const autoAccessAttemptedRef = useRef(false);
   const attemptRef = useRef(0);
 
-  const handleWalletAccess = useCallback(async (source: WalletAccessSource) => {
-    // The controller is the single-ceremony guard. Mirror it rather than
-    // dropping the tap: a return that changes nothing is a button that visibly
-    // does nothing, which is exactly how a running ceremony used to look.
-    if (walletAccessController.isBusy()) {
+  const handleWalletAccess = useCallback(
+    async (source: WalletAccessSource) => {
+      if (onAccess) {
+        setBusy(true);
+        try {
+          await onAccess();
+        } finally {
+          setBusy(false);
+        }
+        return;
+      }
+      // The controller is the single-ceremony guard. Mirror it rather than
+      // dropping the tap: a return that changes nothing is a button that visibly
+      // does nothing, which is exactly how a running ceremony used to look.
+      if (walletAccessController.isBusy()) {
+        setBusy(true);
+        return;
+      }
+      const attempt = ++attemptRef.current;
       setBusy(true);
-      return;
-    }
-    const attempt = ++attemptRef.current;
-    setBusy(true);
-    setHint(null);
-    const result = await walletAccessController.requestAccess(source);
-    // A newer attempt already owns the screen — a late result from this one
-    // must not overwrite what that attempt showed, least of all a success.
-    if (attempt !== attemptRef.current) return;
-    setBusy(false);
-    // "unlocked" dismisses this layer from App via the wallet-unlocked signal.
-    setHint(hintFor(result));
-  }, []);
+      setHint(null);
+      const result = await walletAccessController.requestAccess(source);
+      // A newer attempt already owns the screen — a late result from this one
+      // must not overwrite what that attempt showed, least of all a success.
+      if (attempt !== attemptRef.current) return;
+      setBusy(false);
+      // "unlocked" dismisses this layer from App via the wallet-unlocked signal.
+      setHint(hintFor(result));
+    },
+    [onAccess],
+  );
 
   useEffect(() => {
     if (!visible) {
@@ -77,10 +96,10 @@ export default function BiometricLockModal({ visible }: Props) {
       return;
     }
 
-    if (autoAccessAttemptedRef.current) return;
+    if (onAccess || autoAccessAttemptedRef.current) return;
     autoAccessAttemptedRef.current = true;
     void handleWalletAccess("auto");
-  }, [handleWalletAccess, visible]);
+  }, [handleWalletAccess, onAccess, visible]);
 
   return (
     <FullscreenLayer
