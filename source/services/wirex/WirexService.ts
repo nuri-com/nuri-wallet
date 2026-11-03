@@ -548,6 +548,13 @@ const WIREX_READ_SESSION_TTL_SEC = 3600;
 // server's `exp*1000 > Date.now()` check.
 const WIREX_READ_SESSION_SKEW_SEC = 60;
 // Server error codes that mean the attached token was rejected → re-mint + retry.
+// Server answers proving a pending withdrawal moved no money and never will.
+// `session_not_found` is not one: a server without an outcome record (or one
+// whose write failed) also answers it after a final step that moved money.
+const WITHDRAW_NOTHING_MOVED_CODES = new Set([
+  "withdrawal_request_expired",
+  "withdrawal_user_operation_failed",
+]);
 const WIREX_SESSION_ERROR_CODES = ["session_missing_or_expired", "invalid_session_signature"];
 // Emitted whenever a read session is freshly minted. App.tsx retries the push
 // binding on it — see bindNotificationSubscription.
@@ -1541,6 +1548,31 @@ class WirexService {
       // A server-confirmed non-success (completed with ok:false) means the prior
       // withdrawal did NOT execute — safe to clear and let a fresh one start.
       if (error instanceof Error && error.message.startsWith("wirex_withdraw_failed")) {
+        await deleteAuthData(key);
+        return null;
+      }
+      // More server answers are definitive, matched on the EXACT server code
+      // (never a substring of the message, never any 400):
+      //  - withdrawal_request_expired: Wirex's window for the final step closed
+      //    before it was sent; the server sends nothing for it, ever.
+      //  - withdrawal_user_operation_failed: the final step was mined and
+      //    reverted (receipt success !== true), so the money did not move.
+      // A withdrawal left after its first step (app closed before the final
+      // step) gets the expired answer once Wirex's window closes, instead of
+      // staying "pending" for the full 24h.
+      if (error instanceof WirexApiError && WITHDRAW_NOTHING_MOVED_CODES.has(error.code)) {
+        logWithId(
+          `${LOG_EMOJI.auth} WirexService.reconcilePendingWithdrawal`,
+          "pending withdrawal definitively did not move money: clearing the lock",
+          { code: error.code },
+          {
+            context: "background",
+            event: "STATE",
+            scope: "Wirex",
+            flow: "withdrawToWallet",
+            source: "services/wirex/WirexService.ts#reconcilePendingWithdrawal",
+          },
+        );
         await deleteAuthData(key);
         return null;
       }

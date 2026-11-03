@@ -10,7 +10,7 @@
 // asset screen. Pickers are ChoiceSheets stacked above it.
 import * as React from "react";
 import { useCallback, useEffect, useState } from "react";
-import { Platform } from "react-native";
+import { Platform, View as RNView, StyleSheet } from "react-native";
 import {
   Button,
   ButtonText,
@@ -346,7 +346,13 @@ const SettingsScreen: React.FC<Props> = ({
                           <ButtonText>{t(`${K}.activate`)}</ButtonText>
                         </Button>
                       </View>
-                      <Image source={BANK_AND_CARDS} fit="cover" aspectRatio="portrait" />
+                      {/* Safari leaves a photo with no width of its own at zero width
+                          (it does not size a stretched, empty row child from its
+                          ratio), so the column gets its width up front: a 2:3 photo
+                          in a 2:1 card is a third of the card. */}
+                      <RNView style={styles.bankCardsPhoto}>
+                        <Image source={BANK_AND_CARDS} fit="cover" aspectRatio="portrait" />
+                      </RNView>
                     </View>
                   </View>
                 ) : null}
@@ -490,5 +496,9 @@ const SettingsScreen: React.FC<Props> = ({
     </>
   );
 };
+
+const styles = StyleSheet.create({
+  bankCardsPhoto: { width: "33.333%" },
+});
 
 export default SettingsScreen;

@@ -1,4 +1,8 @@
-// Must be the very first import (react-native-gesture-handler requirement).
+// Hermes lacks String.prototype.isWellFormed, but the bundle calls it from the Bitcoin
+// signing library (Metro folds the library's presence check on the build machine). Install it
+// before any library loads. Side-effect only, so gesture-handler's first-import rule still holds.
+import "./lib/polyfills/stringIsWellFormed";
+// Must be the first library import (react-native-gesture-handler requirement).
 import "react-native-gesture-handler";
 // Web only (no-op on native): install Metro's async-bundle loader before the
 // rest of the graph evaluates, so a dependency's dynamic import() can fetch its
