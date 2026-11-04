@@ -447,11 +447,9 @@ export type EsimOrderInvoice = { invoice: string; amountSats: number; order: Esi
  */
 export async function createEsimOrder(place: EsimPlace, plan: EsimPlan): Promise<EsimOrderInvoice> {
   const gen = generation;
-  const { body } = await request("/esim/purchase", {
-    method: "POST",
-    body: purchaseRequestBody(place, plan),
-  });
-  return persistOrder(gen, body, plan.name, place);
+  const requestBody = purchaseRequestBody(place, plan);
+  const { body } = await request("/esim/purchase", { method: "POST", body: requestBody });
+  return persistOrder(gen, body, requestBody.bundleName, place);
 }
 
 /**
@@ -465,11 +463,18 @@ export async function createEsimTopup(
   plan: EsimPlan,
 ): Promise<EsimOrderInvoice> {
   const gen = generation;
+  const requestBody = purchaseRequestBody(place, plan);
   const { body } = await request(`/esim/${encodeURIComponent(esim.iccid)}/purchase`, {
     method: "POST",
-    body: purchaseRequestBody(place, plan),
+    body: requestBody,
   });
-  return persistOrder(gen, body, plan.name, { ...place, name: esim.placeName }, esim.iccid);
+  return persistOrder(
+    gen,
+    body,
+    requestBody.bundleName,
+    { ...place, name: esim.placeName },
+    esim.iccid,
+  );
 }
 
 async function persistOrder(

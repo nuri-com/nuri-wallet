@@ -252,10 +252,27 @@ function num(value: unknown): number | null {
   return null;
 }
 
+// nadanada's catalog names some region plans by the region (fixed_5GB_30D_EUROPE)
+// while its order check only knows them by the provider's region code: it
+// refuses 1, 5, 20, 50 and 100 GB Europe and every South East Asia plan by their
+// catalog name, but takes the same plan, at the same price, by the code. Its own
+// website orders by size and days instead, so it never hits this.
+const REGION_ORDER_CODES: Record<string, { catalog: string; order: string }> = {
+  europe: { catalog: "EUROPE", order: "REUX" },
+  "south-east-asia": { catalog: "SOUTHEASTASIA", order: "RSEA" },
+};
+
+/** The bundle name nadanada's order check accepts for a catalog plan. */
+export function orderBundleName(place: EsimPlace, plan: EsimPlan): string {
+  const codes = place.kind === "region" ? REGION_ORDER_CODES[place.slug] : undefined;
+  if (!codes || !plan.name.endsWith(`_${codes.catalog}`)) return plan.name;
+  return `${plan.name.slice(0, -codes.catalog.length)}${codes.order}`;
+}
+
 /** The /esim/purchase body: Lightning, with Nuri's referral code. */
 export function purchaseRequestBody(place: EsimPlace, plan: EsimPlan) {
   return {
-    bundleName: plan.name,
+    bundleName: orderBundleName(place, plan),
     slug: place.slug,
     paymentMethod: "lightning" as const,
     refCode: NADANADA_REF_CODE,
