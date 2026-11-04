@@ -1,6 +1,7 @@
 import { base64, hex } from "@scure/base";
 import {
   CSVMultisigTapscript,
+  ConditionWitness,
   Intent,
   P2A,
   Transaction,
@@ -9,8 +10,37 @@ import {
   assertAllowedSighashTypes,
   buildOffchainTx,
   decodeTapscript,
+  getArkPsbtFields,
   scriptFromTapLeafScript,
+  setArkPsbtField,
 } from "@arkade-os/sdk";
+
+/**
+ * Copy the condition witness (a claim's preimage) from the signed ark tx input
+ * onto the unsigned checkpoint it spends, so the checkpoint goes to `submitTx`
+ * carrying it. arkd v0.9.24+ refuses a checkpoint whose condition witness
+ * differs from that of the ark tx input spending it, and the claim signer only
+ * attaches the preimage while signing, so the checkpoint built before signing
+ * has none. Same rule as the SDK's own submit since 0.5.3; our claim submits
+ * its own transactions, so it needs the copy itself. A checkpoint that already
+ * carries a witness, or whose ark tx input has none (a refund), is returned as is.
+ */
+export function withArkInputConditionWitness(
+  checkpoint: TransactionType,
+  signedArkTx: TransactionType,
+): TransactionType {
+  if (getArkPsbtFields(checkpoint, 0, ConditionWitness).length > 0) return checkpoint;
+  for (let i = 0; i < signedArkTx.inputsLength; i++) {
+    const { txid } = signedArkTx.getInput(i);
+    if (!txid || hex.encode(txid) !== checkpoint.id) continue;
+    const [witness] = getArkPsbtFields(signedArkTx, i, ConditionWitness);
+    if (!witness) return checkpoint;
+    const carried = checkpoint.clone();
+    setArkPsbtField(carried, 0, ConditionWitness, witness);
+    return carried;
+  }
+  return checkpoint;
+}
 
 /**
  * Finish a VHTLC offchain spend that was submitted but never finalized.

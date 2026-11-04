@@ -23,6 +23,7 @@ import {
   recoverSpentVhtlcVtxos,
   resolveVhtlcAddressVtxos,
   vhtlcCheckpointUnrollCandidates,
+  withArkInputConditionWitness,
 } from "./swapKitVhtlcPendingRecovery";
 import { isVhtlcRefundable } from "./vhtlcRefundTiming";
 import {
@@ -301,7 +302,9 @@ async function spendVhtlcVtxos(args: {
     const signedArkTx = await sign(arkTx);
     const { arkTxid, signedCheckpointTxs } = await wallet.arkProvider.submitTx(
       base64.encode(signedArkTx.toPSBT()),
-      checkpoints.map((checkpoint) => base64.encode(checkpoint.toPSBT())),
+      checkpoints.map((checkpoint) =>
+        base64.encode(withArkInputConditionWitness(checkpoint, signedArkTx).toPSBT()),
+      ),
     );
     await args.onSubmittedArkTxid?.(arkTxid);
     const finalCheckpoints = await Promise.all(
