@@ -90,6 +90,33 @@ export function routeDestination(destination: Destination, contactLabel = ""): S
   }
 }
 
+/** What a payment to a person arrives as, in the home's names (#1891). */
+export type PayCategory = "bitcoin" | "cash";
+
+/** Bitcoin for a Bitcoin, Ark or Lightning destination, Cash for an EVM one. */
+export function payCategoryOf(destination: Destination): PayCategory | null {
+  const route = routeDestination(destination);
+  if (route.kind === "bitcoin") return "bitcoin";
+  if (route.kind === "evm" || route.kind === "evm-network") return "cash";
+  return null;
+}
+
+/**
+ * A Nuri user's destinations as the choices Pay offers: Bitcoin and Cash, each
+ * with every address of that kind, so the send picks the rail and the payer
+ * never has to. A kind they have no address for is left out.
+ */
+export function payCategories(
+  destinations: Destination[],
+): Array<{ category: PayCategory; destinations: Destination[] }> {
+  return (["bitcoin", "cash"] as const)
+    .map((category) => ({
+      category,
+      destinations: destinations.filter((d) => payCategoryOf(d) === category),
+    }))
+    .filter((group) => group.destinations.length > 0);
+}
+
 /** Networks the add form offers for a crypto destination, with their assets. */
 export const CRYPTO_NETWORK_OPTIONS: Array<{ network: string; asset: string }> = [
   { network: "bitcoin", asset: "BTC" },

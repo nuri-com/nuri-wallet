@@ -1,6 +1,7 @@
 // screens/wirex/hooks/useWirex3dsChallenges.ts
 // Owns the pending in-app 3DS challenge poll (fetch on mount + AppState →
-// active + `card:refresh`, which a tapped 3DS push emits) and the respond
+// active + `card:refresh`, which a tapped 3DS push emits, plus a foreground
+// interval so a challenge shows without a reload, #1273) and the respond
 // action. The push carries no challenge data — it only says one is waiting, so
 // every path here still reads the pending list from the server.
 // The presentational Wirex3dsApprovalModal consumes this state.
@@ -12,6 +13,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import { EventBus } from "../../../services/events/AppEventBusService";
 import { createViewEpoch, submit3dsResponse } from "../../../lib/wirex/threeDsResponse";
+import {
+  THREE_DS_PENDING_POLL_MS,
+  threeDsVisibleAfterRead,
+  type ThreeDsReadKind,
+} from "../../../lib/wirex/threeDsPoll";
+import { isAppForeground } from "../../../services/app/ForegroundPoller";
 import { wirexService, type Wirex3dsChallenge } from "../../../services/wirex/WirexService";
 
 export interface Wirex3dsState {
@@ -44,26 +51,50 @@ export function useWirex3dsChallenges(params: {
   // render, so a rapid second tap (Approve then Decline) could start a second
   // signed respond for the same challenge. The ref closes that window.
   const respondInFlight = useRef(false);
+  // Challenges the last read returned: an interval read opens the view only
+  // for one not in here, so it never undoes a dismiss.
+  const seenIds = useRef<Set<string>>(new Set());
+  // An interval tick skips while any read is in flight: starting one would
+  // supersede the explicit read's token and drop its re-show.
+  const readsInFlight = useRef(0);
 
-  const refetch = useCallback(async () => {
-    const token = ++fetchToken.current;
-    if (!enabled || !wallet) {
-      setChallenges([]);
-      setVisible(false);
-      return;
-    }
-    try {
-      const list = await wirexService.list3dsPending(wallet);
-      if (token !== fetchToken.current) return;
-      setChallenges(list);
-      // A fresh non-empty poll re-surfaces the modal even after a manual
-      // dismiss — the challenge is still blocking the user's checkout.
-      setVisible(list.length > 0);
-    } catch {
-      // Silent fail: keep previous state, no error UI.
-      console.warn("[useWirex3dsChallenges] pending fetch failed");
-    }
-  }, [enabled, wallet]);
+  const refetch = useCallback(
+    async (kind: ThreeDsReadKind = "explicit") => {
+      if (kind === "interval" && readsInFlight.current > 0) return;
+      const token = ++fetchToken.current;
+      if (!enabled || !wallet) {
+        seenIds.current = new Set();
+        setChallenges([]);
+        setVisible(false);
+        return;
+      }
+      readsInFlight.current += 1;
+      try {
+        const list = await wirexService.list3dsPending(wallet, {
+          cachedSessionOnly: kind === "interval",
+        });
+        if (token !== fetchToken.current) return;
+        const pendingIds = list.map((c) => c.transactionId);
+        const seen = seenIds.current;
+        seenIds.current = new Set(pendingIds);
+        setChallenges(list);
+        // An explicit read re-surfaces the modal even after a manual dismiss —
+        // the challenge is still blocking the user's checkout. An interval read
+        // opens it only for a challenge it has not seen before.
+        setVisible((visibleNow) =>
+          threeDsVisibleAfterRead({ kind, pendingIds, seenIds: seen, visible: visibleNow }),
+        );
+      } catch {
+        // Silent fail: keep previous state, no error UI. An interval read
+        // without a cached session fails by design; it is not worth a line
+        // every tick.
+        if (kind === "explicit") console.warn("[useWirex3dsChallenges] pending fetch failed");
+      } finally {
+        readsInFlight.current -= 1;
+      }
+    },
+    [enabled, wallet],
+  );
 
   useEffect(() => {
     void refetch();
@@ -81,16 +112,25 @@ export function useWirex3dsChallenges(params: {
     const offCardRefresh = EventBus.on("card:refresh", () => {
       void refetch();
     });
+    // Web has no 3DS push, so a challenge raised while the app was open only
+    // showed after a reload (#1273). Read on an interval while in foreground.
+    const timer =
+      enabled && wallet
+        ? setInterval(() => {
+            if (isAppForeground()) void refetch("interval");
+          }, THREE_DS_PENDING_POLL_MS)
+        : null;
     return () => {
       subscription.remove();
       offCardRefresh();
+      if (timer !== null) clearInterval(timer);
       // Invalidate any in-flight fetch so it can't resolve after unmount.
       fetchToken.current += 1;
       // A session change: no earlier response may show its confirmation.
       viewEpoch.invalidate();
       setApproved(null);
     };
-  }, [refetch, viewEpoch]);
+  }, [refetch, viewEpoch, enabled, wallet]);
 
   // Hide once the list empties — respond removed the last challenge, or a
   // poll returned none. (refetch sets visibility for non-empty results.)

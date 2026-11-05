@@ -800,6 +800,13 @@ export const ptBR = {
     },
   },
   component: {
+    KeyBackupPromptSheet: {
+      title: "Adicione um backup",
+      body: "No momento, sua passkey é a única forma de acessar esta carteira. Se você perdê-la, o dinheiro aqui não poderá ser recuperado.",
+      hint: "O backup leva cerca de um minuto e não muda a forma como você entra.",
+      setUp: "Configurar backup",
+      later: "Lembrar mais tarde",
+    },
     ActivityRowActions: {
       open: "Abrir",
       viewOnBasescan: "Ver no Basescan",

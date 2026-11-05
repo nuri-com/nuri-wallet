@@ -229,6 +229,25 @@ export function cardSendStart(
 }
 
 /**
+ * The balance a "Bitcoin or Cash" pick pays from (#1891). Bitcoin is paid
+ * from Bitcoin, from whichever balance holds money, Lightning first; Cash from
+ * the main currency. The amount screen's From row can still switch.
+ */
+export function categorySendBalance(args: {
+  category: "bitcoin" | "cash";
+  recipient: SendRecipient;
+  held: Partial<Record<SendBalance, number>>;
+  main: "wallet" | "dollar";
+}): SendBalance | null {
+  const { category, recipient, held, main } = args;
+  const order: SendBalance[] =
+    category === "cash" ? [main, main === "wallet" ? "dollar" : "wallet"] : ["arkade", "onchain"];
+  const payable = order.filter((balance) => recipientRoute(balance, recipient) !== null);
+  if (category === "cash") return payable[0] ?? null;
+  return payable.find((balance) => (held[balance] ?? 0) > 0) ?? payable[0] ?? null;
+}
+
+/**
  * The balance the amount screen opens on: the card Send was pressed on when it
  * can pay, otherwise one that pays without a swap, otherwise any that can pay.
  * Within each tier a balance holding money comes first, in `order`.

@@ -801,6 +801,13 @@ export const es = {
     },
   },
   component: {
+    KeyBackupPromptSheet: {
+      title: "Añade una copia de seguridad",
+      body: "Ahora mismo tu passkey es la única forma de entrar en esta wallet. Si la pierdes, el dinero que hay aquí no se podrá recuperar.",
+      hint: "La copia de seguridad tarda alrededor de un minuto y no cambia cómo inicias sesión.",
+      setUp: "Configurar copia de seguridad",
+      later: "Recordármelo más tarde",
+    },
     ActivityRowActions: {
       open: "Abrir",
       viewOnBasescan: "Ver en Basescan",

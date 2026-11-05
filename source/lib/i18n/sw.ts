@@ -801,6 +801,13 @@ export const sw = {
     },
   },
   component: {
+    KeyBackupPromptSheet: {
+      title: "Ongeza nakala rudufu",
+      body: "Kwa sasa passkey yako ndiyo njia pekee ya kuingia kwenye wallet hii. Ukiipoteza, pesa zilizomo haziwezi kurejeshwa.",
+      hint: "Nakala rudufu inachukua takriban dakika moja na haibadilishi jinsi unavyoingia.",
+      setUp: "Weka nakala rudufu",
+      later: "Nikumbushe baadaye",
+    },
     ActivityRowActions: {
       open: "Fungua",
       viewOnBasescan: "Tazama kwenye Basescan",

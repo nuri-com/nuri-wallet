@@ -804,6 +804,13 @@ export const pl = {
     },
   },
   component: {
+    KeyBackupPromptSheet: {
+      title: "Dodaj kopię zapasową",
+      body: "Obecnie Twój passkey to jedyny sposób dostępu do tego portfela. Jeśli go stracisz, pieniędzy w nim nie da się odzyskać.",
+      hint: "Kopia zapasowa zajmuje około minuty i nie zmienia sposobu logowania.",
+      setUp: "Skonfiguruj kopię zapasową",
+      later: "Przypomnij mi później",
+    },
     ActivityRowActions: {
       open: "Otwórz",
       viewOnBasescan: "Zobacz w Basescan",

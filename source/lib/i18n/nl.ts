@@ -802,6 +802,13 @@ export const nl = {
     },
   },
   component: {
+    KeyBackupPromptSheet: {
+      title: "Voeg een back-up toe",
+      body: "Op dit moment is je passkey de enige toegang tot deze wallet. Als je hem kwijtraakt, kan het geld hierin niet worden hersteld.",
+      hint: "Een back-up duurt ongeveer een minuut en verandert niets aan hoe je inlogt.",
+      setUp: "Back-up instellen",
+      later: "Herinner me later",
+    },
     ActivityRowActions: {
       open: "Openen",
       viewOnBasescan: "Bekijken op Basescan",

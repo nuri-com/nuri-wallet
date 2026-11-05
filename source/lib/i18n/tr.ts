@@ -792,6 +792,13 @@ export const tr = {
     },
   },
   component: {
+    KeyBackupPromptSheet: {
+      title: "Yedek ekle",
+      body: "Şu anda bu cüzdana girmenin tek yolu passkey'in. Onu kaybedersen buradaki para kurtarılamaz.",
+      hint: "Yedekleme yaklaşık bir dakika sürer ve giriş yapma şeklini değiştirmez.",
+      setUp: "Yedeği kur",
+      later: "Daha sonra hatırlat",
+    },
     ActivityRowActions: {
       open: "Aç",
       viewOnBasescan: "Basescan'de görüntüle",

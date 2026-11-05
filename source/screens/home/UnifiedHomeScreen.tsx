@@ -141,6 +141,7 @@ import {
   type SendBalance,
   type SendRecipient,
   cardSendStart,
+  categorySendBalance,
   defaultSendBalance,
   isBitcoinBalance,
   isSwapRoute,
@@ -211,7 +212,12 @@ import SettingsScreen from "../settings/SettingsScreen";
 import AddressBookScreen from "../addressBook/AddressBookScreen";
 import EsimScreen from "../esim/EsimScreen";
 import { startEsimTracking } from "../../services/esim/EsimService";
-import type { SaveOffer, SendRoute } from "../addressBook/addressBookModel";
+import {
+  type PayCategory,
+  payCategoryOf,
+  type SaveOffer,
+  type SendRoute,
+} from "../addressBook/addressBookModel";
 import { isValidEvmAddress } from "../../lib/validation";
 import { getAddressBook } from "../../services/addressBook/AddressBookService";
 import { verificationRow, wirexActivationStep } from "../settings/settingsModel";
@@ -1247,6 +1253,20 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   routeSendRef.current = routeSend;
   const checkSendRecipientRef = useRef(checkSendRecipient);
   checkSendRecipientRef.current = checkSendRecipient;
+  // A "Bitcoin or Cash" pick from the Address book (#1891): the amount screen
+  // opens on that kind's balance, not on whichever one happens to be funded.
+  const sendInCategory = (recipient: SendRecipient, category: PayCategory): boolean => {
+    sendStartRef.current = [];
+    const balance = categorySendBalance({
+      category,
+      recipient,
+      held: sendHeld,
+      main: cardSettleWalletRail(home),
+    });
+    return balance ? openSend(recipient, balance) : false;
+  };
+  const sendInCategoryRef = useRef(sendInCategory);
+  sendInCategoryRef.current = sendInCategory;
 
   // A payment link opened in the app (`nuri://pay/@name`, or `/?pay=@name` when
   // the installed PWA is handed the same link): the confirm screen for that
@@ -1967,6 +1987,37 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     [wirexBankReady, wirexSend.startSepaTo, cardPayout.startWith],
   );
 
+  // Paying a Nuri user in Bitcoin or Cash (#1891): their addresses of that
+  // kind as one recipient, so the send picks the one the paying balance fits,
+  // starting on that kind's balances. Nothing is sent here.
+  const payCategoryFromAddressBook = useCallback(
+    async (
+      contact: Contact,
+      category: PayCategory,
+      destinations: Destination[],
+    ): Promise<string | undefined> => {
+      const person = contact.nuriUsername
+        ? { name: contact.label, nuriUsername: contact.nuriUsername }
+        : null;
+      const checked = await checkSendRecipientRef.current({ destinations, person });
+      // Address book closed meanwhile: nothing opens.
+      if (!addressBookOpenRef.current) return undefined;
+      if (typeof checked === "string") return checked;
+      // The check reads a Nuri user's addresses again, all kinds: only the
+      // picked one is paid, whichever balance pays it.
+      const recipient: SendRecipient = {
+        ...checked,
+        destinations: checked.destinations.filter((d) => payCategoryOf(d) === category),
+      };
+      if (recipient.destinations.length === 0) return t("screen.AddressBook.nuriLookup_failed");
+      setAddressBookOpen(false);
+      closeSettings();
+      setTimeout(() => sendInCategoryRef.current(recipient, category), MODAL_HANDOFF_DELAY_MS);
+      return undefined;
+    },
+    [],
+  );
+
   // Send again on a row of a contact's history (#1793): close Address book and
   // Settings, then the same send that row's Send again opens in the activity.
   const sendAgainFromContact = useCallback((run: () => void) => {
@@ -2665,6 +2716,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         }}
         loadBook={getAddressBook}
         onPay={payFromAddressBook}
+        onPayCategory={payCategoryFromAddressBook}
         saveRequest={addressBookSaveRequest}
         onSaveRequestHandled={clearAddressBookSaveRequest}
         onSendAgainCash={sendAgainCashFromContact}

@@ -796,6 +796,13 @@ export const en = {
     },
   },
   component: {
+    KeyBackupPromptSheet: {
+      title: "Add a backup",
+      body: "Right now your passkey is the only way into this wallet. If you lose it, the money in here cannot be recovered.",
+      hint: "A backup takes about a minute and does not change how you sign in.",
+      setUp: "Set up backup",
+      later: "Remind me later",
+    },
     ActivityRowActions: {
       open: "Open",
       viewOnBasescan: "View on Basescan",

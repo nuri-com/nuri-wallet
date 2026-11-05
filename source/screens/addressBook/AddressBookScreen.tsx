@@ -60,6 +60,7 @@ import { KIND_IMAGE } from "../../lib/addressBook/kindImages";
 import { avatarSeed, contactAvatar } from "../../lib/addressBook/petAvatar";
 import { initialOf } from "../../lib/addressBook/initial";
 import { copyToClipboard } from "../../lib/copyToClipboard";
+import { BTC_LOGO, EUR_FLAG } from "../../lib/railMarks";
 import { BIC_RE, isValidIbanChecksum, normalizeIban } from "../../lib/addressBook/contact";
 import { wirexService } from "../../services/wirex/WirexService";
 import { t } from "../../lib/i18n";
@@ -86,6 +87,8 @@ import {
   draftFieldsFor,
   emptyDraftDestination,
   fillKnownBics,
+  type PayCategory,
+  payCategories,
   routeDestination,
   type SaveOffer,
   type SendRoute,
@@ -176,6 +179,15 @@ type Props = {
     destination: Destination,
     contact: Contact,
   ) => string | undefined | Promise<string | undefined>;
+  /**
+   * Pay a Nuri user in Bitcoin or Cash (#1891): the send flow picks which of
+   * these addresses fits the balance paying. Returns a message when refused.
+   */
+  onPayCategory: (
+    contact: Contact,
+    category: PayCategory,
+    destinations: Destination[],
+  ) => Promise<string | undefined>;
   /** A just-paid recipient to save: opens the add form (or the existing contact) prefilled. */
   saveRequest?: SaveOffer | null;
   onSaveRequestHandled?: () => void;
@@ -204,6 +216,7 @@ const AddressBookScreen: React.FC<Props> = ({
   onClose,
   loadBook,
   onPay,
+  onPayCategory,
   saveRequest,
   onSaveRequestHandled,
   onSendAgainCash,
@@ -493,6 +506,11 @@ const AddressBookScreen: React.FC<Props> = ({
   }, []);
   // "Pay <name>" with more than one payable destination: which one.
   const [payChoice, setPayChoice] = useState<Contact | null>(null);
+  // "Pay <name>" for a Nuri user who can get both: Bitcoin or Cash.
+  const [categoryChoice, setCategoryChoice] = useState<{
+    contact: Contact;
+    groups: ReturnType<typeof payCategories>;
+  } | null>(null);
   // Paying a Nuri user waits for their username's current addresses.
   const [payLookupBusy, setPayLookupBusy] = useState(false);
   const openRef = useRef(open);
@@ -531,6 +549,25 @@ const AddressBookScreen: React.FC<Props> = ({
     [onPay],
   );
 
+  const payCategory = useCallback(
+    async (contact: Contact, category: PayCategory, destinations: Destination[]) => {
+      setPayLookupBusy(true);
+      let refused: string | undefined;
+      try {
+        refused = await onPayCategory(contact, category, destinations);
+      } finally {
+        setPayLookupBusy(false);
+      }
+      if (openRef.current?.id !== contact.id) return;
+      if (refused) {
+        setDetailMessage(refused);
+        return;
+      }
+      setOpen(null);
+    },
+    [onPayCategory],
+  );
+
   // "Pay <name>": a Nuri user is paid at the addresses their username has now,
   // looked up here, never at the ones saved from earlier payments (#1770).
   const payContact = useCallback(
@@ -553,6 +590,13 @@ const AddressBookScreen: React.FC<Props> = ({
         } finally {
           setPayLookupBusy(false);
         }
+        // Bitcoin or Cash, never their rails: the send picks the address.
+        const groups = payCategories(destinations);
+        if (groups.length === 0) setDetailMessage(t(`${K}.noRail`));
+        else if (groups.length === 1)
+          void payCategory(contact, groups[0].category, groups[0].destinations);
+        else setCategoryChoice({ contact, groups });
+        return;
       }
       const payable = destinations.filter(
         (d) => routeDestination(d, contact.label).kind !== "unsupported",
@@ -561,7 +605,7 @@ const AddressBookScreen: React.FC<Props> = ({
       else if (payable.length === 1) void payDestination(payable[0], contact);
       else setPayChoice({ ...contact, destinations: payable });
     },
-    [payDestination],
+    [payDestination, payCategory],
   );
 
   const statusLabel =
@@ -863,6 +907,26 @@ const AddressBookScreen: React.FC<Props> = ({
           setPayChoice(null);
           const destination = contact?.destinations[Number(key)];
           if (contact && destination) void payDestination(destination, contact);
+        }}
+      />
+
+      <ChoiceSheet<PayCategory>
+        visible={visible && categoryChoice !== null}
+        onClose={() => setCategoryChoice(null)}
+        title={t(`${K}.payName`, { name: categoryChoice?.contact.label ?? "" })}
+        items={(categoryChoice?.groups ?? []).map(({ category }) => ({
+          key: category,
+          label:
+            category === "bitcoin"
+              ? t("screen.HomeScreen.railBitcoin")
+              : t("screen.HomeScreen.groupCash"),
+          image: category === "bitcoin" ? BTC_LOGO : EUR_FLAG,
+        }))}
+        onSelect={(key) => {
+          const choice = categoryChoice;
+          setCategoryChoice(null);
+          const group = choice?.groups.find(({ category }) => category === key);
+          if (choice && group) void payCategory(choice.contact, group.category, group.destinations);
         }}
       />
 

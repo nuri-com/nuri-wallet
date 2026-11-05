@@ -36,6 +36,8 @@ import {
 import { fetchWirexDeposits } from "../../lib/wirex/wirexDeposits";
 import { homeCurrencyService } from "../../lib/currency/HomeCurrencyService";
 import { mergeWirexActivity } from "../../lib/wirex/mergeWirexActivity";
+import { cardWithdrawalActivityItems } from "../../lib/wirex/cardWithdrawals";
+import { fetchCardWithdrawalsToCash } from "./cardWithdrawals";
 import { fxRateService } from "../pricing/FxRateService";
 import {
   deleteAuthData,
@@ -2185,7 +2187,7 @@ class WirexService {
     const rates = await fxRateService.getRates().catch((): undefined => undefined);
     const home = homeCurrencyService.getHomeCurrency();
 
-    const [card, bank, deposits] = await Promise.all([
+    const [card, bank, deposits, withdrawals] = await Promise.all([
       !wants("card")
         ? Promise.resolve([] as ActivityItem[])
         : this.getCardTransactions(wallet)
@@ -2209,9 +2211,20 @@ class WirexService {
       aaAddress && wants("deposits")
         ? fetchWirexDeposits(aaAddress, rates, home).catch(() => [] as ActivityItem[])
         : Promise.resolve([] as ActivityItem[]),
+      // Money withdrawn to Cash leaves the card onchain; no Wirex feed lists it.
+      aaAddress && wants("deposits")
+        ? fetchCardWithdrawalsToCash(aaAddress, [wallet])
+            .then((rows) => cardWithdrawalActivityItems(rows, rates, home))
+            .catch((e) => {
+              console.log(`${LOG_TAG} getActivityFeed: withdrawals failed`, {
+                message: e instanceof Error ? e.message : "unknown",
+              });
+              return [] as ActivityItem[];
+            })
+        : Promise.resolve([] as ActivityItem[]),
     ]);
 
-    return mergeWirexActivity(card, bank, deposits);
+    return mergeWirexActivity(card, bank, [...deposits, ...withdrawals]);
   }
 
   // ── Public: SEPA (EUR payout) estimate + transfer ────────────────────
@@ -2489,11 +2502,16 @@ class WirexService {
   // GET /3ds/pending (read-session gated, same posture as the other card
   // reads). Entries without a transaction_id are dropped — it's the respond
   // key, so an entry without it is unactionable.
-  async list3dsPending(wallet: string): Promise<Wirex3dsChallenge[]> {
+  // `cachedSessionOnly`: a background interval read must never mint a session,
+  // so it can never raise a biometric prompt on its own.
+  async list3dsPending(
+    wallet: string,
+    opts: { cachedSessionOnly?: boolean } = {},
+  ): Promise<Wirex3dsChallenge[]> {
     const data = await this.get<ThreeDsPendingData>(
       wirexConfig.routes.threeDsPending,
       { wallet },
-      { authorized: true },
+      { authorized: true, ...(opts.cachedSessionOnly ? { cachedSessionOnly: true } : {}) },
     );
     const challenges = Array.isArray(data.challenges) ? data.challenges : [];
     const result: Wirex3dsChallenge[] = [];

@@ -815,6 +815,13 @@ export const de = {
     },
   },
   component: {
+    KeyBackupPromptSheet: {
+      title: "Backup einrichten",
+      body: "Aktuell ist dein Passkey der einzige Weg in dieses Wallet. Wenn du ihn verlierst, ist das Geld darin nicht wiederherstellbar.",
+      hint: "Das Backup dauert etwa eine Minute und ändert nichts am Anmelden.",
+      setUp: "Backup einrichten",
+      later: "Später erinnern",
+    },
     ActivityRowActions: {
       open: "Öffnen",
       viewOnBasescan: "Auf Basescan ansehen",

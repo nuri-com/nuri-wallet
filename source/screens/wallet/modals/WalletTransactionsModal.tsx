@@ -20,6 +20,7 @@ import type { WalletTransactionsProps, WalletTransactionRow } from "../../../typ
 import SwapStatusDetailSheet from "../../swapkit/SwapStatusDetailSheet";
 import { useSwapLegs } from "../../../services/swapkit/swapActivity";
 import { walletActivityItems } from "../../../services/balance/transactions/walletActivityItems";
+import { useCardWithdrawalTxs } from "../../../services/wirex/useCardWithdrawalTxs";
 
 type Props = WalletTransactionsProps;
 
@@ -119,20 +120,25 @@ const WalletTransactionsModal: React.FC<Props> = ({
     };
   }, [visible, fetchAll, dbCacheKey, primaryAddress, secondaryAddress, address]);
 
+  // The card's withdrawals: re-read with every refresh of the list.
+  const { txs: cardWithdrawalTxs, reload: reloadCardWithdrawals } = useCardWithdrawalTxs(visible);
+
   // External event trigger to refresh when visible
   useEffect(() => {
     const off = EventBus.on("transactions:refresh", () => {
       if (visible) {
+        reloadCardWithdrawals();
         try {
           void fetchAll({ silent: true });
         } catch {}
       }
     });
     return off;
-  }, [visible, fetchAll]);
+  }, [visible, fetchAll, reloadCardWithdrawals]);
 
   const onRefresh = () => {
     setRefreshing(true);
+    reloadCardWithdrawals();
     try {
       EventBus.emit("wallet:refresh");
     } catch {}
@@ -154,6 +160,7 @@ const WalletTransactionsModal: React.FC<Props> = ({
       address,
       explorerAddress,
       swapLegs,
+      cardWithdrawalTxs,
       onOpenOrder: setDetailOrderId,
       onSendAgain,
     });
@@ -165,6 +172,7 @@ const WalletTransactionsModal: React.FC<Props> = ({
     explorerAddress,
     primaryAddress,
     swapLegs,
+    cardWithdrawalTxs,
     onSendAgain,
   ]);
 

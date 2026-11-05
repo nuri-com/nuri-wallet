@@ -805,6 +805,13 @@ export const ptPT = {
     },
   },
   component: {
+    KeyBackupPromptSheet: {
+      title: "Adiciona uma cópia de segurança",
+      body: "Neste momento, a tua passkey é a única forma de aceder a esta carteira. Se a perderes, o dinheiro aqui não poderá ser recuperado.",
+      hint: "A cópia de segurança demora cerca de um minuto e não muda a forma como inicias sessão.",
+      setUp: "Configurar cópia de segurança",
+      later: "Lembrar mais tarde",
+    },
     ActivityRowActions: {
       open: "Abrir",
       viewOnBasescan: "Ver no Basescan",

@@ -807,6 +807,13 @@ export const fr = {
     },
   },
   component: {
+    KeyBackupPromptSheet: {
+      title: "Ajouter une sauvegarde",
+      body: "Pour l'instant, ta passkey est le seul moyen d'accéder à ce wallet. Si tu la perds, l'argent qu'il contient ne pourra pas être récupéré.",
+      hint: "Une sauvegarde prend environ une minute et ne change rien à ta façon de te connecter.",
+      setUp: "Configurer la sauvegarde",
+      later: "Me le rappeler plus tard",
+    },
     ActivityRowActions: {
       open: "Ouvrir",
       viewOnBasescan: "Voir sur Basescan",

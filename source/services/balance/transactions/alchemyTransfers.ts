@@ -5,6 +5,8 @@ export type AssetTransfer = {
   blockNumber: bigint;
   transactionHash: string;
   address: string;
+  /** The token's symbol as Alchemy reports it ("WEUR"), empty when unknown. */
+  asset: string;
   from: string;
   to: string;
   value: number;
@@ -16,6 +18,7 @@ type AlchemyTransferRaw = {
   from?: string;
   to?: string;
   value?: number | null;
+  asset?: string | null;
   rawContract?: { address?: string; value?: string; decimal?: string };
 };
 
@@ -96,6 +99,7 @@ async function fetchPageFor(
         blockNumber: BigInt(t.blockNum ?? "0x0"),
         transactionHash: String(t.hash ?? ""),
         address: String(t.rawContract?.address || "").toLowerCase(),
+        asset: String(t.asset || ""),
         from: String(t.from || "").toLowerCase(),
         to: String(t.to || "").toLowerCase(),
         value,

@@ -43,6 +43,8 @@ export type WalletActivityContext = {
   /** The account the explorer opens when a row has no transaction hash. */
   explorerAddress?: string | null;
   swapLegs: Legs;
+  /** Transactions in which this user's card withdrew (lowercase hashes). */
+  cardWithdrawalTxs?: ReadonlySet<string>;
   /** Opens a pending swap's live detail. */
   onOpenOrder: (orderId: string) => void;
   /** Pay this row's recipient again (opens the send, never sends). */
@@ -54,7 +56,15 @@ export function walletActivityItems(
   list: readonly WalletTransactionRow[],
   ctx: WalletActivityContext,
 ): ActivityItem[] {
-  const { primaryAddress, address, explorerAddress, swapLegs, onOpenOrder, onSendAgain } = ctx;
+  const {
+    primaryAddress,
+    address,
+    explorerAddress,
+    swapLegs,
+    cardWithdrawalTxs,
+    onOpenOrder,
+    onSendAgain,
+  } = ctx;
   return list.map((o): ActivityItem => {
     // A BTC→EUR topup surfaces here as the euro-incoming (destination) mirror
     // of the Bitcoin-origin row. It shares the swap pending machinery but is
@@ -95,7 +105,14 @@ export function walletActivityItems(
     // A plain transfer to or from the card's own deposit address is the
     // user's own move: it reads as the card, never as a stranger's wallet.
     const cardAddress = (wirexAccountService.depositAddress() ?? "").toLowerCase();
-    const isOwnCard = Boolean(cardAddress) && chainAddr.toLowerCase() === cardAddress;
+    // A card withdrawal is paid out by Wirex's contract, not by the card
+    // account, so it is known by the transaction the card withdrew in.
+    const isOwnCard =
+      (Boolean(cardAddress) && chainAddr.toLowerCase() === cardAddress) ||
+      (isIncoming &&
+        !isPendingBalance &&
+        !isPendingLocal &&
+        Boolean(cardWithdrawalTxs?.has((pickOrderTxHash(o) ?? "").toLowerCase())));
     if (isOwnCard) {
       displayName = t("screen.HomeScreen.groupCardBanking");
     }
