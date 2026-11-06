@@ -423,7 +423,6 @@ export const it = {
       blockedNotice:
         "Il tuo account è stato bloccato dalla nostra banca partner. Ce ne stiamo occupando.",
       close: {
-        alert: "La chiusura di una carta è definitiva",
         title: "Chiudi carta",
         body: "La carta verrà chiusa per sempre. Non potrà essere riaperta e una carta sostitutiva avrà un nuovo numero. Per metterla in pausa, bloccala invece.",
         confirm: "Chiudi definitivamente",

@@ -66,6 +66,16 @@ export function cardTabHolderName(
   return cardId && holderName ? holderName : null;
 }
 
+/**
+ * Whether the sheet may offer "issue a new card". Only an account whose every
+ * card is closed gets it: the app shows one card, so a second card issued next
+ * to a working one is invisible to the user and still billed by Wirex as an
+ * inactive card. An account with a card closes it first instead.
+ */
+export function mayIssueNewCard(snapshot: WirexCardSnapshot | null): boolean {
+  return isAwaitingReplacementCard(snapshot);
+}
+
 /** With no card the Card tab offers only "issue a new card", when that action exists. */
 export function cardTabOffersIssueOnly(cardId: string | null, canIssueNewCard: boolean): boolean {
   return !cardId && canIssueNewCard;

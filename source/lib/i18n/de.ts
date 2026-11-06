@@ -431,7 +431,6 @@ export const de = {
       // not name "Deleted"/"Blocked" or any Wirex status string.
       blockedNotice: "Dein Konto wurde von unserer Partnerbank gesperrt. Wir kümmern uns darum.",
       close: {
-        alert: "Schließen ist endgültig",
         title: "Karte schließen",
         body: "Damit wird die Karte endgültig geschlossen. Sie kann nicht wieder geöffnet werden, und eine Ersatzkarte hat eine neue Kartennummer. Wenn du die Karte nur pausieren willst, friere sie ein.",
         confirm: "Dauerhaft schließen",

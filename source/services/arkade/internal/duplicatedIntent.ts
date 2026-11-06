@@ -28,7 +28,7 @@ export type ArkadeDuplicatedIntentDetails = {
 
 const DUPLICATED_INPUT_RE = /duplicated input,\s*([0-9a-fA-F]{64}):(\d+)/g;
 
-function errorText(error: unknown): string {
+export function errorText(error: unknown): string {
   if (!error) return "";
   if (typeof error === "string") return error;
   if (error instanceof Error) {

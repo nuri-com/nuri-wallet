@@ -23,6 +23,7 @@ import {
 } from "./boardingSweepBlocked";
 import { getCachedBoardingSweepFailure, setBoardingSweepFailure } from "./boardingSweepFailure";
 import { retryExpiredSession } from "./sessionJoinRetry";
+import { isBoardingAlreadyCosigned } from "./boardingAlreadyCosigned";
 import {
   duplicatedIntentInputs,
   isDuplicatedIntentError,
@@ -1149,6 +1150,32 @@ async function runArkadeBoardingSweep(
       error instanceof Error ? error.message : String(error || "unknown"),
       180,
     );
+    // An earlier sweep (another tab, a reload, the tap before this one) already
+    // moved these coins: the ASP cosigned their onchain tx with this wallet's own
+    // signature. The sats are on their way in, so this is the outcome the user
+    // asked for. Report it as done and stop offering the coin again.
+    const selectedOutpointKeys = selectedBoardingUtxos
+      .map((utxo) => boardingUtxoOutpoint(utxo))
+      .filter((key): key is string => Boolean(key));
+    if (isBoardingAlreadyCosigned(error, selectedOutpointKeys)) {
+      recordRecentlySweptOutpoints(selectedBoardingUtxos);
+      clearBoardingOutpointsBlocked(selectedOutpointKeys);
+      setBoardingSweepFailure(null, "boarding_sweep_already_cosigned");
+      logArkadeWalletSignTrace("arkade_boarding_sweep_complete", {
+        status: "already_cosigned",
+        selected_outpoints: boardingSelection.outpointsText,
+        selected_total: boardingSelection.totalSats,
+        dur_ms: Date.now() - startedAtMs,
+        expected_next: "refresh_wallet_summary",
+      });
+      emitTrace({
+        atMs: Date.now(),
+        op: "arkade_boarding_sweep",
+        status: "ok",
+        detail: `arkade=1 reason=already_cosigned selected_count=${boardingSelection.count} selected_total=${boardingSelection.totalSats} durMs=${Date.now() - startedAtMs}`,
+      });
+      return "already_cosigned";
+    }
     // The ASP holds a registration over an input of this intent, so the same
     // outpoint will be refused on every later attempt until that registration
     // clears server-side. Remember which outpoints it named so the next attempt

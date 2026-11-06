@@ -418,7 +418,6 @@ export const tr = {
       issueNewCard: "Yeni kart çıkar",
       blockedNotice: "Hesabın iş ortağımız olan banka tarafından engellendi. Konuyu inceliyoruz.",
       close: {
-        alert: "Kartı kapatmak kalıcıdır",
         title: "Kartı kapat",
         body: "Bu, kartı tamamen kapatır. Kart yeniden açılamaz ve yedek kart yeni bir kart numarasıyla gelir. Kartı yalnızca durdurmak istiyorsan dondur.",
         confirm: "Kalıcı olarak kapat",

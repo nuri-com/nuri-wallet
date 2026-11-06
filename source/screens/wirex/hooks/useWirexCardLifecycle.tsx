@@ -26,7 +26,7 @@ import { Alert, AlertIcon, useToast } from "@ds";
 import { t } from "../../../lib/i18n";
 import { mayRevealCardSecrets, withoutBlockedCardActions } from "../../../lib/wirex/accountBlocked";
 import { isWirexCardLast4 } from "../../../lib/wirex/cardActionMessage";
-import { isAwaitingReplacementCard, isWirexCardReady } from "../../../lib/wirex/cardState";
+import { isWirexCardReady, mayIssueNewCard } from "../../../lib/wirex/cardState";
 import { wirexAccountService } from "../../../services/wirex/WirexAccountService";
 import { type WirexAppleWalletState, useWirexAppleWallet } from "./useWirexAppleWallet";
 import { type WirexCardRevealState, useWirexCardReveal } from "./useWirexCardReveal";
@@ -81,7 +81,7 @@ export function useWirexCardLifecycle(snapshot: WirexCardState): WirexCardLifecy
   const [closeError, setCloseError] = useState(false);
 
   const cardReady = isWirexCardReady(snapshot);
-  const awaitingReplacementCard = isAwaitingReplacementCard(snapshot);
+  const canIssueNewCard = mayIssueNewCard(snapshot);
 
   // The account's card. `cards` carries the per-card frozen flag, so prefer the
   // entry matching the service's own pick; a snapshot from an
@@ -176,9 +176,8 @@ export function useWirexCardLifecycle(snapshot: WirexCardState): WirexCardLifecy
             // Withheld while an earlier issuance is unresolved: a retry signs a fresh
             // request, and replay protection is per signature, so tapping again
             // before the outcome is known can produce a second card.
-            (cardReady || awaitingReplacementCard) && !snapshot.issueUnresolved
-              ? issueNewCard
-              : undefined,
+            // Only with no open card left: a card next to a working one is never shown.
+            canIssueNewCard && !snapshot.issueUnresolved ? issueNewCard : undefined,
           closeError,
           onCloseCard:
             // Offered only with the digits in hand: they are signed and verified
@@ -192,8 +191,7 @@ export function useWirexCardLifecycle(snapshot: WirexCardState): WirexCardLifecy
       snapshot.isAccountBlocked,
       snapshot.actionBusy,
       snapshot.issueUnresolved,
-      cardReady,
-      awaitingReplacementCard,
+      canIssueNewCard,
       closeError,
       activeCard?.id,
       activeCard?.last4,

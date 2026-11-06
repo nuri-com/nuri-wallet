@@ -423,9 +423,6 @@ export const sw = {
       issueNewCard: "Toa kadi mpya",
       blockedNotice: "Akaunti yako imezuiwa na benki mshirika wetu. Tunalishughulikia.",
       close: {
-        // Sits in the details list next to the freeze alert, so it stays as short
-        // as the freeze one — the alert message row is single-line.
-        alert: "Kufunga kadi ni kwa kudumu",
         title: "Funga kadi",
         body: "Hii inafunga kadi kabisa. Haiwezi kufunguliwa tena, na kadi mbadala inakuja na namba mpya ya kadi. Ili kusitisha kadi kwa muda, isimamishe badala yake.",
         confirm: "Funga kabisa",

@@ -423,7 +423,6 @@ export const es = {
       issueNewCard: "Emitir nueva tarjeta",
       blockedNotice: "Nuestro banco asociado bloqueó tu cuenta. Nos estamos ocupando de ello.",
       close: {
-        alert: "Cerrar una tarjeta es definitivo",
         title: "Cerrar tarjeta",
         body: "Esto cierra la tarjeta para siempre. No se puede reabrir, y una tarjeta de reemplazo tendrá un número nuevo. Para pausar la tarjeta, congélala.",
         confirm: "Cerrar definitivamente",

@@ -425,7 +425,6 @@ export const nl = {
       issueNewCard: "Nieuwe kaart aanvragen",
       blockedNotice: "Je account is geblokkeerd door onze partnerbank. We zoeken het uit.",
       close: {
-        alert: "Een kaart opheffen is definitief",
         title: "Kaart opheffen",
         body: "Hiermee hef je de kaart definitief op. Hij kan niet opnieuw worden geopend en een vervangende kaart krijgt een nieuw kaartnummer. Wil je de kaart alleen pauzeren, bevries hem dan.",
         confirm: "Definitief opheffen",

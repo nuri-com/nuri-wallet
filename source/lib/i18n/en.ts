@@ -420,9 +420,6 @@ export const en = {
       // not name "Deleted"/"Blocked" or any Wirex status string.
       blockedNotice: "Your account was blocked by our partner bank. We're looking into it.",
       close: {
-        // Sits in the details list next to the freeze alert, so it stays as short
-        // as the freeze one — the alert message row is single-line.
-        alert: "Closing a card is permanent",
         title: "Close card",
         body: "This closes the card for good. It can't be reopened, and a replacement card comes with a new card number. To pause the card instead, freeze it.",
         confirm: "Close permanently",

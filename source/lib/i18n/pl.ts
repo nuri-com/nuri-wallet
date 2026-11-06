@@ -427,7 +427,6 @@ export const pl = {
       blockedNotice:
         "Twoje konto zostało zablokowane przez nasz bank partnerski. Zajmujemy się tym.",
       close: {
-        alert: "Zamknięcie karty jest nieodwracalne",
         title: "Zamknij kartę",
         body: "Karta zostanie zamknięta na zawsze. Nie da się jej ponownie otworzyć, a karta zastępcza dostanie nowy numer. Jeśli chcesz ją tylko wstrzymać, zamroź ją.",
         confirm: "Zamknij na zawsze",

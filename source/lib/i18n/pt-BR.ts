@@ -423,7 +423,6 @@ export const ptBR = {
       blockedNotice:
         "Sua conta foi bloqueada pelo nosso banco parceiro. Já estamos cuidando disso.",
       close: {
-        alert: "Encerrar um cartão é definitivo",
         title: "Encerrar cartão",
         body: "Isso encerra o cartão de vez. Ele não pode ser reaberto, e um cartão substituto vem com um novo número. Para só pausar o cartão, congele-o.",
         confirm: "Encerrar de vez",

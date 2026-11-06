@@ -427,7 +427,6 @@ export const fr = {
       issueNewCard: "Émettre une nouvelle carte",
       blockedNotice: "Ton compte a été bloqué par notre banque partenaire. Nous nous en occupons.",
       close: {
-        alert: "La fermeture d'une carte est définitive",
         title: "Fermer la carte",
         body: "La carte sera fermée définitivement. Elle ne pourra pas être rouverte, et une carte de remplacement aura un nouveau numéro. Pour mettre la carte en pause, gèle-la plutôt.",
         confirm: "Fermer définitivement",

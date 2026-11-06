@@ -388,8 +388,9 @@ const WirexCardDetailsModal: React.FC<Props> = ({
 
   const showIssueCta =
     page === "details" && !loading && activeTab === "card" && !!onIssueNewCard && !isAccountBlocked;
-  // Closing is destructive and irreversible: it sits at the very bottom of the
-  // Card tab, below freeze, and only opens the confirm page — never acts on tap.
+  // Closing is destructive and irreversible: the footer button only opens the
+  // confirm page, never acts on tap. It takes the footer slot "issue a new card"
+  // has when there is no card, so the account always has one card action there.
   const showCloseAction =
     page === "details" &&
     !loading &&
@@ -535,31 +536,25 @@ const WirexCardDetailsModal: React.FC<Props> = ({
                   </Text>
                 </View>
               ) : null}
-              {showCloseAction ? (
-                // Same shape as the freeze alert above — state line + action —
-                // so the two read as one family; orange marks it destructive.
-                // Opens the confirm page; it never closes the card on tap.
-                <View paddingX="lg">
-                  <Alert variant="soft" accent="orange">
-                    <AlertIcon name="warning-circle" />
-                    {t("screen.WirexCard.close.alert")}
-                    <AlertButton
-                      accessibilityLabel={t("screen.WirexCard.close.title")}
-                      disabled={freezeBusy}
-                      onPress={() => setPage("close")}
-                    >
-                      {t("screen.WirexCard.close.title")}
-                    </AlertButton>
-                  </Alert>
-                </View>
-              ) : null}
             </>
           )}
         </View>
       </Scroll>
 
-      {showIssueCta || showCloseCta ? (
+      {showIssueCta || showCloseAction || showCloseCta ? (
         <AppFooter>
+          {showCloseAction ? (
+            <Button
+              size="lg"
+              variant="soft"
+              accent="orange"
+              disabled={freezeBusy}
+              onPress={() => setPage("close")}
+              accessibilityLabel={t("screen.WirexCard.close.title")}
+            >
+              <ButtonText>{t("screen.WirexCard.close.title")}</ButtonText>
+            </Button>
+          ) : null}
           {showCloseCta ? (
             <Button
               size="lg"
