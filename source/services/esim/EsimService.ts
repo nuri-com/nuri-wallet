@@ -109,8 +109,8 @@ async function request(
       body = raw ? JSON.parse(raw) : null;
     } catch {
       // nadanada answers maintenance and unknown paths with an HTML page under
-      // a 200; never read that as data.
-      throw new Error("nadanada is unavailable right now");
+      // a 200; never read that as data. An outage page keeps its status.
+      throw new Error(res.ok ? "nadanada is unavailable right now" : `nadanada ${res.status}`);
     }
     if (!res.ok && !(init?.answers ?? [402]).includes(res.status)) {
       const message =
@@ -430,6 +430,7 @@ export async function resetEsims(): Promise<void> {
   stopTracking?.();
   await queue.catch(() => {});
   current = parseRecord(null);
+  claimFailingSince.clear();
   loaded = null;
   backupDirty = false;
   relaySynced = false;
@@ -646,6 +647,17 @@ export async function reopenEsimPayment(
 let claiming: Promise<void> | null = null;
 
 /**
+ * Since when asking nadanada for an order has only failed (no answer, an
+ * outage page, an error), by payment hash. Cleared by any answer, so a page
+ * can say a paid order is stuck instead of spinning with no reason.
+ */
+const claimFailingSince = new Map<string, number>();
+
+export function esimClaimFailingSince(paymentHash: string): number | undefined {
+  return claimFailingSince.get(paymentHash);
+}
+
+/**
  * Claim pending orders once (all of them, or only those `which` selects).
  * Overlapping calls share one pass.
  */
@@ -658,8 +670,13 @@ export function claimPendingEsims(
       for (const order of current.pending.filter(which)) {
         try {
           await claimEsimOrder(order.paymentHash);
-        } catch {
+          claimFailingSince.delete(order.paymentHash);
+        } catch (error) {
           // nadanada or the network failed: the order stays, the next pass retries.
+          if (error instanceof EsimResetError) continue;
+          if (!claimFailingSince.has(order.paymentHash)) {
+            claimFailingSince.set(order.paymentHash, Date.now());
+          }
         }
       }
     })().finally(() => {

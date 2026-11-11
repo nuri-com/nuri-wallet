@@ -123,6 +123,44 @@ const addressOnlySigner = (address: Address) => {
 
 type Call = { to: Address; value: bigint; data: Hex };
 
+const createReadOnlyClient = () =>
+  createPublicClient({
+    chain: BASE_VIEM_CHAIN,
+    transport: http(PUBLIC_RPC_URL),
+  });
+
+// Counterfactual Kernel v3.1 account over the EOA — the server's buildAccount
+// derivation (ECDSA sudo validator over the EOA). Read-only.
+// biome-ignore lint/suspicious/noExplicitAny: ZeroDev builder generics don't line up across subpackages; the debug bootstrap uses the same escape hatch.
+async function buildWirexKernelAccount(eoa: Address, publicClient: any): Promise<any> {
+  // biome-ignore lint/suspicious/noExplicitAny: see above.
+  const ecdsaValidator = await (signerToEcdsaValidator as any)(publicClient, {
+    entryPoint: ENTRY_POINT,
+    signer: addressOnlySigner(eoa),
+    kernelVersion: KERNEL_V3_1,
+  });
+  // biome-ignore lint/suspicious/noExplicitAny: see above.
+  return (createKernelAccount as any)(publicClient, {
+    entryPoint: ENTRY_POINT,
+    kernelVersion: KERNEL_V3_1,
+    plugins: { sudo: ecdsaValidator },
+  });
+}
+
+/**
+ * The Wirex smart-account address this EOA owns, derived locally — the check
+ * on the server-reported card deposit address before money goes to it (#1899).
+ * Throws on RPC failure; the caller decides how to fail.
+ */
+export async function deriveWirexKernelAddress(
+  eoa: Address,
+  // biome-ignore lint/suspicious/noExplicitAny: see buildWirexKernelAccount.
+  publicClient: any = createReadOnlyClient(),
+): Promise<Address> {
+  const account = await buildWirexKernelAccount(eoa, publicClient);
+  return account.address as Address;
+}
+
 export async function verifyRegisterCallData(
   input: RegisterVerificationInput,
 ): Promise<RegisterVerificationResult> {
@@ -135,26 +173,12 @@ export async function verifyRegisterCallData(
 
   try {
     const eoa = input.eoaAddress as Address;
-    const publicClient = createPublicClient({
-      chain: BASE_VIEM_CHAIN,
-      transport: http(PUBLIC_RPC_URL),
-    });
+    const publicClient = createReadOnlyClient();
     const signer = addressOnlySigner(eoa);
 
     // Counterfactual Kernel account — same derivation as the server's
     // buildAccount (ECDSA root validator over the EOA).
-    // biome-ignore lint/suspicious/noExplicitAny: ZeroDev builder generics don't line up across subpackages; the debug bootstrap uses the same escape hatch.
-    const ecdsaValidator = await (signerToEcdsaValidator as any)(publicClient, {
-      entryPoint: ENTRY_POINT,
-      signer,
-      kernelVersion: KERNEL_V3_1,
-    });
-    // biome-ignore lint/suspicious/noExplicitAny: see above.
-    const account: any = await (createKernelAccount as any)(publicClient, {
-      entryPoint: ENTRY_POINT,
-      kernelVersion: KERNEL_V3_1,
-      plugins: { sudo: ecdsaValidator },
-    });
+    const account = await buildWirexKernelAccount(eoa, publicClient);
     const kernelAddress = account.address as Address;
 
     const { fundsManagementAddress, accountsAddress, executionDelayPolicyAddress } =

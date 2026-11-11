@@ -92,16 +92,19 @@ export const ARBITRUM_TBTC = {
 };
 
 // ── Alchemy key ───────────────────────────────────────────────────────
-// The paid plan. Every chain the app reads or signs on goes through it (see
-// lib/rpc/chainRpc) rather than a public endpoint: unkeyed public nodes rate
-// limit, lag, and have no support path, and these calls move user funds.
+// The paid plan. Every chain the app reads or signs on goes through it FIRST
+// (see lib/rpc/chainRpc, lib/rpc/baseRpc): unkeyed public nodes rate limit,
+// lag, and have no support path. The public node is only a fallback once the
+// paid key throws, so a dead or throttled key degrades instead of stopping
+// sends. Exception: the Wirex register gate (lib/wirex/registerVerification)
+// stays Alchemy-only and fails closed.
 export const ALCHEMY_API_KEY = (
   process.env.EXPO_PUBLIC_ALCHEMY_API_KEY || "5hzL6G00_2wbx3JHQ_e4P"
 ).trim();
 
 // ── Base RPC ──────────────────────────────────────────────────────────
-// Must be Alchemy: the wallet tx scanner uses alchemy_getAssetTransfers, an
-// Alchemy-only extension. Default uses the shared Nuri Alchemy key; override
+// Primary must be Alchemy: the wallet tx scanner uses alchemy_getAssetTransfers,
+// an Alchemy-only extension (history has no public fallback). Default uses the shared Nuri Alchemy key; override
 // per network via env to swap the key.
 export const BASE_RPC_URL = pick(
   process.env.EXPO_PUBLIC_BASE_MAINNET_RPC_URL,

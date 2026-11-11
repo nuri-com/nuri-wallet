@@ -13,6 +13,7 @@ import {
   TopbarTrailing,
   View,
 } from "@ds";
+import { clampCentsInput } from "../../../lib/amounts";
 import AmountDisplay, { EUR_FLAG, USD_FLAG } from "../../../components/AmountDisplay";
 import AmountKeypad from "../../../components/AmountKeypad";
 import DsSheetHost from "../../../components/DsSheetHost";
@@ -37,16 +38,6 @@ type Props = {
   currency: PayoutCurrency;
   onSuccess: () => void;
 };
-
-// Digits with at most two decimals, the way the other send sheets take them.
-function clampAmount(raw: string): string {
-  const s = raw.replace(/,/g, ".");
-  const match = s.match(/^(\d+)(?:\.(\d*))?/);
-  if (!match) return "";
-  const decimals = (match[2] ?? "").replace(/\D/g, "").slice(0, 2);
-  if (s.includes(".") && !decimals) return `${match[1]}.`;
-  return decimals ? `${match[1]}.${decimals}` : match[1];
-}
 
 const CardPayoutAmountModal: React.FC<Props> = ({
   visible,
@@ -101,7 +92,7 @@ const CardPayoutAmountModal: React.FC<Props> = ({
   const edit = (next: string) => {
     if (submitting) return;
     setSendError(null);
-    setAmount(clampAmount(next));
+    setAmount(clampCentsInput(next));
   };
 
   const send = useCallback(async () => {

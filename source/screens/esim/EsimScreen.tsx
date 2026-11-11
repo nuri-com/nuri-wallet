@@ -47,6 +47,7 @@ import { errMsg } from "../../lib/errorMessage";
 import { t } from "../../lib/i18n";
 import {
   claimPendingEsims,
+  esimClaimFailingSince,
   reopenEsimPayment,
   createEsimOrder,
   createEsimTopup,
@@ -348,10 +349,15 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
     .map((order) => order.paymentHash)
     .join(",");
 
+  // A paid order turns slow after a long wait, or as soon as asking nadanada
+  // for it keeps failing: the row then offers support instead of spinning.
+  const deliveryOf = (order: EsimPendingOrder) =>
+    orderDelivery(order, now, SLOW_DELIVERY_MS, esimClaimFailingSince(order.paymentHash));
+
   // Orders with money on them (a send started or a payment made) are not rows
   // to act on: they say what is happening, above the list.
   const delivering = openOrders
-    .map((order) => ({ order, state: orderDelivery(order, now, SLOW_DELIVERY_MS) }))
+    .map((order) => ({ order, state: deliveryOf(order) }))
     .filter(
       (row): row is { order: EsimPendingOrder; state: OrderDelivery } =>
         row.state === "sending" || row.state === "delivering",
@@ -440,8 +446,7 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
                           <Fragment key={order.paymentHash}>
                             {index > 0 ? <ListSeparator /> : null}
                             {(() => {
-                              const slow =
-                                order.paidAt !== undefined && now - order.paidAt > SLOW_DELIVERY_MS;
+                              const slow = deliveryOf(order) === "slow";
                               const canPay = !slow && payable.has(order.paymentHash);
                               const label = slow
                                 ? t(`${K}.slow`)

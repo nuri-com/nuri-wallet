@@ -39,6 +39,7 @@ import { SwapTryAgainView } from "../../components/SwapProcessingView";
 import { t } from "../../lib/i18n";
 import { detailsSheetPage, mayRevealCardSecrets } from "../../lib/wirex/accountBlocked";
 import { cardTabHolderName, cardTabOffersIssueOnly } from "../../lib/wirex/cardState";
+import { formatSortCodeInput } from "../../lib/wirex/ukPayments";
 import { type WirexCardLimit, wirexService } from "../../services/wirex/WirexService";
 import WirexCardLimitEditor from "./WirexCardLimitEditor";
 import WirexCloseCardConfirm from "./WirexCloseCardConfirm";
@@ -61,6 +62,10 @@ type Props = {
   cvv: string | null;
   iban: string | null;
   bic: string | null;
+  // The UK account next to the IBAN (UK residents only); omitted or null
+  // when there is none.
+  sortCode?: string | null;
+  accountNumber?: string | null;
   wallet: string | null;
   cardId: string | null;
   isFrozen: boolean | null;
@@ -124,6 +129,8 @@ const WirexCardDetailsModal: React.FC<Props> = ({
   cvv,
   iban,
   bic,
+  sortCode,
+  accountNumber,
   wallet,
   cardId,
   isFrozen,
@@ -260,8 +267,27 @@ const WirexCardDetailsModal: React.FC<Props> = ({
         onPress: () => void copyToClipboard(bic),
       });
     }
+    // A UK sender pays the UK account by sort code and account number.
+    if (sortCode && accountNumber) {
+      list.push({
+        key: "sortCode",
+        icon: "bank",
+        title: formatSortCodeInput(sortCode),
+        subtitle: t("screen.WirexCard.sortCodeLabel"),
+        trailIcon: "copy",
+        onPress: () => void copyToClipboard(sortCode),
+      });
+      list.push({
+        key: "accountNumber",
+        icon: "bank",
+        title: accountNumber,
+        subtitle: t("screen.WirexCard.accountNumberLabel"),
+        trailIcon: "copy",
+        onPress: () => void copyToClipboard(accountNumber),
+      });
+    }
     return list;
-  }, [holderName, iban, bic]);
+  }, [holderName, iban, bic, sortCode, accountNumber]);
 
   // Card actions (freeze, daily limit) live under the list as rows. They only
   // need the card id — shown even when the secrets reveal failed, so the user

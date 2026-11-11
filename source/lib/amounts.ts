@@ -13,6 +13,17 @@ export const parseEurAmount = (text: string): number => {
   return euros;
 };
 
+// A typed money amount: digits with at most two decimals, a comma read as the
+// decimal point, a trailing point kept while the user is still typing.
+export const clampCentsInput = (raw: string): string => {
+  const s = raw.replace(/,/g, ".");
+  const match = s.match(/^(\d+)(?:\.(\d*))?/);
+  if (!match) return "";
+  const decimals = (match[2] ?? "").replace(/\D/g, "").slice(0, 2);
+  if (s.includes(".") && !decimals) return `${match[1]}.`;
+  return decimals ? `${match[1]}.${decimals}` : match[1];
+};
+
 export const parseFiatAmount = (value: unknown): number => {
   const parsed = Number.parseFloat(String(value || "").trim());
   return Number.isFinite(parsed) ? parsed : 0;

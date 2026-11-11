@@ -379,19 +379,27 @@ export async function sendTokenOnBase({
 
   // 2) Clients
   const rpcUrl = getRpcUrl();
-  const publicClient = createPublicClient({
-    chain,
-    transport: getTransport({
+  // ONE transport for both clients, locked to a single provider: the balance,
+  // gas and nonce reads and the broadcast all hit the same RPC. If Alchemy
+  // answered and then dies mid-send, the send fails (retryable) instead of
+  // broadcasting an Alchemy-prepared tx through the public node.
+  const transport = getTransport(
+    {
       // Be polite to public RPCs: small retry budget and a sane timeout
       retryCount: 2,
       timeout: 10_000,
-    }),
+    },
+    { singleProvider: true },
+  );
+  const publicClient = createPublicClient({
+    chain,
+    transport,
     pollingInterval: 7_000,
   });
   log("[BaseTokenTransfer] RPC", { url: maskRpcUrl(rpcUrl) });
   const walletClient = createWalletClient({
     chain,
-    transport: getTransport(),
+    transport,
     account,
   });
 

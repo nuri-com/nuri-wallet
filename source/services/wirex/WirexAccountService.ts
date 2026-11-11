@@ -15,6 +15,7 @@ import {
   storeAuthData,
 } from "../../lib/secureKeyStorage";
 import { wirexService } from "./WirexService";
+import { shouldOpenUkAccount, ukBankDetails } from "../../lib/wirex/ukPayments";
 import { fxRateService } from "../pricing/FxRateService";
 import {
   BALANCE_CACHE_KEYS,
@@ -30,6 +31,9 @@ import { errorWithId, LOG_EMOJI, logWithId } from "../../lib/OperationLogUtils";
 import { clearOptimisticMoves } from "../../lib/balance/pendingOptimisticMoves";
 import { isWirexCardLast4 } from "../../lib/wirex/cardActionMessage";
 import { isAwaitingReplacementCard } from "../../lib/wirex/cardState";
+import { depositAddressMatches, resolveDepositAddress } from "../../lib/wirex/depositAddress";
+import { deriveWirexKernelAddress } from "../../lib/wirex/registerVerification";
+import { isValidEvmAddress } from "../../lib/validation";
 import {
   addOptimisticMove,
   anchorTarget,
@@ -81,6 +85,84 @@ const BALANCE_RETRY_MAX_ATTEMPTS = 5;
 const OPTIMISTIC_DEBIT_HOLD_MS = 60_000;
 const OPTIMISTIC_CREDIT_HOLD_MS = 180_000;
 
+// Card deposit address check (#1899). `wallet_address` from GET /wallet is where
+// wallet → card money goes; the app derives the Kernel address its EOA owns and
+// compares. OBSERVE first: false = a mismatch is only reported and the server
+// address is still used (today's behaviour). Flip to true after at least one
+// release with zero mismatch reports — then an unverified address is refused.
+const DEPOSIT_ADDRESS_ENFORCE = false;
+const DEPOSIT_ADDRESS_MISMATCH_CODE = "wirex_deposit_address_mismatch";
+// The derivation is deterministic per EOA, so it is done once per wallet: kept
+// in memory and in the Keychain. A failed RPC is not cached — the next load retries.
+const KERNEL_ADDRESS_KEY_PREFIX = "wirex:aa:v1:";
+const expectedKernelByWallet = new Map<string, string>();
+const expectedKernelInFlight = new Map<string, Promise<string | null>>();
+// One report per (wallet, address) for the process.
+const reportedDepositMismatches = new Set<string>();
+
+function expectedKernelAddress(wallet: string): Promise<string | null> {
+  const key = wallet.toLowerCase();
+  const known = expectedKernelByWallet.get(key);
+  if (known) return Promise.resolve(known);
+  const pending = expectedKernelInFlight.get(key);
+  if (pending) return pending;
+  const run = (async (): Promise<string | null> => {
+    const storageKey = `${KERNEL_ADDRESS_KEY_PREFIX}${key}`;
+    try {
+      const stored = await getAuthData(storageKey);
+      if (stored && isValidEvmAddress(stored)) {
+        expectedKernelByWallet.set(key, stored);
+        return stored;
+      }
+    } catch {}
+    try {
+      const derived = await deriveWirexKernelAddress(wallet as `0x${string}`);
+      expectedKernelByWallet.set(key, derived);
+      void storeAuthData(storageKey, derived).catch(() => {});
+      return derived;
+    } catch {
+      return null;
+    }
+  })().finally(() => {
+    expectedKernelInFlight.delete(key);
+  });
+  expectedKernelInFlight.set(key, run);
+  return run;
+}
+
+// The code only — never an address or any other account detail. A structured
+// error log, not a support report: in observe mode the user is shown nothing,
+// and reportErrorToSupport always opens the support chat. The line rides along
+// in every support dump's logs.
+function reportDepositAddressMismatch(wallet: string, serverAddress: string): void {
+  const key = `${wallet.toLowerCase()}:${serverAddress.toLowerCase()}`;
+  if (reportedDepositMismatches.has(key)) return;
+  reportedDepositMismatches.add(key);
+  errorWithId(
+    `${LOG_EMOJI.error} WirexAccountService.depositAddress`,
+    DEPOSIT_ADDRESS_MISMATCH_CODE,
+    { enforce: DEPOSIT_ADDRESS_ENFORCE },
+    {
+      source: "services/wirex/WirexAccountService.ts#verifyDepositAddress",
+      scope: "WirexAccountService",
+      action: "verifyDepositAddress",
+      result: "error",
+      event: "STATE",
+      context: "background",
+    },
+  );
+}
+
+// The deposit address a snapshot can state on its own, before (or without) the
+// async check: whatever the in-memory memo already knows for this wallet.
+function initialDepositAddress(wallet: string | null, serverAddress: string | null): string | null {
+  return resolveDepositAddress({
+    serverAddress,
+    expected: wallet ? (expectedKernelByWallet.get(wallet.toLowerCase()) ?? null) : null,
+    enforce: DEPOSIT_ADDRESS_ENFORCE,
+  });
+}
+
 // The tokens the /wallet unified balance returns → their fiat currency, used to
 // convert each to EUR. Unknown symbols are skipped.
 //
@@ -127,6 +209,8 @@ type WirexBankAccountShape = {
   iban: string | null;
   bic: string | null;
   id: string | null;
+  sort_code?: string | null;
+  account_number?: string | null;
 };
 
 type BankAccountSummary = {
@@ -173,6 +257,11 @@ export interface WirexCardSnapshot {
   // account that holds nothing.
   balancesByFiat: Partial<Record<FiatCode, number>> | null;
   smartAccountAddress: string | null;
+  // Where wallet → card money may be sent: `smartAccountAddress` once checked
+  // against the locally derived Kernel address (#1899). In observe mode it is
+  // `smartAccountAddress` unchanged; enforced, null until verified. Always
+  // travels with the `smartAccountAddress` of the same snapshot.
+  depositAddress: string | null;
   wallet: string | null; // the owner EOA — key for the wallet-keyed card reads
   isFrozen: boolean | null; // Wirex card status "Blocked" == frozen; null = no card / unknown
   // "First Last" from the KYC'd Wirex profile — the name printed on the card and
@@ -189,6 +278,11 @@ export interface WirexCardSnapshot {
   // (a blocked account still reads bank_accounts[].status "Active" and
   // verification "Approved", so neither of those is the signal).
   isAccountBlocked: boolean;
+  // The UK account's sort code and account number, next to the euro IBAN.
+  // null until Wirex has set one up (only UK residents get one).
+  ukBank: { sortCode: string; accountNumber: string } | null;
+  // Sending to UK bank accounts is switched on for this account.
+  ukSend: boolean;
 }
 
 const INITIAL_STATE: WirexCardSnapshot = {
@@ -203,11 +297,14 @@ const INITIAL_STATE: WirexCardSnapshot = {
   balanceEur: null,
   balancesByFiat: null,
   smartAccountAddress: null,
+  depositAddress: null,
   wallet: null,
   isFrozen: null,
   allCardsClosed: false,
   holderName: null,
   isAccountBlocked: false,
+  ukBank: null,
+  ukSend: false,
 };
 
 function hasCompleteApprovedSnapshot(snapshot: WirexCardSnapshot): boolean {
@@ -298,9 +395,15 @@ async function readPersistedSnapshot(wallet: string): Promise<SnapshotCacheEntry
     }
     // Spread over INITIAL_STATE so a snapshot written by an older app version is
     // still structurally complete; loading is a runtime flag, never restored.
+    const stored: Partial<WirexCardSnapshot> = parsed.value ?? {};
     const value: WirexCardSnapshot = {
       ...INITIAL_STATE,
-      ...(parsed.value ?? {}),
+      ...stored,
+      // Never trust a persisted deposit address (#1899): it may have been
+      // written under observe mode or by a build before the check existed.
+      // Recompute it under the current policy; enforced, it stays null until
+      // the live check verifies the restored smart-account address.
+      depositAddress: initialDepositAddress(wallet, stored.smartAccountAddress ?? null),
       loading: false,
     };
     if (!hasDisplayableSnapshot(value)) return null;
@@ -349,6 +452,10 @@ function mergeReusesCachedDetails(previous: WirexCardSnapshot, next: WirexCardSn
 // process. It lives on a DIFFERENT route than /status (the physical-eligibility
 // proxy of Wirex GET /api/v2/user), which is why it is not simply part of load().
 let holderNameCache: { wallet: string; name: string | null } | null = null;
+
+// Wallets asked to open their UK account in this run of the app. Opening is
+// Wirex's to finish; asking again on every poll would only repeat the request.
+const ukAccountAsked = new Set<string>();
 
 // Identifies the service's own balance poll loop against the ownership guard.
 const HEADLESS_POLL_OWNER = Symbol("WirexAccountService.balancePoll");
@@ -525,8 +632,45 @@ class WirexAccountService {
     return hasCompleteApprovedSnapshot(this.snapshot);
   }
 
+  // Where wallet → card money may be SENT: the verified address (#1899).
   depositAddress(): string | null {
+    return this.snapshot.depositAddress;
+  }
+
+  // The card's smart-account address as published, for display-only readers
+  // that classify past transfers or list withdrawals. Those transfers belong to
+  // this account whatever the deposit check says; only new sends are gated.
+  accountAddress(): string | null {
     return this.snapshot.smartAccountAddress;
+  }
+
+  /**
+   * Checks the published smart-account address against the locally derived
+   * Kernel address and patches `depositAddress` in. Fire-and-forget from load():
+   * the RPC never delays the snapshot, and a failure leaves it as it was.
+   */
+  private async verifyDepositAddress(wallet: string, generation: number): Promise<void> {
+    const expected = await expectedKernelAddress(wallet);
+    if (generation !== this.stateGeneration || this.snapshot.wallet !== wallet) return;
+    const serverAddress = this.snapshot.smartAccountAddress;
+    if (!serverAddress) return;
+    if (expected && !depositAddressMatches(serverAddress, expected)) {
+      reportDepositAddressMismatch(wallet, serverAddress);
+    }
+    const depositAddress = resolveDepositAddress({
+      serverAddress,
+      expected,
+      enforce: DEPOSIT_ADDRESS_ENFORCE,
+    });
+    if (depositAddress === this.snapshot.depositAddress) return;
+    this.snapshot = { ...this.snapshot, depositAddress };
+    if (
+      snapshotCache?.wallet === wallet &&
+      snapshotCache.value.smartAccountAddress === serverAddress
+    ) {
+      snapshotCache = { ...snapshotCache, value: { ...snapshotCache.value, depositAddress } };
+    }
+    this.emit();
   }
 
   /**
@@ -1020,6 +1164,15 @@ class WirexAccountService {
         isFrozen: c.status === "Blocked",
       }));
     const bankAccounts = (status.bankAccounts as WirexBankAccountShape[] | undefined) ?? [];
+    // Wirex offers UK residents a UK account next to the IBAN; it is opened for
+    // them the way the IBAN is. Fire-and-forget: a later read shows it.
+    if (shouldOpenUkAccount(status.ukAccount, ukAccountAsked.has(wallet))) {
+      ukAccountAsked.add(wallet);
+      void wirexService.openUkAccount().catch(() => {
+        // Not opened this time; the next launch asks again.
+        ukAccountAsked.delete(wallet);
+      });
+    }
     const selectedBankAccount = selectBankAccount(bankAccounts);
     const iban = selectedBankAccount.account;
     logWithId(
@@ -1143,12 +1296,15 @@ class WirexAccountService {
       balanceEur,
       balancesByFiat,
       smartAccountAddress: smartAccountAddress ?? null,
+      depositAddress: initialDepositAddress(wallet, smartAccountAddress ?? null),
       wallet,
       isFrozen: card ? card.status === "Blocked" : null,
       allCardsClosed,
       // From the cache; the fetch below fills it in and patches the snapshot.
       holderName: holderNameCache?.wallet === wallet ? holderNameCache.name : null,
       isAccountBlocked: status.isAccountBlocked,
+      ukBank: ukBankDetails(bankAccounts),
+      ukSend: status.ukSend,
     };
     // Last gate before anything is published or persisted: a reset that landed
     // during /status or /wallet means this whole result belongs to the previous
@@ -1192,6 +1348,7 @@ class WirexAccountService {
     this.revalidatingState = false;
     this.emit();
     this.evaluateBankDetailsPoll();
+    if (this.snapshot.smartAccountAddress) void this.verifyDepositAddress(wallet, generation);
     return mergedForCache;
   }
 

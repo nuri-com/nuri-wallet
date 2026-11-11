@@ -71,6 +71,14 @@ export const WIREX_ROUTES = {
   payoutCards: "/card/payout-cards",
   cardTransferEstimate: "/card/transfer/estimate",
   cardTransfer: "/card/transfer",
+  // UK bank account (sort code + account number) and sending to UK bank
+  // accounts: opening and the payee list are read-session gated, the quote too,
+  // then the owner-signed transfer of that quote.
+  ukAccountOpen: "/uk/account/open",
+  ukPayees: "/uk/payees",
+  ukTransferEstimate: "/uk/transfer/estimate",
+  ukTransfer: "/uk/transfer",
+  ukTransferPending: "/uk/transfer/pending",
 } as const;
 
 // ── Bridge callback ───────────────────────────────────────────────────

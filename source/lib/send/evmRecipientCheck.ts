@@ -5,7 +5,24 @@
 // no network, so it is paid only when it belongs to a Nuri user, asked now, and
 // then as that user. Pure: the lookups are injected.
 import type { Destination } from "../addressBook/contact";
+import { shortAddress } from "../formatting";
 import type { SendRecipient } from "./sendRouting";
+
+/**
+ * The send sheet's note when a Nuri user is paid at another address than the
+ * one scanned or saved for them (#1897), or null when there is nothing to say.
+ * Compared against the address actually paid, case-insensitively, so it holds
+ * whichever rail picked that address.
+ */
+export function paidAddressNote(
+  replacedAddress: string | null | undefined,
+  paidAddress: string,
+): { scanned: string; paid: string } | null {
+  const scanned = replacedAddress?.trim() ?? "";
+  const paid = paidAddress.trim();
+  if (!scanned || !paid || scanned.toLowerCase() === paid.toLowerCase()) return null;
+  return { scanned: shortAddress(scanned), paid: shortAddress(paid) };
+}
 
 /** An EVM address with no network named. */
 export const isUnnamedEvm = (destination: Destination): boolean =>
@@ -45,10 +62,17 @@ export async function checkEvmRecipient(
     if (!username) continue;
     const user = await lookup.nuriUser(username);
     if (!user) continue;
+    // Made visible, not refused (#1897): an old address still pays the user's
+    // current one, but the send sheet names the address it replaced.
+    const current = new Set(user.destinations.map(key));
+    const replaced = unnamed.some((destination) => current.has(key(destination)))
+      ? null
+      : unnamed[0].raw.trim();
     return {
       ...user,
       ...(recipient.amountSats ? { amountSats: recipient.amountSats } : {}),
       ...(recipient.amountStable ? { amountStable: recipient.amountStable } : {}),
+      ...(replaced ? { replacedAddress: replaced } : {}),
     };
   }
   // Nobody's: their other addresses (Bitcoin, Lightning, a named network) stay.

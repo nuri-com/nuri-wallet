@@ -6,7 +6,7 @@ import { wirexAccountService } from "./WirexAccountService";
 const LOG_TAG = "[CardWithdrawals]";
 
 const subscribe = (listener: () => void) => wirexAccountService.subscribe(listener);
-const cardAddress = () => (wirexAccountService.depositAddress() ?? "").toLowerCase();
+const cardAddress = () => (wirexAccountService.accountAddress() ?? "").toLowerCase();
 
 /**
  * The transactions in which the signed-in card withdrew, for the Cash history:

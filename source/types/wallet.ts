@@ -78,6 +78,9 @@ export type WalletSendStablecoinProps = {
   onSuccess?: (payload: { amount: number; txHash?: string | null; confirmed: boolean }) => void;
   /** The recipient as a person (contact, Nuri user): shown by name, not address. */
   person?: { name: string; nuriUsername?: string } | null;
+  /** The plain 0x... scanned or saved for `person` that their username no
+   * longer has (#1897). Shown with the paid address when it differs from it. */
+  replacedAddress?: string | null;
   /** Every balance that can pay this recipient, for the "From" picker. */
   balanceOptions?: SendBalanceOption[];
   /** The balance this screen pays from. */

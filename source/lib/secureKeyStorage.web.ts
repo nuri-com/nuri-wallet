@@ -446,13 +446,16 @@ export async function hasAuthKey(): Promise<boolean> {
 // ── Bulk wipe / verification ─────────────────────────────────────────────────
 
 export async function wipeAllKeychainData(_extraServers: string[] = []): Promise<void> {
+  // The HTLC counter outlives logout, as on native (#1896): the roots return
+  // from the PRF at the next sign-in, so a wiped counter re-issues preimages.
+  const keep = PREFIX + SWAPKIT_HTLC_KEYSTATE_ID;
   const store = ls();
   if (store) {
     try {
       const toRemove: string[] = [];
       for (let i = 0; i < store.length; i++) {
         const k = store.key(i);
-        if (k && k.startsWith(PREFIX)) toRemove.push(k);
+        if (k && k.startsWith(PREFIX) && k !== keep) toRemove.push(k);
       }
       for (const k of toRemove) {
         try {
@@ -461,7 +464,9 @@ export async function wipeAllKeychainData(_extraServers: string[] = []): Promise
       }
     } catch {}
   }
-  mem.clear();
+  for (const id of [...mem.keys()]) {
+    if (id !== SWAPKIT_HTLC_KEYSTATE_ID) mem.delete(id);
+  }
 }
 
 export async function verifyCriticalKeysAbsent(): Promise<string[]> {

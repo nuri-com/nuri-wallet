@@ -414,6 +414,8 @@ export const ptPT = {
       tabCard: "Cartão",
       tabBank: "Banco",
       ibanLabel: "IBAN",
+      sortCodeLabel: "Sort code",
+      accountNumberLabel: "Número de conta",
       bicLabel: "BIC",
       cardHolderLabel: "Nome no cartão",
       accountHolderLabel: "Titular da conta",
@@ -502,6 +504,29 @@ export const ptPT = {
         "A transferência não foi concluída. Verifica a tua atividade antes de tentares novamente.",
       activityLabel: "Transferência para cartão",
     },
+    UkPayment: {
+      sendToUk: "Para uma conta bancária do Reino Unido",
+      pickTitle: "Enviar para uma conta do Reino Unido",
+      addPayee: "Adicionar uma conta do Reino Unido",
+      addTitle: "Adicionar uma conta do Reino Unido",
+      nameLabel: "Titular da conta",
+      namePlaceholder: "Nome ou empresa",
+      sortCodeLabel: "Sort code",
+      accountNumberLabel: "Número de conta",
+      saveLabel: "Guardar conta",
+      addFailed: "Não foi possível guardar esta conta. Verifica o sort code e o número de conta.",
+      loadFailed:
+        "Não foi possível carregar as tuas contas do Reino Unido. Tenta novamente dentro de momentos.",
+      payeeRow: "%{sortCode} \u2022\u2022\u2022\u2022 %{last4}",
+      amountTitle: "Enviar libras",
+      sendCtaLabel: "Enviar GBP %{amount} para %{name}",
+      sendCtaLabelNoAmount: "Enviar GBP para %{name}",
+      feeHint: "Não chega para cobrir o montante e a comissão. Tenta um montante menor.",
+      unconfirmedHint:
+        "O teu último pagamento para o Reino Unido ainda está a ser confirmado. Vê a tua atividade; podes enviar de novo quando estiver resolvido.",
+      sendFailedHint:
+        "A transferência não foi concluída. Verifica a tua atividade antes de tentares novamente.",
+    },
     SepaAmountConfirmationModal: {
       headerTitle: "Enviar euros",
       headerTitleWithBalance: "Enviar euros (%{amount})",
@@ -550,6 +575,7 @@ export const ptPT = {
       invalidAddressError: "Endereço ou nome inválido.",
       ensNotFound: "Esse nome não corresponde a nenhum endereço.",
       lookupFailed: "Não foi possível procurar esse nome. Tenta novamente.",
+      addressReplaced: "A pagar para %{paid}, o endereço atual no Nuri (não %{scanned}).",
       exceedsBalanceHint: "Ultrapassa o saldo disponível",
     },
     HomeScreen: {

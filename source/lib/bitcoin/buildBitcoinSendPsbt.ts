@@ -78,11 +78,18 @@ function assertTapMerkleRoots(tx: btc.Transaction): void {
   }
 }
 
+/** The highest rate a build pays, whatever the fee feed says (#1896). Above it a
+ * send confirms later; it is not refused. */
+export const MAX_FEE_RATE_SAT_VB = 500;
+
 /** The rate every build here pays. Stated once so a caller sizing fee headroom
- * cannot drift from what the build will charge it. */
+ * cannot drift from what the build will charge it. The feed is unvalidated JSON
+ * and nothing downstream caps the fee, so the rate is clamped to 1..500 sat/vB
+ * here; a missing, zero or unreadable rate stays 4. */
 async function feeRateSatsPerVb(): Promise<number> {
   const feeEstimates = await blockchainService.getFeeEstimates();
-  return Number(feeEstimates.fastestFee) || 4;
+  const rate = Math.ceil(Number(feeEstimates.fastestFee)) || 4;
+  return Math.min(MAX_FEE_RATE_SAT_VB, Math.max(1, rate));
 }
 
 /**

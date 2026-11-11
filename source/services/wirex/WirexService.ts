@@ -55,7 +55,20 @@ import {
   buildWirexIssueVirtualCardMessage,
   buildWirexCardTransferMessage,
   buildWirexSepaTransferMessage,
+  buildWirexUkTransferMessage,
 } from "../../lib/wirex/cardActionMessage";
+import { parseUkAccountState, type UkAccountState } from "../../lib/wirex/ukPayments";
+import {
+  parseUkPendingMarker,
+  parseUkTransferOutcome,
+  serializeUkPendingMarker,
+  ukPendingMarkerNeedsRewrite,
+  type UkServerAnswer,
+  UK_TRANSFER_UNCONFIRMED_CODE,
+  ukPendingKeyFor,
+  ukSendFailedForSure,
+  ukSendHeld,
+} from "../../lib/wirex/ukPendingTransfer";
 import { verifyRegisterCallData } from "../../lib/wirex/registerVerification";
 import { isAccountBlocked, type WirexBankEligibility } from "../../lib/wirex/accountBlocked";
 import { authStateManager } from "../auth/AuthStateService";
@@ -92,6 +105,9 @@ interface WirexBankAccount {
   status: string | null;
   iban: string | null;
   bic: string | null;
+  // The UK account's details; null on every other account.
+  account_number?: string | null;
+  sort_code?: string | null;
 }
 
 export interface WirexCard {
@@ -146,6 +162,8 @@ const RAW_STATUS_LOG_REDACT_KEYS = new Set([
   "sdkToken",
   "iban",
   "bic",
+  "account_number",
+  "sort_code",
   "last4",
   "pan",
   "card_number",
@@ -191,6 +209,10 @@ interface StatusData {
   // "Active" on a blocklist offboard) do not.
   user_status?: string | null;
   bank_eligibility?: WirexBankEligibility[] | null;
+  // The UK account (sort code + account number) and sending to UK accounts,
+  // read by the server from Wirex's capabilities. null when unreadable.
+  uk_account?: string | null;
+  uk_send?: boolean | null;
 }
 
 // ── Wallet endpoint shape (GET /wallet?wallet=<eoa>) ──────────────────
@@ -314,6 +336,10 @@ export interface WirexStatusResult {
   bankEligibility: WirexBankEligibility[];
   // Derived: the account is blocked — no IBAN row, no "issue card" CTA.
   isAccountBlocked: boolean;
+  // Where the user stands with the UK account, and whether sending to UK bank
+  // accounts is switched on. Only UK residents ever get past "unavailable".
+  ukAccount: UkAccountState | null;
+  ukSend: boolean;
 }
 
 export interface WirexTokenBalance {
@@ -368,6 +394,17 @@ function toSwapOutcome(fx: WithdrawalResultData["fx"]): WirexCardSwapOutcome | u
  * pending/unconfirmed state and must NOT offer a plain retry (which would start a
  * second withdrawal). Distinct from pre-approval failures, which are safe to retry.
  */
+/**
+ * A UK payment was sent but its outcome is unknown: it may have gone. Never
+ * retried; the next UK payment waits until it is settled (ukSendHeld).
+ */
+export class WirexUkTransferUnconfirmedError extends Error {
+  constructor() {
+    super(UK_TRANSFER_UNCONFIRMED_CODE);
+    this.name = "WirexUkTransferUnconfirmedError";
+  }
+}
+
 export class WirexWithdrawUnconfirmedError extends Error {
   constructor() {
     super("wirex_withdraw_unconfirmed");
@@ -442,6 +479,25 @@ export interface WirexCardTransferQuote {
   currency: string;
   card: WirexPayoutCard;
   /** What leaves the debit token, fee included. */
+  debitAmount: number | null;
+  feeAmount: number | null;
+}
+// A saved UK payee. Wirex's recipient id stays on the server; the app picks a
+// payee by payeeId.
+export interface WirexUkPayee {
+  payeeId: string;
+  name: string;
+  sortCode: string;
+  accountNumber: string;
+}
+// The server's quote for a payment to a UK bank account. Its values are what
+// the user signs.
+export interface WirexUkTransferQuote {
+  estimationId: string;
+  /** Pounds the payee receives. */
+  amount: number;
+  payee: WirexUkPayee;
+  /** What leaves the debit token, fee included, in that token's currency. */
   debitAmount: number | null;
   feeAmount: number | null;
 }
@@ -1346,6 +1402,8 @@ class WirexService {
         userStatus: data.user_status ?? null,
         bankEligibility,
       }),
+      ukAccount: parseUkAccountState(data.uk_account),
+      ukSend: data.uk_send === true,
     };
 
     // When no card has been issued yet, gather the diagnostic detail: /status's
@@ -2417,6 +2475,158 @@ class WirexService {
     return { ok: data?.ok !== false, transferId: data?.transfer_id ?? null, raw: data };
   }
 
+  // ── UK bank account and payments to UK bank accounts ─────────────────
+  // Opening the account and the payee list are read-session gated; the quote
+  // too. The transfer itself is money-out and carries the owner's signature
+  // over the server's quote. SECURITY: never log account numbers or amounts.
+  async openUkAccount(): Promise<UkAccountState | null> {
+    const data = await this.postAuthorized<{ uk_account?: unknown }>(
+      wirexConfig.routes.ukAccountOpen,
+      {},
+    );
+    return parseUkAccountState(data.uk_account);
+  }
+
+  async listUkPayees(): Promise<WirexUkPayee[]> {
+    const data = await this.get<{ payees?: unknown }>(
+      wirexConfig.routes.ukPayees,
+      {},
+      { authorized: true },
+    );
+    return Array.isArray(data.payees) ? data.payees.flatMap(toUkPayee) : [];
+  }
+
+  async addUkPayee(params: {
+    name: string;
+    sortCode: string;
+    accountNumber: string;
+  }): Promise<WirexUkPayee> {
+    const data = await this.postAuthorized<{ payee?: unknown }>(wirexConfig.routes.ukPayees, {
+      name: params.name.trim(),
+      sort_code: params.sortCode.replace(/\D/g, ""),
+      account_number: params.accountNumber.replace(/\D/g, ""),
+    });
+    const payee = toUkPayee(data.payee)[0];
+    if (!payee) throw new Error(`${LOG_TAG} addUkPayee: no payee returned`);
+    return payee;
+  }
+
+  async ukTransferEstimate(params: {
+    payeeId: string;
+    amount: string;
+    tokenAddress: string;
+  }): Promise<WirexUkTransferQuote> {
+    const data = await this.postAuthorized<{
+      estimation_id?: unknown;
+      amount?: unknown;
+      payee?: unknown;
+      debit?: { amount?: unknown } | null;
+      fee_amount?: unknown;
+    }>(wirexConfig.routes.ukTransferEstimate, {
+      payee_id: params.payeeId,
+      amount: Number(params.amount),
+      token_address: params.tokenAddress,
+    });
+    const payee = toUkPayee(data.payee)[0];
+    const amount = Number(data.amount);
+    if (typeof data.estimation_id !== "string" || !payee || !(amount > 0)) {
+      throw new Error(`${LOG_TAG} ukTransferEstimate: incomplete quote`);
+    }
+    const debit = Number(data.debit?.amount);
+    const fee = Number(data.fee_amount);
+    return {
+      estimationId: data.estimation_id,
+      amount,
+      payee,
+      debitAmount: Number.isFinite(debit) && debit > 0 ? debit : null,
+      feeAmount: data.fee_amount != null && Number.isFinite(fee) ? fee : null,
+    };
+  }
+
+  // Signs the quote exactly as the server stored it; the server rebuilds the
+  // same string from that quote and executes it once. Resolves only with the
+  // transfer id. Throws WirexUkTransferUnconfirmedError when the payment may
+  // have gone (this device's record is kept, so the next UK payment waits:
+  // ukSendHeld); any other error means nothing was sent (signing declined, or
+  // the server answered with a refusal).
+  async ukTransfer(quote: WirexUkTransferQuote): Promise<{ transferId: string }> {
+    const ts = Math.floor(Date.now() / 1000);
+    const message = buildWirexUkTransferMessage({
+      amount: quote.amount,
+      sortCode: quote.payee.sortCode,
+      last4: quote.payee.accountNumber.slice(-4),
+      estimationId: quote.estimationId,
+      ts,
+    });
+    const { address, signature } = await this.buildSigner()({ message });
+    const key = ukPendingKeyFor(address);
+    // Written before the request: an app killed mid-send still holds the next one.
+    await storeAuthData(
+      key,
+      serializeUkPendingMarker({
+        estimationId: quote.estimationId,
+        amount: quote.amount,
+        at: Date.now(),
+      }),
+    );
+    let data: { transfer_id?: unknown } | null = null;
+    try {
+      data = await this.post<{ transfer_id?: unknown }>(wirexConfig.routes.ukTransfer, {
+        wallet: address,
+        estimation_id: quote.estimationId,
+        ts,
+        signature,
+      });
+    } catch (error) {
+      if (ukSendFailedForSure(error instanceof WirexApiError ? error.code : null)) {
+        await deleteAuthData(key).catch(() => {});
+        throw error;
+      }
+      throw new WirexUkTransferUnconfirmedError();
+    }
+    const transferId = typeof data?.transfer_id === "string" ? data.transfer_id : "";
+    if (!transferId) throw new WirexUkTransferUnconfirmedError();
+    // A record left behind only holds the next send until the server settles it.
+    await deleteAuthData(key).catch(() => {});
+    return { transferId };
+  }
+
+  /**
+   * Whether sending to a UK account waits for an earlier payment that may have
+   * gone: this device's record and the server's pending one. Clears the
+   * device's record once the server says how that payment ended, or that it
+   * never started it and the signed request can no longer start it.
+   */
+  async ukSendHeld(): Promise<boolean> {
+    const wallet = await getEthereumAddress();
+    if (!wallet) return true;
+    const key = ukPendingKeyFor(wallet);
+    const now = Date.now();
+    const raw = await getAuthData(key);
+    const marker = parseUkPendingMarker(raw, now);
+    // A damaged record is dated on first read and written back, so its age counts.
+    if (marker && ukPendingMarkerNeedsRewrite(raw, marker)) {
+      await storeAuthData(key, serializeUkPendingMarker(marker)).catch(() => {});
+    }
+    let server: UkServerAnswer | null = null;
+    try {
+      const data = await this.get<{ pending?: unknown; outcome?: { status?: unknown } | null }>(
+        wirexConfig.routes.ukTransferPending,
+        marker?.estimationId ? { estimation_id: marker.estimationId } : {},
+        { authorized: true },
+      );
+      server = {
+        pending: data?.pending != null,
+        outcome: parseUkTransferOutcome(data?.outcome?.status),
+      };
+    } catch {
+      server = null;
+    }
+    const held = ukSendHeld(marker, server, now);
+    if (marker && !held) await deleteAuthData(key);
+    return held;
+  }
+
   private async signedCardAction(
     action: "freeze" | "unfreeze" | "set-limit" | "close",
     cardId: string,
@@ -2650,6 +2860,33 @@ function parseSumsubClientId(kycUrl: string): string | null {
 }
 
 export const wirexService = new WirexService();
+
+function toUkPayee(raw: unknown): WirexUkPayee[] {
+  const p = raw as {
+    payee_id?: unknown;
+    name?: unknown;
+    sort_code?: unknown;
+    account_number?: unknown;
+  } | null;
+  if (
+    !p ||
+    typeof p.payee_id !== "string" ||
+    typeof p.sort_code !== "string" ||
+    !/^\d{6}$/.test(p.sort_code) ||
+    typeof p.account_number !== "string" ||
+    !/^\d{8}$/.test(p.account_number)
+  ) {
+    return [];
+  }
+  return [
+    {
+      payeeId: p.payee_id,
+      name: typeof p.name === "string" ? p.name : "",
+      sortCode: p.sort_code,
+      accountNumber: p.account_number,
+    },
+  ];
+}
 
 function toPayoutCard(raw: unknown): WirexPayoutCard[] {
   const c = raw as {

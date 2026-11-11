@@ -414,6 +414,8 @@ export const nl = {
       tabCard: "Kaart",
       tabBank: "Bank",
       ibanLabel: "IBAN",
+      sortCodeLabel: "Sort code",
+      accountNumberLabel: "Rekeningnummer",
       bicLabel: "BIC",
       cardHolderLabel: "Naam op de kaart",
       accountHolderLabel: "Rekeninghouder",
@@ -501,6 +503,29 @@ export const nl = {
         "De overboeking is niet gelukt. Bekijk je activiteit voordat je het opnieuw probeert.",
       activityLabel: "Kaartoverboeking",
     },
+    UkPayment: {
+      sendToUk: "Naar een Britse bankrekening",
+      pickTitle: "Naar een Britse rekening sturen",
+      addPayee: "Britse rekening toevoegen",
+      addTitle: "Britse rekening toevoegen",
+      nameLabel: "Rekeninghouder",
+      namePlaceholder: "Naam of bedrijf",
+      sortCodeLabel: "Sort code",
+      accountNumberLabel: "Rekeningnummer",
+      saveLabel: "Rekening opslaan",
+      addFailed:
+        "Deze rekening kon niet worden opgeslagen. Controleer de sort code en het rekeningnummer.",
+      loadFailed: "Je Britse rekeningen konden niet worden geladen. Probeer het zo opnieuw.",
+      payeeRow: "%{sortCode} \u2022\u2022\u2022\u2022 %{last4}",
+      amountTitle: "Ponden sturen",
+      sendCtaLabel: "Stuur GBP %{amount} naar %{name}",
+      sendCtaLabelNoAmount: "Stuur GBP naar %{name}",
+      feeHint: "Niet genoeg voor het bedrag en de kosten. Probeer een kleiner bedrag.",
+      unconfirmedHint:
+        "Je laatste betaling naar het VK wordt nog bevestigd. Bekijk je activiteit; je kunt weer sturen zodra die is afgerond.",
+      sendFailedHint:
+        "De overboeking is niet gelukt. Bekijk je activiteit voordat je het opnieuw probeert.",
+    },
     SepaAmountConfirmationModal: {
       headerTitle: "Euro versturen",
       headerTitleWithBalance: "Euro versturen (%{amount})",
@@ -549,6 +574,7 @@ export const nl = {
       invalidAddressError: "Ongeldig adres of ongeldige naam.",
       ensNotFound: "Die naam verwijst niet naar een adres.",
       lookupFailed: "Die naam kon niet worden opgezocht. Probeer het opnieuw.",
+      addressReplaced: "Betaling aan %{paid}, het huidige Nuri-adres (niet %{scanned}).",
       exceedsBalanceHint: "Hoger dan het beschikbare saldo",
     },
     HomeScreen: {

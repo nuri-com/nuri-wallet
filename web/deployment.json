@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
-  "release_id": "pwa-ba6cf527bb7e",
-  "app_version": "0.110.0",
+  "release_id": "pwa-97cab226756c",
+  "app_version": "0.111.0",
   "source_ref": "origin/dev",
-  "source_sha": "ba6cf527bb7e2cf9edc0f2874e6e9ea7aef1ccba",
-  "upstream_dev_sha": "ba6cf527bb7e2cf9edc0f2874e6e9ea7aef1ccba",
-  "previous_source_sha": "9faa3a297d5951f3df1a6c20e7baf4e991450c76",
-  "asset": "_expo/static/js/web/index-2933a1b2085c2619f3874da0a6db26cb.js",
-  "asset_sha256": "1b514224db5cea901c64c389261069eeb6be3a78b88a9acd1301429f2aa28569",
-  "deployed_at": "2026-11-06T16:47:17Z",
-  "waict_manifest": "waict/YWfWohxVtt00C8KPsCVtjr",
-  "waict_manifest_sha256": "6167d6a21c55b6dd340bc28fb0256d8eb6068339f46b9fe4b6dc103acf12fe6b"
+  "source_sha": "97cab226756c5c0dc03515b54f132bd47df75e09",
+  "upstream_dev_sha": "97cab226756c5c0dc03515b54f132bd47df75e09",
+  "previous_source_sha": "ba6cf527bb7e2cf9edc0f2874e6e9ea7aef1ccba",
+  "asset": "_expo/static/js/web/index-79dc23868aab55d521333af0f4465e28.js",
+  "asset_sha256": "0123ce289c576c4d977a936ed47b88c0b6527dfc7e6716d6b68f33c798d9909e",
+  "deployed_at": "2026-11-11T22:27:40Z",
+  "waict_manifest": "waict/zI8JS7f2qR8BsW8H8HVHoh",
+  "waict_manifest_sha256": "cc8f094bb7f6a91f01b16f07f07547a21a11038379843f386ede3b5e5a65074b"
 }

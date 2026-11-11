@@ -1,8 +1,8 @@
-import { createPublicClient, createWalletClient, encodeFunctionData, http, parseUnits } from "viem";
+import { createPublicClient, createWalletClient, encodeFunctionData, parseUnits } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { bytesToHex, zeroize } from "../../lib/crypto";
 import { getPrivateKey } from "../../lib/secureKeyStorage";
-import { getChainRpcUrl } from "../../lib/rpc/chainRpc";
+import { getChainTransport } from "../../lib/rpc/chainRpc";
 import type { ChainId } from "../../lib/tokens";
 import { getSweepViemChain } from "./SwapKitEvmSigner";
 import { ethereumFees } from "./ethereumFees";
@@ -46,11 +46,14 @@ export async function sendErc20OnChain(
   // The RPC comes from lib/rpc/chainRpc, not viem's built-in default: the default
   // is an unkeyed public endpoint with no timeout or retries, and this is the
   // transfer that moves the user's money. Gas on the EOA is sponsored by SwapKit
-  // before the action.
-  const transport = http(getChainRpcUrl(token.chainId as ChainId), {
-    retryCount: 2,
-    timeout: 10_000,
-  });
+  // before the action. A paid key that is dead from the start fails over to the
+  // chain's public node; one that answered and then dies fails the transfer, so
+  // nonce/gas reads and the broadcast never split across providers.
+  const transport = getChainTransport(
+    token.chainId as ChainId,
+    { retryCount: 2, timeout: 10_000 },
+    { singleProvider: true },
+  );
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ chain, transport, account });
   const data = encodeFunctionData({

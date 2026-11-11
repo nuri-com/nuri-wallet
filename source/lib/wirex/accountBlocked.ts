@@ -49,6 +49,15 @@ export function visibleBankDetails(
   return { iban: iban?.iban ?? null, bic: iban?.bic ?? null };
 }
 
+/** The UK account's sort code and account number, withheld like the IBAN. */
+export function visibleUkBankDetails(
+  isBlocked: boolean,
+  ukBank: { sortCode: string; accountNumber: string } | null | undefined,
+): { sortCode: string | null; accountNumber: string | null } {
+  if (isBlocked || !ukBank) return { sortCode: null, accountNumber: null };
+  return { sortCode: ukBank.sortCode, accountNumber: ukBank.accountNumber };
+}
+
 /** Issue and close card are dropped for a blocked account. */
 export function withoutBlockedCardActions<
   T extends { onIssueNewCard?: () => void; onCloseCard?: () => void },

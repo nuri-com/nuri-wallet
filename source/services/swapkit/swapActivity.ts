@@ -241,7 +241,7 @@ export function swapRow(
   if (incoming && leg.roles.includes("refund") && !leg.roles.includes("settlement")) {
     return { title: `${from.name} refund`, ...(from.image ? { image: from.image } : {}) };
   }
-  const card = (wirexAccountService.depositAddress() ?? "").toLowerCase();
+  const card = (wirexAccountService.accountAddress() ?? "").toLowerCase();
   const to = card && leg.settleTarget === card ? CARD : sideOf(leg.to);
   // Same money on both sides (EURC on Ethereum into your Euro, USDT into
   // Dollar): no swap to show, it is your own money moving between wallets.

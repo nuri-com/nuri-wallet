@@ -6,12 +6,18 @@
 // knows v2 orders, and the v2 sweep only reports EVM locks. So on app open this
 // asks the v1 order store, READ-ONLY, for this wallet's open orders, refunds any
 // Arkade lock the server says is due, and reports the refund txid so the order
-// closes. It creates nothing, funds nothing, and signs nothing but that refund.
+// closes. It creates nothing, funds nothing, and signs nothing but that refund
+// and its report.
 //
 // This is the only place the app still reaches the v1 endpoint, and it is
-// limited to exactly the three calls below.
+// limited to exactly the three calls below. The refund report changes the
+// order, so it carries ownerAuth: this wallet's EVM key signing that exact
+// change, which the server requires before it accepts any change to a swap.
 
+import { sha256, toBytes } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { LOG_EMOJI, errorWithId, logWithId } from "../../lib/OperationLogUtils";
+import { bytesToHex, zeroize } from "../../lib/crypto";
 
 export const SWAPKIT_V1_RECOVERY_URL = "https://swapkit.nuri.com/mcp";
 const V1_RECOVERY_TOOLS = ["swap_list", "swap_track", "swap_wallet_submit"] as const;
@@ -50,6 +56,8 @@ export type LegacyArkadeRefundDeps = {
   call: Call;
   /** The wallet's EVM address, which v1 keyed its orders by. */
   getOwner: () => Promise<string | null>;
+  /** EIP-191 signature by `owner`'s EVM key; must refuse any other key. */
+  signOwnerMessage: (owner: string, message: string) => Promise<string>;
   /** This wallet's own Arkade address: the only place a refund may pay. */
   getRefundAddress: () => Promise<string>;
   refund: (args: {
@@ -111,6 +119,60 @@ export function legacyArkadeRefundsOf(order: unknown): LegacyArkadeRefund[] {
   return out;
 }
 
+/** Sorted-key JSON with undefined dropped: the bytes the server hashes. */
+export function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item === undefined ? null : item)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** The message SwapKit v1 requires the swap's sending wallet to sign for a change. */
+export function ownerAuthMessage(args: {
+  tool: V1RecoveryTool;
+  txId: string;
+  change: Record<string, unknown>;
+  expiresAt: string;
+}): string {
+  const digest = sha256(toBytes(canonicalJson(args.change))).slice(2);
+  return [
+    "Nuri SwapKit: authorize a change to my swap",
+    `tool: ${args.tool}`,
+    `txId: ${args.txId}`,
+    `change: ${digest}`,
+    `expires: ${args.expiresAt}`,
+  ].join("\n");
+}
+
+/**
+ * Sign as `owner` only. The run captured its owner at the start; if the active
+ * wallet changed since, the key in storage belongs to someone else, and its
+ * signature would link that wallet to this swap. Refuse before signing.
+ */
+export async function signAsOwner(
+  owner: string,
+  message: string,
+  loadKey: () => Promise<Uint8Array>,
+): Promise<string> {
+  const keyBytes = await loadKey();
+  try {
+    const account = privateKeyToAccount(`0x${bytesToHex(keyBytes)}` as `0x${string}`);
+    if (account.address.toLowerCase() !== owner.toLowerCase()) {
+      throw new Error("active wallet is not this swap's owner; report left for its owner");
+    }
+    return await account.signMessage({ message });
+  } finally {
+    zeroize(keyBytes);
+  }
+}
+
 function log(message: string, data?: Record<string, unknown>): void {
   logWithId(`${LOG_EMOJI.bitcoin} SwapKitLegacyRefund`, message, data, {
     source: SOURCE,
@@ -159,13 +221,27 @@ export async function recoverLegacyArkadeRefunds(deps: LegacyArkadeRefundDeps): 
           ...(previous ? { previouslySubmittedArkTxid: previous } : {}),
         });
         await deps.journal.set(refund.actionId, txid);
-        await deps.call("swap_wallet_submit", {
-          txId,
+        const change = {
           actionId: refund.actionId,
           provider: refund.provider,
           ...(refund.externalId ? { externalId: refund.externalId } : {}),
           txHash: txid,
           result: { txId: txid },
+        };
+        const expiresAt = new Date((deps.now?.() ?? Date.now()) + 5 * 60_000).toISOString();
+        const signature = await deps.signOwnerMessage(
+          owner,
+          ownerAuthMessage({
+            tool: "swap_wallet_submit",
+            txId,
+            change,
+            expiresAt,
+          }),
+        );
+        await deps.call("swap_wallet_submit", {
+          txId,
+          ...change,
+          ownerAuth: { expiresAt, signature },
         });
         log(`legacy Arkade lock refunded txId=${txId} txid=${txid}`, { txid });
         refunded.push(txId);

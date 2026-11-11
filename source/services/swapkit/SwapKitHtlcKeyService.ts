@@ -23,8 +23,9 @@ import {
  * preimages are re-derived on demand from the provider root in the keychain
  * and zeroized after use — they are never persisted, exported or submitted.
  *
- * The state lives in the KEYCHAIN next to the HTLC roots (same lifecycle):
- * the roots are deterministic from the PRF, so a lost counter re-derives
+ * The state lives in the KEYCHAIN next to the HTLC roots and outlives them
+ * (logout wipes the roots but keeps this, #1896): the roots are deterministic
+ * from the PRF and return at the next sign-in, so a lost counter re-derives
  * already-used preimages and every provider rejects them as duplicates. It
  * previously lived in the purgeable nuri-cache.db — that reset is exactly
  * what triggered the 2026-07-16 satora-duplicate-preimage incident; a legacy

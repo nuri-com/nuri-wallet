@@ -1,10 +1,14 @@
 // App-open runner for SwapKitLegacyArkadeRefund: wires the wallet, the swap key
 // refund and a durable journal into the pure recovery module.
-import { getEthereumAddress } from "../../lib/secureKeyStorage";
+import { getEthereumAddress, getPrivateKey } from "../../lib/secureKeyStorage";
 import { getArkadeReceiveAddress } from "../arkade/ArkadeAddressService";
 import { getCacheValue, setCacheValue } from "../balance/TransactionCacheService";
 import { refundSwapKitArkadeVhtlc } from "./SwapKitArkadeVhtlcService";
-import { callV1RecoveryTool, recoverLegacyArkadeRefunds } from "./SwapKitLegacyArkadeRefund";
+import {
+  callV1RecoveryTool,
+  recoverLegacyArkadeRefunds,
+  signAsOwner,
+} from "./SwapKitLegacyArkadeRefund";
 import { isVhtlcRefundable } from "./vhtlcRefundTiming";
 
 // Same key the removed v1 Arkade action handler journaled under, so a refund it
@@ -51,6 +55,8 @@ export function runLegacyArkadeRefunds(): Promise<string[]> {
   const run: Promise<string[]> = recoverLegacyArkadeRefunds({
     call: (tool, args) => callV1RecoveryTool(tool, args),
     getOwner: getEthereumAddress,
+    signOwnerMessage: (owner, message) =>
+      signAsOwner(owner, message, () => getPrivateKey("ethereum")),
     getRefundAddress: getArkadeReceiveAddress,
     refund: refundSwapKitArkadeVhtlc,
     isRefundable: isVhtlcRefundable,

@@ -156,6 +156,8 @@ import { tanQrDestination, type ZapRemitDestination } from "../../lib/remit/zapr
 import { useWirexCardLifecycle } from "../wirex/hooks/useWirexCardLifecycle";
 import { useWirexSendFlow } from "../wirex/hooks/useWirexSendFlow";
 import { ADD_PAYOUT_CARD_KEY, useCardPayoutFlow } from "../wirex/hooks/useCardPayoutFlow";
+import { ADD_UK_PAYEE_KEY, useUkPayoutFlow } from "../wirex/hooks/useUkPayoutFlow";
+import { formatSortCodeInput } from "../../lib/wirex/ukPayments";
 import WirexAppleWalletModal from "../wirex/modals/WirexAppleWalletModal";
 import type { WirexBankCounterparty } from "../../lib/wirex/cardTransactions";
 import BankRecipientSheet from "../../components/BankRecipientSheet";
@@ -163,6 +165,8 @@ import SepaRecipientModal from "../wirex/modals/SepaRecipientModal";
 import SepaAmountConfirmationModal from "../wirex/modals/SepaAmountConfirmationModal";
 import CardPayoutAddModal from "../wirex/modals/CardPayoutAddModal";
 import CardPayoutAmountModal from "../wirex/modals/CardPayoutAmountModal";
+import UkPayeeAddModal from "../wirex/modals/UkPayeeAddModal";
+import UkPayoutAmountModal from "../wirex/modals/UkPayoutAmountModal";
 import WirexCardTransactionsModal from "../wirex/WirexCardTransactionsModal";
 import BitcoinSendScreen from "../bitcoin/modals/BitcoinSendScreen";
 import BitcoinTransactionsModal from "../bitcoin/modals/BitcoinTransactionsModal";
@@ -172,7 +176,11 @@ import {
   isWirexBankReady,
   isWirexCardReady,
 } from "../../lib/wirex/cardState";
-import { mayRevealCardSecrets, visibleBankDetails } from "../../lib/wirex/accountBlocked";
+import {
+  mayRevealCardSecrets,
+  visibleBankDetails,
+  visibleUkBankDetails,
+} from "../../lib/wirex/accountBlocked";
 import { useWirexOnboarding } from "../wirex/hooks/useWirexOnboarding";
 import WirexEmailEntryModal from "../wirex/modals/WirexEmailEntryModal";
 import WirexCardDetailsModal from "../wirex/WirexCardDetailsModal";
@@ -506,6 +514,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   const wirexBankReady = isWirexBankReady(wirex);
   const wirexSend = useWirexSendFlow({ bankReady: wirexBankReady });
   const cardPayout = useCardPayoutFlow(handOff);
+  const ukPayout = useUkPayoutFlow(handOff);
   // Subscribe-only: the App-level monitor owns the refreshing. Read here for the
   // arkade rail's pending-sweep row.
   const unlockState = useArkadeReceiveUnlockState();
@@ -1829,6 +1838,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           walletSend.closeAll();
           onboarding.cancel();
           cardPayout.closeAll();
+          ukPayout.closeAll();
         } catch {}
       }),
     [
@@ -1839,6 +1849,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       walletSend.closeAll,
       onboarding.cancel,
       cardPayout.closeAll,
+      ukPayout.closeAll,
     ],
   );
 
@@ -2110,8 +2121,8 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // Wirex's own load, and a Move opened before that answer would otherwise cache
   // "no card destination" and keep it after the address was there all along.
   const cardSwapTargetOf = useCallback(
-    (toRailKey: string) => cardSwapTargetFor(swapFrom, toRailKey, wirex.smartAccountAddress, home),
-    [swapFrom, wirex.smartAccountAddress, home],
+    (toRailKey: string) => cardSwapTargetFor(swapFrom, toRailKey, wirex.depositAddress, home),
+    [swapFrom, wirex.depositAddress, home],
   );
 
   // A chooser hands over to the Move card the way every other sheet hand-off
@@ -2259,10 +2270,20 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           card === "onchain"
             ? addressSnapshot.currentAddress
             : card === "visa"
-              ? wirex.smartAccountAddress
+              ? wirex.depositAddress
               : evmAddress
         )?.trim();
-        if (!payoutAddress) return;
+        if (!payoutAddress) {
+          // The card has an address but it failed the local check (#1899): the
+          // tap must not just die, so it goes to support like any payment failure.
+          if (card === "visa" && wirex.smartAccountAddress) {
+            void reportErrorToSupport({
+              error: new Error("wirex_deposit_address_unverified"),
+              userMessage: "Card top-up is unavailable",
+            }).catch(() => {});
+          }
+          return;
+        }
         const settle: PayWalletSettle = card === "onchain" ? "BTC" : stable;
         // Named and written the way the home names and writes that balance.
         const label = t(
@@ -2304,6 +2325,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     setCardSheet(null);
     if (key === "balances") return openLockedMove("visa", settleWallet, null);
     if (key === "card") return void cardPayout.start();
+    if (key === "uk") return void ukPayout.start();
     return wirexSend.startSepa();
   };
 
@@ -2957,6 +2979,51 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         }}
       />
 
+      {/* Send to a UK bank account: a saved payee, or a new one, then the amount. */}
+      <ChoiceSheet
+        visible={ukPayout.payees !== null}
+        onClose={ukPayout.closePick}
+        title={t("screen.UkPayment.pickTitle")}
+        subtitle={ukPayout.loadFailed ? t("screen.UkPayment.loadFailed") : undefined}
+        items={(ukPayout.payees ?? []).map((p) => ({
+          key: p.payeeId,
+          icon: "bank" as const,
+          accent: "neutral" as const,
+          label:
+            p.name ||
+            t("screen.UkPayment.payeeRow", {
+              sortCode: formatSortCodeInput(p.sortCode),
+              last4: p.accountNumber.slice(-4),
+            }),
+          sublabel: t("screen.UkPayment.payeeRow", {
+            sortCode: formatSortCodeInput(p.sortCode),
+            last4: p.accountNumber.slice(-4),
+          }),
+        }))}
+        onSelect={ukPayout.pick}
+        footerAction={{
+          key: ADD_UK_PAYEE_KEY,
+          label: t("screen.UkPayment.addPayee"),
+          icon: "plus",
+        }}
+      />
+      <UkPayeeAddModal
+        visible={ukPayout.addVisible}
+        onClose={ukPayout.closeAdd}
+        onAdded={ukPayout.added}
+      />
+      <UkPayoutAmountModal
+        visible={ukPayout.payee !== null}
+        onClose={ukPayout.closeAmount}
+        wallet={wirex.wallet ?? ""}
+        payee={ukPayout.payee}
+        currency={home === "USD" ? "USD" : "EUR"}
+        onSuccess={() => {
+          ukPayout.closeAmount();
+          void wirex.silentRefetch();
+        }}
+      />
+
       {/* Transaction history: each rail opens the list that already owns its
           rows, rather than a second reader of the same data. */}
       {/* Scanning from the home says nothing about which bitcoin rail should
@@ -3255,6 +3322,17 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                         accent: "lilac" as const,
                         label: t("screen.CardPayout.sendToCard"),
                       },
+                      // Only where Wirex switched sending to UK accounts on.
+                      ...(wirex.ukSend
+                        ? [
+                            {
+                              key: "uk",
+                              icon: "bank" as const,
+                              accent: "lilac" as const,
+                              label: t("screen.UkPayment.sendToUk"),
+                            },
+                          ]
+                        : []),
                     ]
                   : []),
               ]
@@ -3356,6 +3434,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         maxStablecoinAvailable={sendTokenRail === "dollar" ? (usdcBalance ?? 0) : walletEur}
         toCard={walletSend.sendToWalletIsCard}
         person={send?.recipient.person ?? null}
+        replacedAddress={send?.recipient.replacedAddress ?? null}
         balanceOptions={send ? sendBalanceOptions(send.recipient) : undefined}
         balance={sendTokenRail}
         onPickBalance={switchSendBalance}
@@ -3416,6 +3495,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         expiry={reveal.details?.expiry ?? null}
         cvv={reveal.details?.cvv ?? null}
         {...visibleBankDetails(wirex.isAccountBlocked, wirex.iban)}
+        {...visibleUkBankDetails(wirex.isAccountBlocked, wirex.ukBank)}
         wallet={wirex.wallet}
         cardId={detailsSheetCardId(wirex, lifecycle.activeCard?.id)}
         isFrozen={lifecycle.activeCard?.isFrozen ?? wirex.isFrozen}

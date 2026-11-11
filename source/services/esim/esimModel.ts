@@ -613,17 +613,28 @@ export function isInvoiceOpen(order: EsimPendingOrder, now: number): boolean {
 export type OrderDelivery = "sending" | "delivering";
 
 /**
+ * How long asking nadanada for a paid order may only fail before the page
+ * stops spinning and offers support: a few tries in a row, not one blip.
+ */
+export const CLAIM_FAILING_SLOW_MS = 30 * 1000;
+
+/**
  * Delivery state of an order money may be on, null for one it cannot be on:
  * a send this wallet started (the payment may still be in flight, until the
- * invoice expires) and a payment made, which nadanada delivers later.
+ * invoice expires) and a payment made, which nadanada delivers later. A paid
+ * order is slow once it waited `slowAfterMs`, or sooner when asking nadanada
+ * for it has only failed since `claimFailingSince`.
  */
 export function orderDelivery(
   order: EsimPendingOrder,
   now: number,
   slowAfterMs: number,
+  claimFailingSince?: number,
 ): OrderDelivery | "slow" | null {
   if (order.paidAt !== undefined) {
-    return now - order.paidAt > slowAfterMs ? "slow" : "delivering";
+    const failing =
+      claimFailingSince !== undefined && now - claimFailingSince > CLAIM_FAILING_SLOW_MS;
+    return failing || now - order.paidAt > slowAfterMs ? "slow" : "delivering";
   }
   if (order.sendStartedAt !== undefined && isInvoiceOpen(order, now)) return "sending";
   return null;

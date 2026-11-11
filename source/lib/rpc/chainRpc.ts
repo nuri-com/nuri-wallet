@@ -2,7 +2,14 @@
  * Multi-chain RPC configuration — primary + fallback URLs per chain, with timeout.
  */
 
-import { createPublicClient, http } from "viem";
+import {
+  createPublicClient,
+  createTransport,
+  type EIP1193RequestFn,
+  http,
+  shouldThrow,
+  type Transport,
+} from "viem";
 import { mainnet } from "viem/chains";
 import { RPC_REQUEST_TIMEOUT_MS } from "../../config/constants";
 import { ALCHEMY_API_KEY } from "../../config/network";
@@ -58,6 +65,88 @@ export function getChainRpcUrl(chainId: ChainId): string | undefined {
 
 export function getChainFallbackRpcUrl(chainId: ChainId): string | undefined {
   return CHAIN_RPC[chainId]?.fallback;
+}
+
+export interface StickyFallbackOptions {
+  /**
+   * One state-dependent operation (nonce/gas/simulation reads, then a
+   * broadcast): the first provider that ANSWERS owns the whole operation. Once
+   * the primary has answered, a later primary failure is thrown instead of
+   * failing over, so a transaction prepared from the primary's pending state is
+   * never broadcast through the secondary. The caller's retry starts a fresh
+   * operation (new transport), which can then begin on the secondary.
+   */
+  singleProvider?: boolean;
+}
+
+/**
+ * Primary first, then the secondary, and once it has failed over it STAYS on
+ * the secondary. viem's fallback() restarts at the primary on every JSON-RPC
+ * request, so one sendTransaction could read the nonce from one provider and
+ * broadcast to the other (different pending nonces and mempools). With
+ * `singleProvider` the choice is shared by every client built from the
+ * returned transport and locked once the primary answers (see
+ * StickyFallbackOptions); build one such transport per operation. Reverts and
+ * user rejections never fail over (viem's shouldThrow).
+ */
+export function stickyFallback(
+  primary: Transport,
+  secondary: Transport,
+  { singleProvider = false }: StickyFallbackOptions = {},
+): Transport {
+  // singleProvider: the choice lives on the transport VALUE, so the public and
+  // wallet clients of one operation (built from the same transport) share it.
+  // Default: per client instance, so a long-lived transport (wagmi) gives each
+  // new client a fresh try at the primary.
+  const shared = { current: "primary" as "primary" | "secondary", primaryAnswered: false };
+  return ({ chain, timeout, ...rest }) => {
+    const state = singleProvider
+      ? shared
+      : { current: "primary" as "primary" | "secondary", primaryAnswered: false };
+    const first = primary({ ...rest, chain, timeout, retryCount: 0 });
+    const second = secondary({ ...rest, chain, timeout, retryCount: 0 });
+    const request = async ({ method, params }: { method: string; params?: unknown }) => {
+      const args = { method, params } as Parameters<typeof first.request>[0];
+      if (state.current === "primary") {
+        try {
+          const result = await first.request(args);
+          state.primaryAnswered = true;
+          return result;
+        } catch (err) {
+          if (shouldThrow(err as Error)) throw err;
+          if (singleProvider && state.primaryAnswered) throw err;
+          state.current = "secondary";
+        }
+      }
+      return second.request(args);
+    };
+    return createTransport({
+      key: "fallback",
+      name: "Sticky Fallback",
+      type: "fallback",
+      retryCount: 0,
+      request: request as EIP1193RequestFn,
+    });
+  };
+}
+
+/**
+ * Primary-then-public transport for wallet/public clients that cannot use
+ * withFallback (they hold one transport across several calls). The primary
+ * keeps its own retry budget, so a brief 429/5xx is retried there; the public
+ * node is used only once the primary has thrown (see stickyFallback). Pass
+ * `singleProvider` for a signing operation and share the one transport between
+ * its public and wallet clients.
+ */
+export function getChainTransport(
+  chainId: ChainId,
+  config?: Parameters<typeof http>[1],
+  options?: StickyFallbackOptions,
+): Transport {
+  const rpc = CHAIN_RPC[chainId];
+  const primary = http(rpc?.primary, { retryCount: 3, ...config });
+  if (!rpc?.fallback) return primary;
+  return stickyFallback(primary, http(rpc.fallback, config), options);
 }
 
 // One attempt per URL: a failure moves to the fallback URL instead of retrying

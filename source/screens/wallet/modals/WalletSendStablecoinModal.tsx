@@ -25,6 +25,7 @@ import SendFromRow from "../../../components/send/SendFromRow";
 import { BASE_EURC } from "../../../config/network";
 import { STABLECOIN_MIN_SEND_AMOUNT } from "../../../config/constants";
 import { t } from "../../../lib/i18n";
+import { paidAddressNote } from "../../../lib/send/evmRecipientCheck";
 import { evmDestination } from "../../../lib/addressBook/nuriContacts";
 import { rememberNuriPayment } from "../../../services/addressBook/nuriContactSync";
 import { isValidEvmAddress } from "../../../lib/validation";
@@ -65,6 +66,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   token,
   onSuccess,
   person,
+  replacedAddress,
   balanceOptions,
   balance,
   onPickBalance,
@@ -380,6 +382,10 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
     (savedRecipient
       ? { name: savedRecipient.label, nuriUsername: savedRecipient.nuriUsername }
       : null);
+  // #1897: the username paid at another address than the one scanned or saved
+  // for it. Compared here against the address actually paid, so the note holds
+  // whatever picked it. Neutral: a user's Safe and EOA are both theirs.
+  const replacedNote = paidAddressNote(replacedAddress, recipient);
   const liftRecipient = onCardAmountStep && recipientPerson !== null;
   const closeButton = (
     <IconButton
@@ -484,7 +490,14 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
                   </Text>
                 </View>
               ) : recipientPerson ? (
-                <SendRecipientContact {...recipientPerson} />
+                <>
+                  <SendRecipientContact {...recipientPerson} />
+                  {replacedNote ? (
+                    <Text size="sm" muted align="center">
+                      {t("screen.WalletSendStablecoinModal.addressReplaced", replacedNote)}
+                    </Text>
+                  ) : null}
+                </>
               ) : (
                 <View variant="soft" radius="md" paddingX="lg" paddingY="md" align="stretch">
                   <Text size="sm" mono muted flow="truncate" lines={1}>

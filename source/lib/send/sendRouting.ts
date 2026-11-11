@@ -47,6 +47,10 @@ export type SendRecipient = {
   /** An amount the scanned or pasted code asked for, in sats or in the stable. */
   amountSats?: string;
   amountStable?: string;
+  /** A plain 0x... scanned, pasted or saved for this Nuri user that is not
+   * among their addresses now: the send pays their current address instead,
+   * and the send sheet names both (#1897). */
+  replacedAddress?: string;
 };
 
 export const isSwapRoute = (

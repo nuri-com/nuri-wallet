@@ -13,6 +13,7 @@ import {
   validateVtxoTxGraph,
 } from "@arkade-os/sdk";
 import { ExpoArkProvider } from "@arkade-os/sdk/adapters/expo";
+import { reopenWhenCut } from "./roundEventStream";
 import type { ArkadeInfo } from "@arkade-os/sdk";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { base64 } from "@scure/base";
@@ -697,7 +698,17 @@ export function installArkadeProviderTracePatch(wallet: PatchableArkadeWallet): 
         resolveStreamReady = resolve;
       });
 
-      const baseIter = originalGetEventStream(signal, finalTopics);
+      const baseIter = reopenWhenCut(() => originalGetEventStream(signal, finalTopics), {
+        signal,
+        onReopen: (error) => {
+          emitTrace({
+            atMs: Date.now(),
+            op: "ark_provider_stream",
+            status: "reopen",
+            detail: `events=${count} err=${truncateForLog(errMsg(error, "unknown"), 170)}`,
+          });
+        },
+      });
       const queuedEvents: unknown[] = [];
       const waiters: Array<{
         resolve: (result: IteratorResult<unknown>) => void;
@@ -854,6 +865,15 @@ export function installArkadeProviderTracePatch(wallet: PatchableArkadeWallet): 
             () => {},
           );
           return Promise.resolve({ value: undefined, done: true });
+        },
+        // The SDK delegates to this stream, and a delegating consumer hands a
+        // failure back through throw(). Without it the native engine closes the
+        // stream instead and reports its own "iterator.return() did not return an
+        // object" in place of the error that ended the claim.
+        throw(error?: unknown): Promise<IteratorResult<unknown>> {
+          finish();
+          void Promise.resolve(baseIter.return?.(undefined)).catch(() => {});
+          return Promise.reject(error);
         },
         [Symbol.asyncIterator](): AsyncIterableIterator<unknown> {
           emitTrace({

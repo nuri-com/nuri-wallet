@@ -18,6 +18,7 @@ import {
   isAddressEqual,
   keccak256,
   parseAbi,
+  toFunctionSelector,
   toHex,
 } from "viem";
 import { swapKitStableToken } from "./SwapKitStableAssets";
@@ -349,6 +350,31 @@ function decodeLifiBridge(data: string): { bridge: LifiBridgeData; steps: LifiSw
   }
 }
 
+/** Selectors of the LayerSwap facet, the one Bitcoin bridge naming its payout. */
+const LAYERSWAP_SELECTORS = new Set(
+  LIFI_ABI.filter((item) => item.name.endsWith("ViaLayerSwap")).map((item) =>
+    toFunctionSelector(item).toLowerCase(),
+  ),
+);
+/** The LayerSwap facet's own argument, or null for any other LI.FI call. */
+function layerSwapDataOf(decoded: {
+  functionName: string;
+  args: readonly unknown[];
+}): { nonEVMReceiver: `0x${string}` } | null {
+  const index =
+    decoded.functionName === "startBridgeTokensViaLayerSwap"
+      ? 1
+      : decoded.functionName === "swapAndStartBridgeTokensViaLayerSwap"
+        ? 2
+        : -1;
+  if (index < 0) return null;
+  const data = decoded.args[index] as { nonEVMReceiver?: unknown } | undefined;
+  if (typeof data?.nonEVMReceiver !== "string") {
+    throw new Error("LI.FI LayerSwap call carries no readable Bitcoin receiver; refusing it.");
+  }
+  return { nonEVMReceiver: data.nonEVMReceiver as `0x${string}` };
+}
+
 /**
  * What a LI.FI call takes from the wallet. The Diamond pulls `fromAmount` of
  * `sendingAssetId` for every swap step marked `requiresDeposit`, or, for a
@@ -432,6 +458,22 @@ function assertLifiCallBound(
     // chain; the recipient is the server's order, as for every provider route.
     if (BigInt(bridge.destinationChainId) !== LIFI_BITCOIN_CHAIN_ID) {
       throw new Error(`LI.FI bridge pays out on chain ${bridge.destinationChainId}, not Bitcoin.`);
+    }
+    // LayerSwap is the one Bitcoin facet whose calldata names the payout
+    // address (`nonEVMReceiver`), so there it is bound to the committed one
+    // (#1894). Keyed on the decoded selector; any other facet (Relay carries
+    // no Bitcoin address) stays bound by the chain only, as above.
+    const layerSwap = decoded ? layerSwapDataOf(decoded) : null;
+    if (!layerSwap && LAYERSWAP_SELECTORS.has(data.slice(0, 10).toLowerCase())) {
+      throw new Error("LI.FI LayerSwap call carries no readable Bitcoin receiver; refusing it.");
+    }
+    if (layerSwap) {
+      const expected = lifiNonEvmReceiverFor(settle.address);
+      if (layerSwap.nonEVMReceiver.toLowerCase() !== expected.toLowerCase()) {
+        throw new Error(
+          "LI.FI LayerSwap bridge pays a Bitcoin address other than the committed one.",
+        );
+      }
     }
     return assertLifiSpendBound(steps, bridge, binding.sourceToken, ceiling);
   }

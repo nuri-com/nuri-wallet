@@ -38,11 +38,11 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { http, WagmiProvider, createConfig, useAccount, useDisconnect } from "wagmi";
+import { WagmiProvider, createConfig, useAccount, useDisconnect } from "wagmi";
 import { disconnect } from "wagmi/actions";
 import { arbitrum, base, gnosis, mainnet, optimism, polygon } from "wagmi/chains";
 import { WALLETCONNECT_PROJECT_ID } from "../../config/endpoints";
-import { getChainRpcUrl } from "../rpc/chainRpc";
+import { getChainTransport } from "../rpc/chainRpc";
 import type { ChainId } from "../tokens";
 import {
   type Eip1193Provider,
@@ -65,8 +65,8 @@ const CHAINS = [mainnet, base, arbitrum, optimism, polygon, gnosis] as const;
  * allows), never to wagmi's public defaults.
  */
 const transports = Object.fromEntries(
-  CHAINS.map((chain) => [chain.id, http(getChainRpcUrl(chain.id as ChainId))]),
-) as Record<(typeof CHAINS)[number]["id"], ReturnType<typeof http>>;
+  CHAINS.map((chain) => [chain.id, getChainTransport(chain.id as ChainId)]),
+) as Record<(typeof CHAINS)[number]["id"], ReturnType<typeof getChainTransport>>;
 
 /**
  * MetaMask without the MetaMask SDK. RainbowKit's own metaMaskWallet connects

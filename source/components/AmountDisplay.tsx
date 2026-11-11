@@ -16,6 +16,7 @@ import { t } from "../lib/i18n";
 export const BTC_LOGO: ImageSourcePropType = require("../assets/rails/btc.png");
 export const EUR_FLAG: ImageSourcePropType = require("../assets/flags/eur.png");
 export const USD_FLAG: ImageSourcePropType = require("../assets/flags/usa.png");
+export const GBP_FLAG: ImageSourcePropType = require("../assets/flags/gbr.png");
 
 /** How a screen reader names a sats figure. */
 export const SATS_UNIT = "sats";

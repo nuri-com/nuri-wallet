@@ -362,7 +362,9 @@ function clientsFor(chainId: 8453 | 42161) {
   // Base uses the app's configured transport; Arbitrum One rides viem's
   // default public RPC — canary traffic only, swap in a dedicated RPC when
   // these routes carry volume.
-  const transport = chainId === 8453 ? getBaseViemTransport() : http();
+  // One provider for the whole action (see stickyFallback singleProvider).
+  const transport =
+    chainId === 8453 ? getBaseViemTransport(undefined, { singleProvider: true }) : http();
   return {
     publicClient: createPublicClient({ chain, transport }),
     walletClient: (account: ReturnType<typeof privateKeyToAccount>) =>

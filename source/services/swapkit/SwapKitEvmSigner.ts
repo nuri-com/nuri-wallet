@@ -1,10 +1,10 @@
-import { createPublicClient, createWalletClient, encodeFunctionData, http, type Chain } from "viem";
+import { createPublicClient, createWalletClient, encodeFunctionData, type Chain } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { arbitrum, avalanche, base, bsc, gnosis, mainnet, optimism, polygon } from "viem/chains";
 import { bytesToHex, zeroize } from "../../lib/crypto";
 import { getPrivateKey } from "../../lib/secureKeyStorage";
 import { getBaseViemTransport } from "../../lib/rpc/baseRpc";
-import { getChainRpcUrl } from "../../lib/rpc/chainRpc";
+import { getChainTransport } from "../../lib/rpc/chainRpc";
 import type { ChainId } from "../../lib/tokens";
 import type { ParsedSwapActionTx } from "./SwapKitService";
 import { ethereumFees } from "./ethereumFees";
@@ -268,11 +268,17 @@ export async function signAndBroadcastSwapKitEvmTx(
   // http() falls back to the chain's public endpoint with no timeout and no
   // retries — on Arbitrum that is what turns a sweep into three "attempt ended
   // without any funds moving" failures, which the server then blocks for 6h.
-  const rpcUrl = parsed.chainId === base.id ? undefined : getChainRpcUrl(parsed.chainId as ChainId);
+  // Both fail over to the chain's public node only if the paid RPC throws
+  // before it has answered anything; the one shared transport keeps every
+  // read and broadcast of this action (approval included) on one provider.
   const transport =
     parsed.chainId === base.id
-      ? getBaseViemTransport()
-      : http(rpcUrl, { retryCount: 2, timeout: 10_000 });
+      ? getBaseViemTransport(undefined, { singleProvider: true })
+      : getChainTransport(
+          parsed.chainId as ChainId,
+          { retryCount: 2, timeout: 10_000 },
+          { singleProvider: true },
+        );
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ chain, transport, account });
   type Fees = Awaited<ReturnType<typeof ethereumFees>>;

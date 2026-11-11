@@ -418,6 +418,8 @@ export const de = {
       tabCard: "Karte",
       tabBank: "Bank",
       ibanLabel: "IBAN",
+      sortCodeLabel: "Sort Code",
+      accountNumberLabel: "Kontonummer",
       bicLabel: "BIC",
       cardHolderLabel: "Name auf der Karte",
       accountHolderLabel: "Kontoinhaber",
@@ -508,6 +510,29 @@ export const de = {
         "Die \u00dcberweisung ging nicht durch. Pr\u00fcfe deine Aktivit\u00e4t, bevor du es erneut versuchst.",
       activityLabel: "Karten\u00fcberweisung",
     },
+    UkPayment: {
+      sendToUk: "Auf ein britisches Bankkonto",
+      pickTitle: "An ein britisches Bankkonto senden",
+      addPayee: "Britisches Bankkonto hinzufügen",
+      addTitle: "Britisches Bankkonto hinzufügen",
+      nameLabel: "Kontoinhaber",
+      namePlaceholder: "Name oder Firma",
+      sortCodeLabel: "Sort Code",
+      accountNumberLabel: "Kontonummer",
+      saveLabel: "Konto speichern",
+      addFailed: "Das Konto konnte nicht gespeichert werden. Prüfe Sort Code und Kontonummer.",
+      loadFailed:
+        "Deine britischen Bankkonten konnten nicht geladen werden. Versuche es gleich noch einmal.",
+      payeeRow: "%{sortCode} \u2022\u2022\u2022\u2022 %{last4}",
+      amountTitle: "Pfund senden",
+      sendCtaLabel: "GBP %{amount} an %{name} senden",
+      sendCtaLabelNoAmount: "GBP an %{name} senden",
+      feeHint: "Nicht genug für Betrag und Gebühr. Versuche einen kleineren Betrag.",
+      unconfirmedHint:
+        "Deine letzte Zahlung nach Großbritannien wird noch bestätigt. Sieh in deinen Aktivitäten nach; du kannst wieder senden, sobald sie geklärt ist.",
+      sendFailedHint:
+        "Die \u00dcberweisung ging nicht durch. Pr\u00fcfe deine Aktivit\u00e4t, bevor du es erneut versuchst.",
+    },
     SepaAmountConfirmationModal: {
       headerTitle: "Euro senden",
       headerTitleWithBalance: "Euro senden (%{amount})",
@@ -558,6 +583,7 @@ export const de = {
       invalidAddressError: "Ungültige Adresse oder ungültiger Name.",
       ensNotFound: "Dieser Name f\u00fchrt zu keiner Adresse.",
       lookupFailed: "Name konnte nicht gepr\u00fcft werden. Bitte erneut versuchen.",
+      addressReplaced: "Zahlung an %{paid}, die aktuelle Nuri-Adresse (nicht %{scanned}).",
       exceedsBalanceHint: "\u00dcbersteigt das verf\u00fcgbare Guthaben",
     },
     HomeScreen: {

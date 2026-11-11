@@ -104,7 +104,7 @@ export function walletActivityItems(
     }
     // A plain transfer to or from the card's own deposit address is the
     // user's own move: it reads as the card, never as a stranger's wallet.
-    const cardAddress = (wirexAccountService.depositAddress() ?? "").toLowerCase();
+    const cardAddress = (wirexAccountService.accountAddress() ?? "").toLowerCase();
     // A card withdrawal is paid out by Wirex's contract, not by the card
     // account, so it is known by the transaction the card withdrew in.
     const isOwnCard =
