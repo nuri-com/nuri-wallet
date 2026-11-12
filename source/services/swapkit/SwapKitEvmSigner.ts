@@ -6,6 +6,7 @@ import { getPrivateKey } from "../../lib/secureKeyStorage";
 import { getBaseViemTransport } from "../../lib/rpc/baseRpc";
 import { getChainTransport } from "../../lib/rpc/chainRpc";
 import type { ChainId } from "../../lib/tokens";
+import { ensureBaseMainnetGas } from "../base/BaseTokenTransferService";
 import type { ParsedSwapActionTx } from "./SwapKitService";
 import { ethereumFees } from "./ethereumFees";
 import { swapGasLimit } from "./swapGasLimit";
@@ -380,6 +381,24 @@ export async function signAndBroadcastSwapKitEvmTx(
     });
     return swapGasLimit(parsed.gasLimit, estimated);
   });
+  // A Base swap is paid from the wallet's own ETH, and the node refuses the
+  // broadcast unless the balance covers the whole gas limit at the maximum fee,
+  // whatever the swap ends up using. The background top-up only looks at the
+  // cost of a plain token send, so a wallet holding a little ETH was never
+  // topped up and failed every route with a large limit (2026-11-11: 39.4
+  // micro-ETH held, 3,056,975 gas at 0.0132 gwei = 40.4 needed, twice). Ask the
+  // faucet for exactly this call, with a quarter of headroom for a fee that
+  // moves before the send. A failed read or a refused top-up changes nothing:
+  // the send below stays the verdict.
+  if (parsed.chainId === base.id) {
+    try {
+      const { maxFeePerGas } = await publicClient.estimateFeesPerGas();
+      await ensureBaseMainnetGas(account.address, {
+        awaitConfirmation: true,
+        minWei: (gas * maxFeePerGas * 5n) / 4n,
+      });
+    } catch {}
+  }
   // Fees are read before the STARTED marker: an interrupted read must leave an
   // unsent action retryable, not marked as broadcast.
   const fees = await ethereumFees(publicClient, parsed.chainId);

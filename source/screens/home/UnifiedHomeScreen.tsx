@@ -55,6 +55,7 @@ import { createArkadeLightningInvoice } from "../../services/arkade/ArkadeLightn
 import { groupCount } from "../../lib/formatting";
 import type { SwapAssetId } from "../../services/swapkit/SwapContract";
 import {
+  BTC_LIGHTNING_ASSET,
   BTC_ONCHAIN_ASSET,
   EURC_BASE_TOKEN,
   USDC_BASE_TOKEN,
@@ -333,6 +334,8 @@ type SendSwapTarget = {
   address: string;
   fiat: "EUR" | "USD" | null;
   asset: SwapAssetId;
+  /** The recipient's Lightning address, priced beside their onchain one. */
+  alternative?: { asset: SwapAssetId; address: string };
   /** A payment request: exactly this arrives (sats for Bitcoin). */
   exactReceive?: number;
 };
@@ -1162,11 +1165,12 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       return true;
     }
     // Paid in a currency the recipient has no address for: swapped on the way,
-    // into Bitcoin, or into the stable they asked for (else the main currency).
+    // into Bitcoin (to an onchain or a Lightning address), or into the stable
+    // they asked for (else the main currency).
     // An address on another network is paid in that network's stable (#1783).
     const settleAsset = route.kind === "swap-to-stable" ? route.settleAsset : undefined;
     const fiat: "EUR" | "USD" | null =
-      route.kind === "swap-to-bitcoin"
+      route.kind !== "swap-to-stable"
         ? null
         : settleAsset
           ? settleAsset.startsWith("EUR")
@@ -1184,8 +1188,13 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       fiat,
       asset:
         fiat === null
-          ? BTC_ONCHAIN_ASSET
+          ? route.kind === "swap-to-lightning"
+            ? BTC_LIGHTNING_ASSET
+            : BTC_ONCHAIN_ASSET
           : (settleAsset ?? (fiat === "USD" ? USDC_BASE_TOKEN.asset : EURC_BASE_TOKEN.asset)),
+      ...(route.kind === "swap-to-bitcoin" && route.lightningAddress
+        ? { alternative: { asset: BTC_LIGHTNING_ASSET, address: route.lightningAddress } }
+        : {}),
     });
     setMoveLock("to");
     setSwapFrom(balance);
@@ -2510,8 +2519,21 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       ...(rail.key === "onchain" && addressSnapshot.musig2Address
         ? { settleAddress: addressSnapshot.musig2Address }
         : {}),
+      // Into Lightning the boarding address always works; the wallet's own
+      // Lightning address is priced beside it and arrives at once when the
+      // amount fits (#1934).
       ...(rail.key === "arkade" && addressSnapshot.currentAddress
-        ? { settleAddress: addressSnapshot.currentAddress }
+        ? {
+            settleAddress: addressSnapshot.currentAddress,
+            ...(username
+              ? {
+                  settleAlternative: {
+                    asset: BTC_LIGHTNING_ASSET,
+                    address: nuriLightningAddress(username),
+                  },
+                }
+              : {}),
+          }
         : {}),
     };
   };
@@ -2807,14 +2829,21 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                   .map(toMoveRail),
                 {
                   key: SEND_RECIPIENT_RAIL,
-                  label: sendSwap.recipient.person?.name ?? shortAddress(sendSwap.address),
+                  // A Lightning address reads as a name, so it is shown whole.
+                  label:
+                    sendSwap.recipient.person?.name ??
+                    (sendSwap.asset === BTC_LIGHTNING_ASSET
+                      ? sendSwap.address
+                      : shortAddress(sendSwap.address)),
                   image: sendSwap.recipient.person
                     ? contactAvatar({
                         label: sendSwap.recipient.person.name,
                         nuriUsername: sendSwap.recipient.person.nuriUsername,
                       })
                     : sendSwap.fiat === null
-                      ? BTC_LOGO
+                      ? sendSwap.asset === BTC_LIGHTNING_ASSET
+                        ? LIGHTNING_LOGO
+                        : BTC_LOGO
                       : sendSwap.fiat === "USD"
                         ? USD_FLAG
                         : EUR_FLAG,
@@ -2823,6 +2852,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                   whole: sendSwap.fiat === null,
                   asset: sendSwap.asset,
                   settleAddress: sendSwap.address,
+                  ...(sendSwap.alternative ? { settleAlternative: sendSwap.alternative } : {}),
                   settleKind: "external" as const,
                 },
               ]

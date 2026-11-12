@@ -986,6 +986,26 @@ export async function arkadeLightningLimits(): Promise<ArkadeLightningLimitsResp
   return parseJsonResponse<ArkadeLightningLimitsResponse>("lightningLimits", res);
 }
 
+export type ArkadeReceiveTaggedResponse = {
+  ok: boolean;
+  receive?: { tag: string; claimed: boolean; amount_msat: number } | null;
+};
+
+// Whether the receive issued under this wallet's own tag (`name+tag@domain`)
+// has been claimed. One database read on the server, nothing else, so it can
+// be asked every few seconds.
+export async function arkadeReceiveTagged(
+  owner: ArkadeReceiveOwner,
+  tag: string,
+): Promise<ArkadeReceiveTaggedResponse> {
+  const res = await fetchWithTimeout("receiveTagged", buildSignerUrl("/arkade/receive/tagged"), {
+    method: "POST",
+    headers: buildHeaders(true),
+    body: JSON.stringify({ ...receiveOwnerBody(owner), tag }),
+  });
+  return parseJsonResponse<ArkadeReceiveTaggedResponse>("receiveTagged", res);
+}
+
 export async function arkadeLnurlSearch(query: string): Promise<ArkadeLnurlSearchResponse> {
   const res = await fetchWithTimeout("lnurlSearch", buildSignerUrl("/arkade/lnurl/search"), {
     method: "POST",

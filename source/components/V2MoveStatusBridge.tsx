@@ -65,9 +65,17 @@ export default function V2MoveStatusBridge(): React.ReactElement | null {
     [moves, visible],
   );
 
+  // The pill currently on screen, if one is: set while a MovePill is mounted,
+  // so a copy toast or an OTA offer that replaced it is never hidden by us.
+  const onScreenRef = React.useRef<string | null>(null);
+
   React.useEffect(() => {
     if (!visible) {
       shownRef.current = "";
+      // The move is gone (a declined passkey, a send refused before anything
+      // left): a running pill stays until replaced, so take it down, or it
+      // keeps saying "Keep app open" for a move that no longer exists.
+      if (onScreenRef.current) toast.hide();
       return;
     }
     const signature = movePillSignature(visible, othersRunning);
@@ -82,6 +90,8 @@ export default function V2MoveStatusBridge(): React.ReactElement | null {
         <MovePill
           key={signature}
           move={visible}
+          onScreenRef={onScreenRef}
+          signature={signature}
           // A running move sits over the home for as long as Bitcoin takes to
           // confirm, so it folds down to its icon. Anything asking for the user
           // or reporting an outcome stays full.
@@ -160,11 +170,21 @@ function MovePill({
   move,
   compactable,
   onPress,
+  onScreenRef,
+  signature,
 }: {
   move: SwapKitV2Move;
   compactable: boolean;
   onPress?: () => void;
+  onScreenRef: React.MutableRefObject<string | null>;
+  signature: string;
 }): React.ReactElement {
+  React.useEffect(() => {
+    onScreenRef.current = signature;
+    return () => {
+      if (onScreenRef.current === signature) onScreenRef.current = null;
+    };
+  }, [onScreenRef, signature]);
   const [compact, setCompact] = React.useState(false);
   const [fullHeight, setFullHeight] = React.useState(0);
   const progress = React.useRef(new Animated.Value(0)).current;

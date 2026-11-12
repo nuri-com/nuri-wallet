@@ -16,3 +16,19 @@ export function isRateLimitError(message: string | null | undefined): boolean {
   if (!text) return false;
   return RATE_LIMIT_PATTERNS.some((pattern) => pattern.test(text));
 }
+
+/**
+ * The copy key the Bitcoin activity list shows for a failed history read.
+ * Never the error text itself: provider and network messages ("Failed to
+ * fetch transactions: Not Found") are not for users (#1383). The real error
+ * stays in the console log.
+ */
+export function historyErrorCopyKey(
+  message: string | null | undefined,
+):
+  | "screen.BitcoinTransactionsModal.errorRateLimited"
+  | "screen.BitcoinTransactionsModal.errorLoadFailed" {
+  return isRateLimitError(message)
+    ? "screen.BitcoinTransactionsModal.errorRateLimited"
+    : "screen.BitcoinTransactionsModal.errorLoadFailed";
+}

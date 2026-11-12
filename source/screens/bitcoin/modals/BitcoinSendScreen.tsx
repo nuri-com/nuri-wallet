@@ -93,10 +93,8 @@ import { satsFromAmountEntry } from "../../../lib/bitcoin/convert";
 import { sanitizeDigits, sanitizeFiatDigits } from "../../../lib/sanitizeDigits";
 import { useHomeCurrency } from "../../../lib/currency/useHomeCurrency";
 import { decodeBolt11Facts, isBolt11Invoice } from "../../../lib/bitcoin/lightning";
-import {
-  LIGHTNING_TO_BITCOIN_MIN_SATS,
-  LIGHTNING_TO_BITCOIN_SPREAD_MULTIPLIER,
-} from "../../../services/swapkit/LightningToBitcoinLimits";
+import { LIGHTNING_TO_BITCOIN_SPREAD_MULTIPLIER } from "../../../services/swapkit/LightningToBitcoinLimits";
+import { useLightningToBitcoinMinSats } from "../../home/hooks/useLightningToBitcoinMinSats";
 import {
   checkRemitInvoice,
   type RemitInvoiceRefusal,
@@ -197,6 +195,8 @@ export default function BitcoinSendScreen({
 }: Props) {
   // The solver's live limits (lightningLimits.ts); a re-render follows a change.
   const lightningSendLimits = useArkadeLightningLimits(visible).send;
+  // The corridor's floor, read live: it follows the BTC price.
+  const corridorMinSats = useLightningToBitcoinMinSats(visible);
   type InputMode = "sats" | "fiat";
   const [toAddress, setToAddress] = useState(presetAddress ?? "");
   // A short screen compacts the keypad before it scrolls.
@@ -758,7 +758,7 @@ export default function BitcoinSendScreen({
     !isRecipientLnurl &&
     effectiveSendSource !== "onchain";
   const bitcoinAddressMinSats = isArkadeToBitcoinAddress
-    ? Math.max(onchainMinSats, LIGHTNING_TO_BITCOIN_MIN_SATS)
+    ? Math.max(onchainMinSats, corridorMinSats)
     : onchainMinSats;
   // The recipient as the corridor is asked for it, or null when this is not a
   // Tanzanian or Kenyan mobile number. Null is what every branch below reads,
@@ -840,10 +840,9 @@ export default function BitcoinSendScreen({
     if (balanceSats === null && settleableSats === null) return null;
     const viaOffboard = settleableSats ?? 0;
     // The corridor can only take the balance if the floor is reachable at all.
-    const viaCorridor =
-      (balanceSats ?? 0) >= LIGHTNING_TO_BITCOIN_MIN_SATS ? (balanceSats ?? 0) : 0;
+    const viaCorridor = (balanceSats ?? 0) >= corridorMinSats ? (balanceSats ?? 0) : 0;
     return Math.max(0, Math.max(viaOffboard, viaCorridor) - estimatedFeeSats);
-  }, [balanceSats, settleableSats, isRecipientBitcoinAddress, estimatedFeeSats]);
+  }, [balanceSats, settleableSats, isRecipientBitcoinAddress, estimatedFeeSats, corridorMinSats]);
   // The Ark server refuses any output under its `vtxoMinAmount`, the change
   // included. The figure SHOWN for an Arkade balance is therefore the balance
   // less that floor: every amount up to it can go out (the send adds a coin
@@ -870,8 +869,8 @@ export default function BitcoinSendScreen({
   // vtxos, which is the too-fresh failure a balance-keyed flag would wave
   // through after the screen had already accepted the amount.
   const sendsOverCorridor = useMemo(
-    () => currentSats >= LIGHTNING_TO_BITCOIN_MIN_SATS,
-    [currentSats],
+    () => currentSats >= corridorMinSats,
+    [currentSats, corridorMinSats],
   );
   // An Arkade send to a Bitcoin address: the address and amount are known
   // before the user confirms, so the corridor quote runs while they review it

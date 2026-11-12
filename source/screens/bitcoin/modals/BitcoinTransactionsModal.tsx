@@ -14,6 +14,7 @@ import {
 import { inFlightCsvRecord, unsettledInFlight } from "../../../services/export/inFlightExport";
 import ActivitySheet, { type ActivityItem } from "../../../components/ActivitySheet";
 import { priceService } from "../../../services/pricing/PriceService";
+import { cachedHistoryPriceStamps } from "../../../services/bitcoin/historyPriceStamps";
 import { EventBus } from "../../../services/events/AppEventBusService";
 import { getCacheValue, setCacheValue } from "../../../services/balance/TransactionCacheService";
 import { useHomeCurrency } from "../../../lib/currency/useHomeCurrency";
@@ -23,7 +24,7 @@ import {
   getBitcoinTransactionsMetaCacheKey,
 } from "../../../services/balance/transactions/cacheKeys";
 import type { BitcoinTransactionsProps, AddressTx } from "../../../types/bitcoin";
-import { isRateLimitError } from "../../../lib/bitcoin/rateLimit";
+import { historyErrorCopyKey, isRateLimitError } from "../../../lib/bitcoin/rateLimit";
 import type { UnifiedTransaction } from "../../../services/arkade/ArkadeTransactionHistoryService";
 import {
   getBitcoinTransactions,
@@ -71,6 +72,10 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
   // The fiat column is in the display currency; each row is priced at its own
   // time in it.
   const homeSym = useHomeCurrency();
+  // Read by the cache hydration on open, which must not rerun (and refetch the
+  // history) on a currency switch; the switch re-prices in its own effect.
+  const homeSymRef = useRef(homeSym);
+  homeSymRef.current = homeSym;
   const inFlight = useInFlightRows(
     // The one Bitcoin history is both rails, so it carries both rails' money in
     // flight; a per-rail list carries its own only.
@@ -199,12 +204,11 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
           // A rate-limited read says nothing about the history: keep the rows
           // already shown, say plainly that the list is busy, and back off
           // instead of retrying straight away.
-          if (isRateLimitError(result.error)) {
-            setError(t("screen.BitcoinTransactionsModal.errorRateLimited"));
-            scheduleRateLimitRetry();
-          } else {
-            setError(result.error);
-          }
+          // Any other failure shows plain copy, never the provider's error
+          // text (#1383); the text itself only goes to the log.
+          console.warn("[BitcoinTransactionsModal] refreshAll error", { error: result.error });
+          setError(t(historyErrorCopyKey(result.error)));
+          if (isRateLimitError(result.error)) scheduleRateLimitRetry();
         } else {
           rateLimitRetriesRef.current = 0;
         }
@@ -215,13 +219,9 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
           "[BitcoinTransactionsModal] refreshAll threw",
           e instanceof Error ? e.message : String(e),
         );
-        const message = e instanceof Error ? e.message : "Failed to load transactions";
-        if (isRateLimitError(message)) {
-          setError(t("screen.BitcoinTransactionsModal.errorRateLimited"));
-          scheduleRateLimitRetry();
-        } else {
-          setError(message);
-        }
+        const message = e instanceof Error ? e.message : String(e);
+        setError(t(historyErrorCopyKey(message)));
+        if (isRateLimitError(message)) scheduleRateLimitRetry();
       } finally {
         // Only the newest request may release the guard: a superseded response
         // must not clear it while a newer request is running.
@@ -266,20 +266,34 @@ const BitcoinTransactionsModal: React.FC<Props> = ({
       // Hydrate from db cache for instant display of legacy onchain rows
       // while the fresh refreshAll() is in flight.
       let cached: AddressTx[] | null = null;
+      let cachedArkade: UnifiedTransaction[] | null = null;
       let full = false;
       if (hasAddress) {
         try {
-          const cachedArkade = await getCacheValue<UnifiedTransaction[]>(arkadeCacheKey);
-          if (!cancelled && Array.isArray(cachedArkade) && cachedArkade.length > 0) {
-            setArkadeTxs(cachedArkade);
-          }
+          cachedArkade = await getCacheValue<UnifiedTransaction[]>(arkadeCacheKey);
         } catch {}
         try {
           cached = await getCacheValue<AddressTx[]>(dbCacheKey);
-          // The db cache is keyed by the boarding address, so every cached tx
-          // classifies against it.
-          if (!cancelled && cached) setTxs(cached.map((tx) => ({ tx, address })));
         } catch {}
+        // The rows' prices are on disk from an earlier session, but the
+        // synchronous read the rows render with only sees memory, which is
+        // empty after a cold start. Load them from disk in the background and
+        // re-render once they are in, so the cached rows show their fiat
+        // values without waiting for the refresh to price every row again.
+        // Not awaited: a long history means many disk reads, and neither the
+        // rows nor the refresh should wait for them.
+        void priceService
+          .warmFromDisk(cachedHistoryPriceStamps(cachedArkade, cached), homeSymRef.current)
+          .catch(() => 0)
+          .then((warmed) => {
+            if (!cancelled && warmed > 0) setPricesVersion((v) => v + 1);
+          });
+        if (!cancelled && Array.isArray(cachedArkade) && cachedArkade.length > 0) {
+          setArkadeTxs(cachedArkade);
+        }
+        // The db cache is keyed by the boarding address, so every cached tx
+        // classifies against it.
+        if (!cancelled && Array.isArray(cached)) setTxs(cached.map((tx) => ({ tx, address })));
         try {
           const meta = await getCacheValue<boolean>(dbMetaKey);
           if (typeof meta === "boolean") {

@@ -174,6 +174,8 @@ export const uk = {
     BitcoinTransactionsModal: {
       title: "Операції Bitcoin",
       errorRateLimited: "Історія Bitcoin зараз перевантажена. Показані рядки все ще правильні.",
+      errorLoadFailed:
+        "Не вдалося завантажити історію Bitcoin. Потягніть вниз, щоб спробувати ще раз.",
       pendingBalanceLabel: "Bitcoin в очікуванні",
     },
     BitcoinReceiveModal: {
@@ -194,6 +196,7 @@ export const uk = {
       stepWaiting: "Очікування",
       autoNote:
         "Цей обмін виконується сам. Тобі не потрібно нічого робити чи тримати застосунок відкритим.",
+      statusLoadFailed: "Не вдалося завантажити поточний статус. Спробуйте ще раз за мить.",
       contactSupport: "Звернутися в підтримку",
     },
     LightningInvoiceSheet: {
@@ -377,10 +380,9 @@ export const uk = {
       keysNotReady: "Ключі не готові.",
       pickRecipient: "Обери отримувача.",
       cannotMessageYourself: "Не можна написати самому собі.",
-      sendErrorWithMessage: "Помилка надсилання: %{message}",
       sendError: "Помилка надсилання",
-      keyErrorWithMessage: "Помилка ключа: %{message}",
       keyError: "Помилка ключа",
+      passkeyCreateFailed: "Не вдалося створити passkey. Спробуйте ще раз.",
       noRelayUrlsConfigured: "Адреси relay не налаштовано.",
       noRelayConnectionAvailable: "Немає доступного з'єднання з relay.",
       sending: "Надсилаємо…",

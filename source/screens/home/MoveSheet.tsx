@@ -75,6 +75,7 @@ import { moveSourceAmount, moveSpendAmount, moveTransferBounds } from "./moveSpe
 import { moveRailPairOpen, moveRailPickOpen } from "./movePairs";
 import { type MoveSwapExecuted, useMoveSwap } from "./hooks/useMoveSwap";
 import { useMoveSwapBounds } from "./hooks/useMoveSwapBounds";
+import { useLightningToBitcoinMinSats } from "./hooks/useLightningToBitcoinMinSats";
 import { swapBoundBlock } from "../../services/swapkit/SwapAmountBounds";
 import { useArkadeLightningLimits } from "../../services/arkade/lightningLimits";
 import AppFooter from "../../components/AppFooter";
@@ -121,6 +122,8 @@ export type SwapRail = {
    * to — the other one.
    */
   settleAddress?: string;
+  /** The same recipient's address on another Bitcoin rail, priced alongside. */
+  settleAlternative?: { asset: SwapAssetId; address: string };
   /**
    * Which of the app's own balances this rail IS, for a swap that settles on it.
    * The address alone tells the durable order nothing about whose figure needs
@@ -404,6 +407,8 @@ const MoveSheet: React.FC<Props> = ({
       ? moveSourceAmount({ typed: typedSourceAmount, available: from.available, whole: from.whole })
       : typedSourceAmount;
   const hasAmount = sourceAmount > 0;
+  // The Lightning corridor's floor follows the BTC price: re-read on each open.
+  const corridorMinSats = useLightningToBitcoinMinSats(visible);
   // Measured on the SOURCE side whichever side was typed in: the figure the
   // keypad holds may be the destination's, and it is the source balance that
   // has to cover the move. It reads the rail's spendable balance — settled,
@@ -419,6 +424,7 @@ const MoveSheet: React.FC<Props> = ({
     quotedSendAmount: swap.selectedQuote?.sendAmount,
     fromKey: from?.key,
     toKey: to?.key,
+    corridorMinSats,
   });
   const overBalance = from?.available != null && spendAmount > from.available;
   // A source whose balance has not been read yet states no ceiling. That is not
@@ -435,6 +441,7 @@ const MoveSheet: React.FC<Props> = ({
     from: priced ? from?.asset : undefined,
     to: priced ? to?.asset : undefined,
     sendSource: from?.sendSource,
+    alternativeTo: priced ? to?.settleAlternative?.asset : undefined,
   });
   // A transfer has no quote, but arkade -> onchain still runs over the
   // corridor and carries its band: the live Lightning send ceiling, re-read
@@ -442,7 +449,7 @@ const MoveSheet: React.FC<Props> = ({
   const lightningMaxSats = useArkadeLightningLimits(visible).send.maxSats;
   const boundBlock = swapBoundBlock(
     sourceAmount,
-    priced ? bounds : moveTransferBounds(from?.key, to?.key, lightningMaxSats),
+    priced ? bounds : moveTransferBounds(from?.key, to?.key, lightningMaxSats, corridorMinSats),
   );
   // Prices are on the table: the keypad steps aside for them, and the button
   // means "run this one" instead of "price it".
@@ -552,6 +559,14 @@ const MoveSheet: React.FC<Props> = ({
       ...(exactReceive !== undefined ? { exactReceive } : {}),
       ...(from.sendSource ? { sendSource: from.sendSource } : {}),
       ...(to.settleAddress ? { settleTarget: to.settleAddress } : {}),
+      ...(to.settleAlternative
+        ? {
+            alternative: {
+              to: to.settleAlternative.asset,
+              settleTarget: to.settleAlternative.address,
+            },
+          }
+        : {}),
       ...(to.settleKind ? { destination: to.settleKind } : {}),
     });
   };

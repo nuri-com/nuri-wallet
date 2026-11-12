@@ -111,7 +111,9 @@ const SwapStatusDetailSheet: FC<Props> = ({ visible, onClose, orderId }) => {
       }
     };
     void load().catch((error) => {
-      if (!cancelled) setError(errMsg(error));
+      // Plain copy on screen, the error only in the log (#1383).
+      console.warn("[SwapStatusDetailSheet] status load failed", { error: errMsg(error) });
+      if (!cancelled) setError(t("screen.SwapStatusSheet.statusLoadFailed"));
     });
     const off = EventBus.on("transactions:refresh", () => {
       const latest = getSwapKitV2LastView(orderId);

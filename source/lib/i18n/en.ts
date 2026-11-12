@@ -174,6 +174,7 @@ export const en = {
     BitcoinTransactionsModal: {
       title: "Bitcoin Activity",
       errorRateLimited: "Bitcoin history is busy right now. The rows shown are still correct.",
+      errorLoadFailed: "Couldn't load your Bitcoin history. Pull down to try again.",
       pendingBalanceLabel: "Pending Bitcoin",
     },
     BitcoinReceiveModal: {
@@ -193,6 +194,7 @@ export const en = {
       stepRunning: "Running…",
       stepWaiting: "Waiting",
       autoNote: "This swap runs by itself — you don't need to do anything or keep the app open.",
+      statusLoadFailed: "Couldn't load the latest status. Try again in a moment.",
       contactSupport: "Contact support",
     },
     LightningInvoiceSheet: {
@@ -374,10 +376,9 @@ export const en = {
       keysNotReady: "Keys not ready.",
       pickRecipient: "Pick a recipient.",
       cannotMessageYourself: "Cannot message yourself.",
-      sendErrorWithMessage: "Send error: %{message}",
       sendError: "Send error",
-      keyErrorWithMessage: "Key error: %{message}",
       keyError: "Key error",
+      passkeyCreateFailed: "Couldn't create the passkey. Try again.",
       noRelayUrlsConfigured: "No relay URLs configured.",
       noRelayConnectionAvailable: "No relay connection available.",
       sending: "Sending\u2026",

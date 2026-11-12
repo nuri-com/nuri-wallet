@@ -19,6 +19,7 @@ import { settleBindingForOrder } from "./SwapKitV2EvmRouteBinding";
 import { swapKitStableToken } from "./SwapKitStableAssets";
 import { decimalUnits } from "./SwapKitV2ApprovalBounds";
 import { makeSweepV2ExecutorsFor } from "./SwapKitV2SweepService";
+import { stableDepositFor } from "./SwapKitV2StableDeposit";
 
 export type RebuiltV2Executors = {
   executors: SwapKitV2Executors;
@@ -59,6 +60,8 @@ export async function rebuildV2ExecutorsForOrder(
       // Same derivation as the live path: the committed recipient, token and
       // minimum settlement from the order row itself.
       settleBindingForOrder(order),
+      // And the same deposit funder, for an order that is funded by one.
+      stableDepositFor(order),
     );
   }
 

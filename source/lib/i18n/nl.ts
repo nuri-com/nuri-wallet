@@ -177,6 +177,8 @@ export const nl = {
       title: "Bitcoin-activiteit",
       errorRateLimited:
         "De Bitcoin-geschiedenis is nu bezet. De getoonde rijen zijn nog steeds juist.",
+      errorLoadFailed:
+        "Je Bitcoin-geschiedenis kon niet worden geladen. Trek omlaag om het opnieuw te proberen.",
       pendingBalanceLabel: "Bitcoin in behandeling",
     },
     BitcoinReceiveModal: {
@@ -196,6 +198,7 @@ export const nl = {
       stepRunning: "Bezig…",
       stepWaiting: "Wachten",
       autoNote: "Deze wissel loopt vanzelf, je hoeft niets te doen en de app niet open te houden.",
+      statusLoadFailed: "De actuele status kon niet worden geladen. Probeer het zo opnieuw.",
       contactSupport: "Contact met support",
     },
     LightningInvoiceSheet: {
@@ -381,10 +384,9 @@ export const nl = {
       keysNotReady: "Sleutels niet klaar.",
       pickRecipient: "Kies een ontvanger.",
       cannotMessageYourself: "Je kunt jezelf geen bericht sturen.",
-      sendErrorWithMessage: "Fout bij versturen: %{message}",
       sendError: "Fout bij versturen",
-      keyErrorWithMessage: "Sleutelfout: %{message}",
       keyError: "Sleutelfout",
+      passkeyCreateFailed: "De passkey kon niet worden aangemaakt. Probeer het opnieuw.",
       noRelayUrlsConfigured: "Geen relay-URL's ingesteld.",
       noRelayConnectionAvailable: "Geen relayverbinding beschikbaar.",
       sending: "Versturen…",

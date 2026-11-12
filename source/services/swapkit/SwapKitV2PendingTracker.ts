@@ -47,7 +47,13 @@ import {
   releaseV2ArkadeFunding,
   restoreV2ArkadeReservations,
 } from "./SwapKitV2MoveAccounting";
-import { noteV2MoveNeedsUser, noteV2MoveStatus, restoreV2Move } from "./SwapKitV2MoveStatus";
+import {
+  getV2Move,
+  noteV2MoveNeedsUser,
+  noteV2MoveStatus,
+  restoreV2Move,
+} from "./SwapKitV2MoveStatus";
+import { lightningPayoutOf, waitForLightningPayout } from "./SwapKitV2LightningPayout";
 import { t } from "../../lib/i18n";
 
 const SOURCE = "services/swapkit/SwapKitV2PendingTracker.ts";
@@ -92,7 +98,25 @@ export function emitV2SwapRefresh(): void {
  * this keeps a polling loop from re-emitting the same events every few seconds. */
 const reconciledTerminal = new Set<string>();
 
+/** Orders finished by their own claimed payout, ahead of the provider's status. */
+const settledByPayout = new Set<string>();
+/** Orders whose payout completion is being written to storage right now. */
+const payoutSettling = new Set<string>();
+
 function rememberView(view: SwapKitV2OrderView): void {
+  // Already completed when its payout was claimed, in the status surfaces, in
+  // the stored order and on the pill. The provider's own "in progress" and
+  // "completed" that follow must not take any of that back: they would show a
+  // finished move as running again, reopen the stored order for the next
+  // launch, and open a new pill once the pill has forgotten the move. Only a
+  // different ending is still news.
+  const status = String(view.status || "").toUpperCase();
+  if (settledByPayout.has(view.orderId) && (!isSwapKitV2Terminal(view) || status === "COMPLETED")) {
+    return;
+  }
+  // While that completion is being stored, an in-progress view must not write
+  // its own status over it. An ending from the provider still goes through.
+  if (payoutSettling.has(view.orderId) && !isSwapKitV2Terminal(view)) return;
   lastViews.set(view.orderId, view);
   // The moment the SERVER calls the order finished, the swap is finished: clear
   // the optimistic pending row, settle the balances, confirm/revert a card
@@ -123,6 +147,46 @@ function rememberView(view: SwapKitV2OrderView): void {
     ...(row?.to ? { to: row.to } : {}),
     ...(needsUser ? { blockedReason: blocked?.blockedReason || `Needs ${blocked?.kind}` } : {}),
   });
+}
+
+/**
+ * This order's own tagged Lightning payout has been claimed into the wallet:
+ * the sats are here and the provider can no longer refund, so the move is
+ * finished now. The provider reports the same about half a minute later; that
+ * status then finds the order already reconciled.
+ */
+async function settleV2OrderOnPayout(id: string): Promise<void> {
+  const view = lastViews.get(id);
+  if (!view || reconciledTerminal.has(id) || payoutSettling.has(id)) return;
+  // Stored first, and nothing else happens unless that write lands: a launch
+  // before the provider has caught up must find a finished order, or it would
+  // resume it as running and reconcile it a second time.
+  payoutSettling.add(id);
+  try {
+    await SwapKitV2OrderStore.setStatus(id, "COMPLETED");
+  } catch (error) {
+    // Not stored, so not finished here: the provider's own status ends the
+    // order, as it does for every order without a tagged payout.
+    errorWithId(
+      `${LOG_EMOJI.bitcoin} SwapKitV2.track`,
+      `payout of ${id} is claimed but its completion could not be stored; waiting for the provider`,
+      { orderId: id, err: error instanceof Error ? error.message : String(error) },
+      { source: `${SOURCE}#settleV2OrderOnPayout`, event: "API_ERR", action: "persist" },
+    );
+    void SwapKitV2OrderStore.setStatus(id, view.status).catch(() => {});
+    return;
+  } finally {
+    payoutSettling.delete(id);
+  }
+  // The provider ended the order while the write was under way.
+  if (reconciledTerminal.has(id)) return;
+  reconciledTerminal.add(id);
+  settledByPayout.add(id);
+  const completed = { ...view, status: "COMPLETED" };
+  // What the status surfaces read from now on.
+  lastViews.set(id, completed);
+  reconcileV2TerminalOrder(id, completed);
+  noteV2MoveStatus({ orderId: id, status: "COMPLETED" });
 }
 
 /**
@@ -374,6 +438,8 @@ export function startSwapKitV2Tracking(
   let orderRecoveryKey: string | null = null;
   const controller = new AbortController();
   const aborted = () => controller.signal.aborted;
+  // Ends with this tracking pass, however it ends.
+  const payoutWatch = new AbortController();
   // The hold is written while the funding is prepared, and the broadcast waits
   // for it: every funding executor awaits `beforeFunding` at its broadcast
   // boundary (markStarted), so no sats leave before the hold is on disk, and
@@ -424,6 +490,17 @@ export function startSwapKitV2Tracking(
         reconcileV2TerminalOrder(id, view);
         return;
       }
+      const payout = stored ? lightningPayoutOf(stored) : null;
+      if (payout) {
+        void waitForLightningPayout({
+          payout,
+          signal: payoutWatch.signal,
+          // Only once the wallet has sent its deposit.
+          due: () => getV2Move(id)?.phase === "processing",
+        }).then((arrived) => {
+          if (arrived && !aborted()) return settleV2OrderOnPayout(id);
+        });
+      }
       const result = await runSwapKitV2OrderLoop(view, id, {
         recoveryKey,
         executors: loopOptions?.executors ?? defaultV2ExecutorsFor(stored),
@@ -465,6 +542,7 @@ export function startSwapKitV2Tracking(
         (error instanceof SwapKitV2Error && error.code === "unsupported_action_kind") ||
         isProviderRefused;
     } finally {
+      payoutWatch.abort();
       releaseSwapLoop(id);
       // Nothing was broadcast for the refused step: if the server confirms the
       // order is unfunded it is cancelled and removed, never left as a stuck

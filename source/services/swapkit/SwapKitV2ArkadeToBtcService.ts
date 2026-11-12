@@ -30,11 +30,14 @@ import {
   SWAPKIT_V2_ACTION_KINDS,
   type SwapKitV2QuoteOption,
   type SwapKitV2QuoteResponse,
+  getSwapKitV2Limits,
   quoteSwapKitV2,
 } from "./SwapKitV2Service";
 import { makeStandardV2Executors } from "./SwapKitV2Executors";
 import { ownBitcoinDestinations } from "../bitcoin/ownDestinations";
 import { commitAndTrackV2Order } from "./SwapKitV2CommitFlow";
+import { foldSwapAmountBounds } from "./SwapAmountBounds";
+import { primeLightningToBitcoinMinSats } from "./LightningToBitcoinLimits";
 
 const SOURCE = "services/swapkit/SwapKitV2ArkadeToBtcService.ts";
 void SOURCE;
@@ -94,6 +97,21 @@ function toV2Quote(option: SwapKitV2QuoteOption): V2ArkadeToBtcQuote {
     provider: option.optionId.split(":")[0] || null,
     ...(option.validUntil ? { validUntil: String(option.validUntil) } : {}),
   };
+}
+
+/**
+ * Re-read the corridor floor from the server's `swap_limits` for both pairs a
+ * send quotes (read-only: no price, no order). Either corridor can carry the
+ * send, so the lower floor is the real one. Never throws; an unanswered read
+ * keeps the floor in hand.
+ */
+export async function refreshLightningToBitcoinMinSats(): Promise<void> {
+  const answers = await Promise.all(
+    [FROM_ASSET, COMPOSITE_FROM_ASSET].map((from) =>
+      getSwapKitV2Limits({ from, to: TO_ASSET }).catch((): null => null),
+    ),
+  );
+  primeLightningToBitcoinMinSats(foldSwapAmountBounds(answers).min);
 }
 
 /**

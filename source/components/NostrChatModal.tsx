@@ -336,7 +336,11 @@ const NostrChatModal: React.FC<Props> = ({
         credPubkeyB64u: result.credPubkeyB64u ?? "",
       });
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      // Plain copy on screen, the native module's text only in the log (#1383).
+      console.warn("[NostrChatModal] native passkey create failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      setStatus(t("screen.NostrChatModal.passkeyCreateFailed"));
     } finally {
       setNativePasskeyBusy(false);
     }
@@ -751,12 +755,11 @@ const NostrChatModal: React.FC<Props> = ({
         }
       } catch (e: unknown) {
         if (!cancelled) {
-          const msg = e instanceof Error ? e.message : null;
-          setStatus(
-            msg
-              ? t("screen.NostrChatModal.keyErrorWithMessage", { message: msg })
-              : t("screen.NostrChatModal.keyError"),
-          );
+          // The error text stays in the log, never on screen (#1383).
+          console.warn("[NostrChatModal] key load failed", {
+            error: e instanceof Error ? e.message : String(e),
+          });
+          setStatus(t("screen.NostrChatModal.keyError"));
         }
       }
     })();
@@ -1478,12 +1481,11 @@ const NostrChatModal: React.FC<Props> = ({
         markContactProtocol(activeRecipient, "giftwrap");
       }
     } catch (error: unknown) {
-      const errMsg = error instanceof Error ? error.message : null;
-      setStatus(
-        errMsg
-          ? t("screen.NostrChatModal.sendErrorWithMessage", { message: errMsg })
-          : t("screen.NostrChatModal.sendError"),
-      );
+      // The error text stays in the log, never on screen (#1383).
+      console.warn("[NostrChatModal] message encrypt failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      setStatus(t("screen.NostrChatModal.sendError"));
       return;
     }
 

@@ -175,6 +175,7 @@ export const tr = {
     BitcoinTransactionsModal: {
       title: "Bitcoin hareketleri",
       errorRateLimited: "Bitcoin geçmişi şu anda yoğun. Gösterilen satırlar hâlâ doğru.",
+      errorLoadFailed: "Bitcoin geçmişin yüklenemedi. Tekrar denemek için aşağı çek.",
       pendingBalanceLabel: "Bekleyen Bitcoin",
     },
     BitcoinReceiveModal: {
@@ -195,6 +196,7 @@ export const tr = {
       stepWaiting: "Bekliyor",
       autoNote:
         "Bu takas kendiliğinden ilerler. Bir şey yapmana veya uygulamayı açık tutmana gerek yok.",
+      statusLoadFailed: "Güncel durum yüklenemedi. Birazdan tekrar dene.",
       contactSupport: "Destekle iletişime geç",
     },
     LightningInvoiceSheet: {
@@ -374,10 +376,9 @@ export const tr = {
       keysNotReady: "Anahtarlar hazır değil.",
       pickRecipient: "Bir alıcı seç.",
       cannotMessageYourself: "Kendine mesaj gönderemezsin.",
-      sendErrorWithMessage: "Gönderme hatası: %{message}",
       sendError: "Gönderme hatası",
-      keyErrorWithMessage: "Anahtar hatası: %{message}",
       keyError: "Anahtar hatası",
+      passkeyCreateFailed: "Passkey oluşturulamadı. Tekrar dene.",
       noRelayUrlsConfigured: "Relay adresi ayarlanmamış.",
       noRelayConnectionAvailable: "Kullanılabilir relay bağlantısı yok.",
       sending: "Gönderiliyor…",

@@ -20,6 +20,8 @@ export function assetRail(asset: string): MoneyRail | null {
 export type OwnDestinations = {
   /** Arkade receive/boarding address. */
   arkade?: string | null;
+  /** This wallet's own Lightning address, when the move settles on it. */
+  lightning?: string | null;
   /** On-chain receive address. */
   onchain?: string | null;
   /** The EOA that holds the stablecoin balances. */
@@ -48,7 +50,13 @@ export function destinationRail(
 ): MoneyRail | null {
   const id = String(to || "").toUpperCase();
   // An explicit arkade asset is always this wallet's own arkade balance.
-  if (id === "BTC_ARKADE" || id === "BTC_LN") return "arkade";
+  if (id === "BTC_ARKADE") return "arkade";
+  if (id === "BTC_LN") {
+    // A Lightning address names its owner: it is this balance only when it is
+    // this wallet's own, and a send out otherwise.
+    if (settleTarget?.includes("@")) return same(settleTarget, own.lightning) ? "arkade" : null;
+    return "arkade";
+  }
   if (id === "BTC") {
     if (same(settleTarget, own.arkade)) return "arkade";
     if (same(settleTarget, own.onchain)) return "onchain";

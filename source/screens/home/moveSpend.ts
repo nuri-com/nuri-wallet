@@ -14,16 +14,16 @@
 // The send screen reserves the same headroom for a Bitcoin-address recipient.
 // Both entry points have to agree, or one accepts an amount the other refuses.
 //
-// The three constants are duplicated rather than imported: their modules pull
-// in the Arkade SDK and React Native sources, which cannot be loaded in a unit
-// test. `moveSpend.contract.test.ts` imports the real ones and asserts these
-// still match, so the copies cannot drift unnoticed.
+// The spread and fee constants are duplicated rather than imported: their
+// modules pull in the Arkade SDK and React Native sources, which cannot be
+// loaded in a unit test. `moveSpend.contract.test.ts` imports the real ones and
+// asserts these still match, so the copies cannot drift unnoticed. The floor is
+// read live from its dependency-free store, because it moves with the BTC price.
 
 import { getArkadeLightningLimits } from "../../services/arkade/internal/lightningLimitsStore";
+import { getLightningToBitcoinMinSats } from "../../services/swapkit/LightningToBitcoinLimits";
 import type { SwapAmountBounds } from "../../services/swapkit/SwapAmountBounds";
 
-/** Mirror of LIGHTNING_TO_BITCOIN_MIN_SATS. */
-export const MOVE_CORRIDOR_MIN_SATS = 6_550;
 /** Mirror of LIGHTNING_TO_BITCOIN_SPREAD_MULTIPLIER. */
 export const MOVE_CORRIDOR_SPREAD_MULTIPLIER = 1.025;
 /** Mirror of the Arkade Intents fee: 30 bps, minimum 5 sats. */
@@ -42,6 +42,8 @@ export type MoveSpendInput = {
   /** Rail keys, so only the corridor pair reserves corridor headroom. */
   fromKey?: string | null;
   toKey?: string | null;
+  /** The corridor floor in sats; the live store's figure when omitted. */
+  corridorMinSats?: number;
 };
 
 /**
@@ -74,9 +76,10 @@ export function moveTransferBounds(
   fromKey?: string | null,
   toKey?: string | null,
   lightningMaxSats: number = getArkadeLightningLimits().send.maxSats,
+  corridorMinSats: number = getLightningToBitcoinMinSats(),
 ): SwapAmountBounds | null {
   if (fromKey !== "arkade" || toKey !== "onchain") return null;
-  return { min: MOVE_CORRIDOR_MIN_SATS, max: lightningMaxSats };
+  return { min: corridorMinSats, max: lightningMaxSats };
 }
 
 /**
@@ -89,6 +92,6 @@ export function moveSpendAmount(input: MoveSpendInput): number {
   if (Number.isFinite(quoted) && quoted > 0) return quoted;
   if (input.fromKey !== "arkade" || input.toKey !== "onchain") return typed;
   // Below the floor the corridor is not offered, so no corridor fee applies.
-  if (typed < MOVE_CORRIDOR_MIN_SATS) return typed;
+  if (typed < (input.corridorMinSats ?? getLightningToBitcoinMinSats())) return typed;
   return withIntentsFee(Math.ceil(typed * MOVE_CORRIDOR_SPREAD_MULTIPLIER));
 }

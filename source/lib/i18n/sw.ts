@@ -176,6 +176,7 @@ export const sw = {
       title: "Shughuli za Bitcoin",
       errorRateLimited:
         "Historia ya Bitcoin ina shughuli nyingi sasa. Mistari iliyoonyeshwa bado ni sahihi.",
+      errorLoadFailed: "Historia yako ya Bitcoin haikuweza kupakiwa. Vuta chini ujaribu tena.",
       pendingBalanceLabel: "Bitcoin inayosubiri",
     },
     BitcoinReceiveModal: {
@@ -197,6 +198,7 @@ export const sw = {
       stepWaiting: "Inasubiri",
       autoNote:
         "Ubadilishaji huu unajiendesha wenyewe — huhitaji kufanya chochote wala kuacha programu wazi.",
+      statusLoadFailed: "Hali ya sasa haikuweza kupakiwa. Jaribu tena baada ya muda mfupi.",
       contactSupport: "Wasiliana na msaada",
     },
     LightningInvoiceSheet: {
@@ -379,10 +381,9 @@ export const sw = {
       keysNotReady: "Funguo hazijawa tayari.",
       pickRecipient: "Chagua mpokeaji.",
       cannotMessageYourself: "Huwezi kujitumia ujumbe.",
-      sendErrorWithMessage: "Hitilafu ya kutuma: %{message}",
       sendError: "Hitilafu ya kutuma",
-      keyErrorWithMessage: "Hitilafu ya ufunguo: %{message}",
       keyError: "Hitilafu ya ufunguo",
+      passkeyCreateFailed: "Passkey haikuweza kuundwa. Jaribu tena.",
       noRelayUrlsConfigured: "Hakuna URL za relay zilizowekwa.",
       noRelayConnectionAvailable: "Hakuna muunganisho wa relay unaopatikana.",
       sending: "Inatuma\u2026",

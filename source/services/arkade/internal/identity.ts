@@ -2,7 +2,8 @@
 // wallet bootstrap; this file exposes the public getters/awaiters used by
 // receive flows (LNURL assertion) and the wallet summary.
 import type { ArkadeRemoteIdentity } from "../ArkadeRemoteIdentity";
-import type { ArkadeReceiveOwner } from "../ArkadeApiService";
+import { type ArkadeReceiveOwner, arkadeReceiveTagged } from "../ArkadeApiService";
+import { setLightningPayoutAsk } from "../../swapkit/SwapKitV2LightningPayout";
 import { getCachedArkadeIdentity, getOrCreateWallet } from "./walletCache";
 
 export { getCachedArkadeIdentity } from "./walletCache";
@@ -23,6 +24,13 @@ export async function getOrCreateArkadeIdentity(): Promise<ArkadeRemoteIdentity>
 export async function getArkadeReceiveOwner(): Promise<ArkadeReceiveOwner> {
   return (await getOrCreateArkadeIdentity()).getReceiveOwner();
 }
+
+// The swap tracker waits for payouts to this wallet's own tagged Lightning
+// address. Registered from here, the module that owns the wallet identity, so
+// the tracker does not import the wallet.
+setLightningPayoutAsk(
+  async (tag) => (await arkadeReceiveTagged(await getArkadeReceiveOwner(), tag)).receive,
+);
 
 type ArkadeSignerAssertion = {
   token: string;

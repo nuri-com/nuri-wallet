@@ -2,7 +2,9 @@ import { SATS_PER_BTC } from "../../lib/bitcoin/convert";
 import { paymentTimed, paymentTimingStart } from "../../lib/paymentTiming";
 import { getEthereumAddress } from "../../lib/secureKeyStorage";
 import { isValidEvmAddress } from "../../lib/validation";
+import { isLightningAddress, resolveLnurlPayRequest } from "../bitcoin/LnurlService";
 import { type SwapAmountBounds, foldSwapAmountBounds } from "./SwapAmountBounds";
+import { withPayoutTag } from "./SwapKitV2LightningPayout";
 import { type SwapKitV2LimitsResponse, getSwapKitV2Limits } from "./SwapKitV2Service";
 import {
   executeV2StableToBtc,
@@ -96,6 +98,13 @@ export type SwapQuoteRequest = {
    * settle exactly this are offered; `amount` is then only an estimate.
    */
   exactReceive?: number;
+  /**
+   * The same recipient's address on another Bitcoin rail (their Lightning
+   * address beside an onchain one). Priced alongside `to`: each rail that can
+   * take the amount comes back as its own option, and the other one still
+   * stands when this one cannot.
+   */
+  alternative?: { to: SwapAssetId; settleTarget: string };
 };
 
 /**
@@ -304,11 +313,37 @@ type StableToBtcDetail = {
   exactSettle?: boolean;
 };
 
+/**
+ * What a Lightning address takes per payment, in sats: its own LNURL-pay
+ * range. Undefined for any other destination, null when it could not be read.
+ */
+async function lightningAddressRange(destination: {
+  to: SwapAssetId;
+  settleTarget: string;
+}): Promise<{ min: number; max: number } | null | undefined> {
+  if (destination.to !== BTC_LIGHTNING_ASSET || !isLightningAddress(destination.settleTarget)) {
+    return undefined;
+  }
+  try {
+    const params = await resolveLnurlPayRequest(destination.settleTarget);
+    return {
+      min: Math.ceil(params.minSendableMsats / 1000),
+      max: Math.floor(params.maxSendableMsats / 1000),
+    };
+  } catch {
+    return null;
+  }
+}
+
 const stableToBtcEngine: SwapEngine = {
   id: "stable-to-btc",
   supports: (request) => isBaseStable(request.from) && isBtc(request.to),
-  // quote() asks for exactly `request.to` (see priceDestination below).
-  limitPairs: (request) => [{ from: request.from, to: request.to }],
+  // quote() asks for exactly `request.to` (see priceDestination below), and
+  // for the recipient's other rail when the request names one.
+  limitPairs: (request) => [
+    { from: request.from, to: request.to },
+    ...(request.alternative ? [{ from: request.from, to: request.alternative.to }] : []),
+  ],
   async quote(request) {
     const eoa = await getEthereumAddress();
     if (!eoa) throw new Error("Ethereum wallet address not available.");
@@ -318,21 +353,42 @@ const stableToBtcEngine: SwapEngine = {
     // of them — which is paying real money to a wallet the user did not choose.
     const settleTarget = request.settleTarget?.trim() || "";
     if (!settleTarget) throw new Error("A Bitcoin destination is required.");
-    const priceDestination = async (destination: {
-      to: SwapAssetId;
-      settleTarget: string;
-    }): Promise<SwapQuote[]> => {
+    const priceDestination = async (
+      destination: { to: SwapAssetId; settleTarget: string },
+      // The recipient has another rail: this one is offered only when it is
+      // known to take the amount.
+      hasOtherRail: boolean,
+    ): Promise<SwapQuote[]> => {
       // A payment request is priced on the settle side, in decimal BTC.
       const exactBtc =
         request.exactReceive !== undefined ? request.exactReceive / SATS_PER_BTC : undefined;
-      const { options } = await quoteV2StableToBtc({
-        fromAsset,
-        to: destination.to,
-        amount: exactBtc ?? request.amount,
-        side: exactBtc === undefined ? "deposit" : "settle",
-        owner: eoa,
-        settleTarget: destination.settleTarget,
-      }).catch(() => ({ options: [] as V2StableToBtcQuote[] }));
+      // This wallet's own Lightning address is asked for under a fresh tag, so
+      // its payout can be told apart the moment it lands
+      // (SwapKitV2LightningPayout). A lookup that does not answer for the tag
+      // keeps the plain address.
+      const tagged =
+        request.destination !== "external" && destination.to === BTC_LIGHTNING_ASSET
+          ? withPayoutTag(destination.settleTarget)
+          : null;
+      const taggedRange = tagged
+        ? await lightningAddressRange({ to: destination.to, settleTarget: tagged })
+        : null;
+      const target = tagged && taggedRange ? tagged : destination.settleTarget;
+      const [{ options }, range] = await Promise.all([
+        quoteV2StableToBtc({
+          fromAsset,
+          to: destination.to,
+          amount: exactBtc ?? request.amount,
+          side: exactBtc === undefined ? "deposit" : "settle",
+          owner: eoa,
+          settleTarget: target,
+        }).catch(() => ({ options: [] as V2StableToBtcQuote[] })),
+        taggedRange ?? lightningAddressRange(destination),
+      ]);
+      // An address that could not be read: the provider still refuses a bad one
+      // before money moves, but with another rail to pay there is no reason to
+      // offer it.
+      if (range === null && hasOtherRail) return [];
       return options.flatMap((option) => {
         // The server's own deposit term, or no option: the requested amount is
         // what was ASKED, not what this option was priced at, and committing it
@@ -348,6 +404,9 @@ const stableToBtcEngine: SwapEngine = {
         const receive = isBtc(destination.to) ? satsFromBtc(settle) : settle;
         // A payment request is met exactly or not at all.
         if (request.exactReceive !== undefined && receive !== request.exactReceive) return [];
+        // Outside what the Lightning address takes, the provider would refuse
+        // the order at confirm: not an option.
+        if (range && (receive < range.min || receive > range.max)) return [];
         return [
           {
             id: `stable-to-btc:${option.optionId}`,
@@ -379,7 +438,7 @@ const stableToBtcEngine: SwapEngine = {
               quotedSpendEurc: send,
               quotedSettleAmount: settle,
               stablecoinWalletAddress: eoa,
-              settleTarget: destination.settleTarget,
+              settleTarget: target,
               ...(exactBtc !== undefined ? { exactSettle: true } : {}),
             } satisfies StableToBtcDetail,
           },
@@ -393,7 +452,17 @@ const stableToBtcEngine: SwapEngine = {
     // bitcoinvn, whichever the server quotes as executable) lands the funds
     // where arkade boards them from — one signature, no satora HTLC/claim. The
     // hidden direct-Arkade (satora) corridor is deliberately NOT requested.
-    return priceDestination({ to: request.to, settleTarget });
+    const alternative = request.alternative;
+    const priced = await Promise.all([
+      priceDestination({ to: request.to, settleTarget }, false),
+      alternative?.settleTarget.trim()
+        ? priceDestination(
+            { to: alternative.to, settleTarget: alternative.settleTarget.trim() },
+            true,
+          )
+        : [],
+    ]);
+    return priced.flat();
   },
   async execute(quote, options) {
     const detail = quote.detail as StableToBtcDetail;
@@ -411,6 +480,10 @@ const stableToBtcEngine: SwapEngine = {
       quotedReceive: detail.quotedSettleAmount,
       owner: detail.stablecoinWalletAddress,
       settleTarget,
+      // A Lightning address on a move (not a send) is this wallet's own.
+      ...(quote.destination !== "external" && isLightningAddress(settleTarget)
+        ? { ownLightningAddress: true }
+        : {}),
       ...(options.onStatus ? { onStatus: options.onStatus } : {}),
       ...(options.onOrderId ? { onOrderId: options.onOrderId } : {}),
     });
@@ -707,7 +780,9 @@ export async function quoteSwap(request: SwapQuoteRequest): Promise<SwapQuote[]>
  * known", which leaves the move exactly as it behaved before.
  */
 export async function swapAmountBounds(
-  request: Pick<SwapQuoteRequest, "from" | "to" | "sendSource">,
+  request: Pick<SwapQuoteRequest, "from" | "to" | "sendSource"> & {
+    alternative?: { to: SwapAssetId };
+  },
 ): Promise<SwapAmountBounds> {
   const engine = ENGINES.find((candidate) => candidate.supports(request as SwapQuoteRequest));
   if (!engine) return { min: null, max: null };

@@ -38,6 +38,8 @@ export type MoveSwapRequest = {
   destination?: "card" | "external";
   /** A payment request: the destination receives exactly this (its own unit). */
   exactReceive?: number;
+  /** The same recipient's address on another Bitcoin rail, priced alongside. */
+  alternative?: { to: SwapAssetId; settleTarget: string };
 };
 
 /** Which fullscreen wait the sheet is showing, if any. Pricing only: accepting

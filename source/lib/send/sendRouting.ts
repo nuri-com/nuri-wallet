@@ -9,6 +9,7 @@ import { routeDestination } from "../../screens/addressBook/addressBookModel";
 import { isValidBitcoinAddressMainnet } from "../bitcoin/address";
 import { isValidEvmAddress } from "../validation";
 import { settleAssetOfNetwork } from "./evmNetworks";
+import { isLightningAddress, normalizeLightningInput } from "../../services/bitcoin/LnurlService";
 
 /** Every balance a send can be paid from. */
 export type SendBalance = "wallet" | "dollar" | "arkade" | "onchain";
@@ -23,8 +24,12 @@ export type SendRoute =
   | { kind: "evm-direct"; address: string }
   /** Bitcoin to a Bitcoin, Ark or Lightning destination: the Bitcoin send. */
   | { kind: "bitcoin-direct"; target: string }
-  /** Euro or Dollar to a Bitcoin address: swapped to BTC on the way. */
-  | { kind: "swap-to-bitcoin"; address: string }
+  /** Euro or Dollar to a Bitcoin address: swapped to BTC on the way. When the
+   * recipient also has a Lightning address, it is priced alongside: Lightning
+   * arrives at once, the onchain address still takes what Lightning cannot. */
+  | { kind: "swap-to-bitcoin"; address: string; lightningAddress?: string }
+  /** Euro or Dollar to a Lightning address: swapped to BTC and paid there over Lightning. */
+  | { kind: "swap-to-lightning"; address: string }
   /** Bitcoin to a wallet address, or Euro/Dollar to an address that takes only
    * the other stable: swapped on the way. `asset` is the stable the recipient
    * asked for, null when any stable will do. `settleAsset` is set for an
@@ -55,8 +60,13 @@ export type SendRecipient = {
 
 export const isSwapRoute = (
   route: SendRoute | null,
-): route is Extract<SendRoute, { kind: "swap-to-bitcoin" | "swap-to-stable" }> =>
-  route?.kind === "swap-to-bitcoin" || route?.kind === "swap-to-stable";
+): route is Extract<
+  SendRoute,
+  { kind: "swap-to-bitcoin" | "swap-to-lightning" | "swap-to-stable" }
+> =>
+  route?.kind === "swap-to-bitcoin" ||
+  route?.kind === "swap-to-lightning" ||
+  route?.kind === "swap-to-stable";
 
 type Routed = { destination: Destination; route: ReturnType<typeof routeDestination> };
 
@@ -83,6 +93,13 @@ function bitcoinAddressOf({ destination, route }: Routed): string | null {
   if (route.kind !== "bitcoin" || destination.type !== "crypto") return null;
   if (destination.network !== "bitcoin") return null;
   return isValidBitcoinAddressMainnet(route.target) ? route.target : null;
+}
+
+/** A Lightning address (`name@domain`), the only Lightning target a swap can settle to. */
+function lightningAddressOf({ destination, route }: Routed): string | null {
+  if (route.kind !== "bitcoin" || destination.type !== "lightning") return null;
+  const address = normalizeLightningInput(destination.raw);
+  return isLightningAddress(address) ? address : null;
 }
 
 /**
@@ -123,7 +140,15 @@ export function routeFor(balance: SendBalance, destinations: Destination[]): Sen
           Number(a.destination.label === "boarding") - Number(b.destination.label === "boarding"),
       )[0];
     const address = btc ? bitcoinAddressOf(btc) : null;
-    return address ? { kind: "swap-to-bitcoin", address } : null;
+    const lightningAddress = all.map(lightningAddressOf).find((found) => found !== null);
+    if (address) {
+      return {
+        kind: "swap-to-bitcoin",
+        address,
+        ...(lightningAddress ? { lightningAddress } : {}),
+      };
+    }
+    return lightningAddress ? { kind: "swap-to-lightning", address: lightningAddress } : null;
   }
 
   // Bitcoin: the cheapest Bitcoin destination this wallet pays directly.

@@ -13,14 +13,21 @@ export function useMoveSwapBounds(pair: {
   from?: SwapAssetId | undefined;
   to?: SwapAssetId | undefined;
   sendSource?: "arkade" | "onchain" | undefined;
+  /** The recipient's other Bitcoin rail: the move is possible if either takes it. */
+  alternativeTo?: SwapAssetId | undefined;
 }): SwapAmountBounds | null {
-  const { from, to, sendSource } = pair;
+  const { from, to, sendSource, alternativeTo } = pair;
   const [bounds, setBounds] = useState<SwapAmountBounds | null>(null);
   useEffect(() => {
     setBounds(null);
     if (!from || !to) return;
     let live = true;
-    swapAmountBounds({ from, to, ...(sendSource ? { sendSource } : {}) })
+    swapAmountBounds({
+      from,
+      to,
+      ...(sendSource ? { sendSource } : {}),
+      ...(alternativeTo ? { alternative: { to: alternativeTo } } : {}),
+    })
       .then((next) => {
         if (live) setBounds(next);
       })
@@ -28,6 +35,6 @@ export function useMoveSwapBounds(pair: {
     return () => {
       live = false;
     };
-  }, [from, to, sendSource]);
+  }, [from, to, sendSource, alternativeTo]);
   return bounds;
 }

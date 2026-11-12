@@ -174,6 +174,8 @@ export const de = {
       title: "Bitcoin-Aktivität",
       errorRateLimited:
         "Die Bitcoin-Historie ist gerade ausgelastet. Die angezeigten Buchungen stimmen weiterhin.",
+      errorLoadFailed:
+        "Dein Bitcoin-Verlauf konnte nicht geladen werden. Zum erneuten Versuch nach unten ziehen.",
       pendingBalanceLabel: "Ausstehende Bitcoin",
     },
     BitcoinReceiveModal: {
@@ -195,6 +197,8 @@ export const de = {
       stepWaiting: "Wartet",
       autoNote:
         "Dieser Swap läuft von selbst — du musst nichts tun und die App nicht offen halten.",
+      statusLoadFailed:
+        "Der aktuelle Status konnte nicht geladen werden. Versuche es gleich noch einmal.",
       contactSupport: "Support kontaktieren",
     },
     LightningInvoiceSheet: {
@@ -385,10 +389,9 @@ export const de = {
       keysNotReady: "Schl\u00fcssel nicht bereit.",
       pickRecipient: "W\u00e4hle einen Empf\u00e4nger.",
       cannotMessageYourself: "Du kannst dir selbst keine Nachricht senden.",
-      sendErrorWithMessage: "Sendefehler: %{message}",
       sendError: "Sendefehler",
-      keyErrorWithMessage: "Schl\u00fcsselfehler: %{message}",
       keyError: "Schl\u00fcsselfehler",
+      passkeyCreateFailed: "Der Passkey konnte nicht erstellt werden. Bitte versuche es erneut.",
       noRelayUrlsConfigured: "Keine Relay-URLs konfiguriert.",
       noRelayConnectionAvailable: "Keine Relay-Verbindung verf\u00fcgbar.",
       sending: "Senden\u2026",

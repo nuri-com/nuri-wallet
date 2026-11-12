@@ -28,7 +28,7 @@ import {
 import { setV2FundingWarmup } from "./SwapKitV2FundingWarmup";
 import { getArkadeReceiveAddress } from "../arkade/ArkadeAddressService";
 import { deriveSwapKitHtlcMaterial } from "./SwapKitHtlcKeyService";
-import { approvalCeiling } from "./SwapKitV2ApprovalBounds";
+import { approvalCeiling, decimalUnits } from "./SwapKitV2ApprovalBounds";
 import { materializeSwapKitHtlcPreimage } from "./SwapKitHtlcSecretService";
 import { claimSwapKitArkadeVhtlc } from "./SwapKitArkadeVhtlcService";
 import type { SwapKitArkadeVhtlcParams } from "./SwapKitArkadeVhtlcService";
@@ -177,6 +177,73 @@ export function makeV2SendAsset(options: {
       );
     }
     const txHash = await options.fund(to, boundSats, async () => {
+      await ctx.markStarted?.();
+    });
+    return { txHash };
+  };
+}
+
+// ── send_asset (stable deposit to the provider) ─────────────────────
+//
+// A Euro or Dollar order whose provider pays the recipient itself (a Lightning
+// address through BitcoinVN) is funded by one plain token transfer to the
+// provider's deposit address. The address is the server's, so everything else
+// is the order's own: only the order's source asset, never more than the
+// deposit the user accepted, and only through the injected sender, which moves
+// the source token and nothing a request names.
+
+/** How an EVM-source order funds a provider deposit address. */
+export type SwapKitV2StableDeposit = {
+  /** The order's source asset id, e.g. "EURC_BASE". */
+  asset: string;
+  /** Transfer `amount` (decimal) of the source token to `to`; return the tx hash. */
+  send: (
+    to: `0x${string}`,
+    amount: string,
+    onBeforeBroadcast: () => Promise<void>,
+  ) => Promise<string>;
+};
+
+export function makeV2StableDepositFunder(options: {
+  deposit: SwapKitV2StableDeposit;
+  chainId: number;
+  sourceToken: `0x${string}`;
+  decimals: number;
+  /** The accepted deposit in base units: the most that may leave. */
+  ceiling: bigint;
+}) {
+  return async (
+    request: Record<string, unknown>,
+    ctx: SwapKitV2ActionContext,
+  ): Promise<{ txHash: string }> => {
+    const asset = String(request.asset || "").trim();
+    if (asset !== options.deposit.asset) {
+      throw new SwapKitV2Error(
+        `v2 send_asset asset ${asset || "(empty)"} is not this order's ${options.deposit.asset}`,
+      );
+    }
+    const contract = String(request.tokenContract || "").trim();
+    if (contract && contract.toLowerCase() !== options.sourceToken.toLowerCase()) {
+      throw new SwapKitV2Error("v2 send_asset token is not this order's source token");
+    }
+    if (request.chainId != null && String(request.chainId).trim() !== "") {
+      if (Number(request.chainId) !== options.chainId) {
+        throw new SwapKitV2Error("v2 send_asset chain is not this order's source chain");
+      }
+    }
+    const to = String(request.to || "").trim();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(to) || /^0x0{40}$/.test(to)) {
+      throw new SwapKitV2Error("v2 send_asset deposit address is not an EVM address");
+    }
+    const amount = String(request.amount || "").trim();
+    const units = decimalUnits(amount, options.decimals);
+    if (units === null) throw new SwapKitV2Error("v2 send_asset amount is missing or not exact");
+    if (units > options.ceiling) {
+      throw new SwapKitV2Error("v2 send_asset exceeds the accepted deposit");
+    }
+    // STARTED at the broadcast boundary: a crash after the transfer left is
+    // never replayed as a second funding, a refusal before it stays retryable.
+    const txHash = await options.deposit.send(to as `0x${string}`, amount, async () => {
       await ctx.markStarted?.();
     });
     return { txHash };
@@ -763,12 +830,19 @@ export const SWAPKIT_V2_EVM_SOURCE_CAPABILITIES = SWAPKIT_V2_ACTION_KINDS.filter
     kind !== "send_asset" && !(EVM_SOURCE_FORBIDDEN_KINDS as readonly string[]).includes(kind),
 );
 
+/** The same, plus send_asset: for an order that installs the deposit funder. */
+export const SWAPKIT_V2_EVM_DEPOSIT_CAPABILITIES = SWAPKIT_V2_ACTION_KINDS.filter(
+  (kind) => !(EVM_SOURCE_FORBIDDEN_KINDS as readonly string[]).includes(kind),
+);
+
 export function standardEvmLoopOptions(
   chainId: number,
   acceptedDeposit: number,
   decimals: number,
   sourceToken: `0x${string}`,
   settle: SwapKitV2SettleBinding | null,
+  /** Set only for an order funded by a transfer to the provider's deposit address. */
+  deposit?: SwapKitV2StableDeposit,
 ): { executors: SwapKitV2Executors; allowedEvmChains: readonly number[] } {
   if (!/^0x[0-9a-fA-F]{40}$/.test(String(sourceToken || ""))) {
     // Without the source token nothing can be bound to the route; an unbound
@@ -785,6 +859,15 @@ export function standardEvmLoopOptions(
     route: { chainId, sourceToken, settle },
   });
   for (const kind of EVM_SOURCE_FORBIDDEN_KINDS) delete executors[kind];
+  if (deposit) {
+    executors.send_asset = makeV2StableDepositFunder({
+      deposit,
+      chainId,
+      sourceToken,
+      decimals,
+      ceiling: approvalCeiling(acceptedDeposit, decimals),
+    });
+  }
   return { executors, allowedEvmChains: [chainId] };
 }
 

@@ -178,6 +178,8 @@ export const pl = {
       title: "Aktywność Bitcoin",
       errorRateLimited:
         "Historia Bitcoin jest teraz zajęta. Wyświetlone pozycje są nadal poprawne.",
+      errorLoadFailed:
+        "Nie udało się wczytać historii Bitcoin. Przeciągnij w dół, aby spróbować ponownie.",
       pendingBalanceLabel: "Bitcoin w toku",
     },
     BitcoinReceiveModal: {
@@ -197,6 +199,7 @@ export const pl = {
       stepRunning: "W toku…",
       stepWaiting: "Oczekuje",
       autoNote: "Ta wymiana przebiega sama, nie musisz nic robić ani trzymać aplikacji otwartej.",
+      statusLoadFailed: "Nie udało się wczytać aktualnego statusu. Spróbuj ponownie za chwilę.",
       contactSupport: "Skontaktuj się z pomocą",
     },
     LightningInvoiceSheet: {
@@ -382,10 +385,9 @@ export const pl = {
       keysNotReady: "Klucze nie są gotowe.",
       pickRecipient: "Wybierz odbiorcę.",
       cannotMessageYourself: "Nie możesz pisać do siebie.",
-      sendErrorWithMessage: "Błąd wysyłania: %{message}",
       sendError: "Błąd wysyłania",
-      keyErrorWithMessage: "Błąd klucza: %{message}",
       keyError: "Błąd klucza",
+      passkeyCreateFailed: "Nie udało się utworzyć passkey. Spróbuj ponownie.",
       noRelayUrlsConfigured: "Brak skonfigurowanych adresów relayów.",
       noRelayConnectionAvailable: "Brak połączenia z relayem.",
       sending: "Wysyłanie…",

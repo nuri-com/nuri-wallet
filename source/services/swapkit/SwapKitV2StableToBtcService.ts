@@ -16,7 +16,12 @@ import { ownBitcoinDestinations } from "../bitcoin/ownDestinations";
 import { commitAndTrackV2Order } from "./SwapKitV2CommitFlow";
 import { baseStableToken, type BaseStableAssetId } from "./SwapKitStableAssets";
 import { settleBindingForOrder } from "./SwapKitV2EvmRouteBinding";
-import { standardEvmLoopOptions, SWAPKIT_V2_EVM_SOURCE_CAPABILITIES } from "./SwapKitV2Executors";
+import {
+  standardEvmLoopOptions,
+  SWAPKIT_V2_EVM_DEPOSIT_CAPABILITIES,
+  SWAPKIT_V2_EVM_SOURCE_CAPABILITIES,
+} from "./SwapKitV2Executors";
+import { stableDepositFor } from "./SwapKitV2StableDeposit";
 
 const SOURCE = "services/swapkit/SwapKitV2StableToBtcService.ts";
 void SOURCE;
@@ -63,6 +68,12 @@ function toV2Quote(option: SwapKitV2QuoteOption): V2StableToBtcQuote {
   };
 }
 
+/** send_asset is declared only by an order that installs the deposit funder. */
+const capabilitiesFor = (order: { from: string; to: string }) =>
+  stableDepositFor(order)
+    ? SWAPKIT_V2_EVM_DEPOSIT_CAPABILITIES
+    : SWAPKIT_V2_EVM_SOURCE_CAPABILITIES;
+
 /**
  * Quote the pair. The server prices ONLY options this wallet's declared
  * capabilities can finish; everything else arrives as structured unavailable.
@@ -87,7 +98,7 @@ export async function quoteV2StableToBtc(args: {
     owner,
     ...(args.settleTarget ? { settleTarget: args.settleTarget } : {}),
     refundAddress: args.refundAddress ?? owner,
-    capabilities: SWAPKIT_V2_EVM_SOURCE_CAPABILITIES,
+    capabilities: capabilitiesFor({ from, to: args.to }),
     signerClass: { evm: "eoa" },
   });
   return {
@@ -117,6 +128,8 @@ export type ExecuteV2StableToBtcArgs = {
   quotedReceive: number;
   owner: string;
   settleTarget: string;
+  /** The settle target is this wallet's own Lightning address (a move, not a send). */
+  ownLightningAddress?: boolean;
   refundAddress?: string;
   onStatus?: (text: string) => void;
   onOrderId?: (orderId: string) => void;
@@ -158,7 +171,7 @@ export async function executeV2StableToBtc(
       acceptedDeposit: String(args.quotedDeposit),
       acceptedDepositAmount: String(args.quotedDeposit),
       minimumSettleAmount: String(args.quotedReceive),
-      capabilities: SWAPKIT_V2_EVM_SOURCE_CAPABILITIES,
+      capabilities: capabilitiesFor({ from, to: args.to }),
       optionId: args.optionId,
       ...(args.quoteId ? { quoteId: args.quoteId } : {}),
       // Restart parity: persist the exact inputs the live approval ceiling is
@@ -181,6 +194,7 @@ export async function executeV2StableToBtc(
           to: args.to,
           settleTarget,
         }),
+        stableDepositFor({ from, to: args.to }),
       ),
       onOrderId: args.onOrderId,
       // The BTC destination rail (arkade/onchain) has no transfer store, so give
@@ -191,7 +205,11 @@ export async function executeV2StableToBtc(
         sendAmount: args.quotedDeposit,
         receiveAmount: Math.round(args.quotedReceive * 100_000_000),
       },
-      own: { ...(await ownBitcoinDestinations()), evm: owner },
+      own: {
+        ...(await ownBitcoinDestinations()),
+        evm: owner,
+        ...(args.ownLightningAddress ? { lightning: settleTarget } : {}),
+      },
       // Pending-row surface: the wallet UI shows the in-flight spend immediately.
       pendingRow: (id) => ({
         event: "wallet:pendingTransfer",

@@ -10,6 +10,9 @@ import type { FiatCode } from "../../lib/tokens";
 // Within this window the spot price stands in for the historical one.
 const RECENT_PRICE_WINDOW_SEC = 48 * 60 * 60;
 
+// Disk reads warmFromDisk keeps in flight at once.
+const WARM_CONCURRENCY = 8;
+
 const PRICE_CACHE_PREFIX = "price:";
 const getCacheKey = (currency: string, tsSec: number) =>
   `${PRICE_CACHE_PREFIX}${currency.toLowerCase()}:${Math.floor(tsSec)}`;
@@ -33,6 +36,40 @@ class PriceService {
     const k = this.cacheKey(cur, tsSec);
     const cached = this.priceCache.get(k);
     return cached ?? null;
+  }
+
+  /**
+   * Copy already persisted prices into the in-memory map, so the synchronous
+   * `getCachedPriceAt` serves them on the next render. The map is empty after
+   * every cold start, and before this the disk layer was only read by an
+   * awaited `getPriceAt`, so a list rendered from cache showed no fiat values
+   * until a refresh had priced every row again. Disk only: a timestamp with
+   * nothing stored stays missing here and is left to `getPriceAt`.
+   * Reads run at most `WARM_CONCURRENCY` at a time, so a long history does
+   * not flood the database. Returns how many prices it added.
+   */
+  async warmFromDisk(timestampsSec: number[], currency?: string): Promise<number> {
+    const cur = currency ?? this.homeCurrency();
+    const pending = Array.from(new Set(timestampsSec.map((t) => Math.floor(t)))).filter(
+      (ts) => !this.priceCache.has(this.cacheKey(cur, ts)),
+    );
+    let warmed = 0;
+    let next = 0;
+    const worker = async () => {
+      while (next < pending.length) {
+        const ts = pending[next++];
+        try {
+          const cached = await getCacheValue<number>(getCacheKey(cur, ts));
+          if (typeof cached !== "number" || !Number.isFinite(cached)) continue;
+          const k = this.cacheKey(cur, ts);
+          if (this.priceCache.has(k)) continue;
+          this.priceCache.set(k, cached);
+          warmed += 1;
+        } catch {}
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(WARM_CONCURRENCY, pending.length) }, worker));
+    return warmed;
   }
 
   /** @deprecated Use getCachedPriceAt */
