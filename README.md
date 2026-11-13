@@ -15,6 +15,106 @@ cosigned paths and direct EVM signing have different protection boundaries. The
 the repository's earlier import still needs publication review; known runtime
 trade-offs and private material in Git history are different questions.
 
+## Logs
+
+- [CHANGELOG.md](CHANGELOG.md): release history of this repository.
+- [PROMPTLOG.md](PROMPTLOG.md): instructions that shaped this repository.
+
+## Status
+
+| Field | Value |
+| --- | --- |
+| Repo version | `v0.1.0` (docs version only, no semver tag exists) |
+| Web app version in this snapshot | `0.104.0` (`release.json` `app_version`) |
+| Date | 2026-10-14 |
+| Updated by | hermes-agent for emino |
+| Default-branch HEAD | `14a7fc7f` (`release: pwa-ae496bf56f4b`) |
+| Where it runs | `https://app.nuri.com` (origin in `release.json` and `verify.mjs`) |
+| Release pipeline | nuri-expo Deploy PWA pushes a commit plus a `pwa-*` tag; [`attest.yml`](.github/workflows/attest.yml) rebuilds and signs `release.json` |
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Expo["nuri-com/nuri-expo Deploy PWA"] -->|"commit + pwa-* tag"| Repo["this repo: web/, source/, release.json"]
+    Repo --> Attest[".github/workflows/attest.yml"]
+    Attest -->|"npm ci + npm run build"| Dist["source/dist/"]
+    Attest -->|"node verify.mjs rebuild"| Verify["verify.mjs"]
+    Attest -->|"attest-build-provenance"| Sigstore["Sigstore attestation of release.json"]
+    Verify --> Waict["waict.mjs"]
+    Verify -->|"reads"| Manifest["release.json"]
+    Verify -->|"local check"| Web["web/"]
+    Verify -->|"HTTPS GET, no redirects"| Live["app.nuri.com"]
+```
+
+## User flow
+
+```mermaid
+sequenceDiagram
+    participant User as Reviewer
+    participant Repo as nuri-wallet clone
+    participant Checker as verify.mjs
+    participant Site as app.nuri.com
+    User->>Repo: git clone at a trusted revision
+    User->>Repo: gh attestation verify release.json
+    User->>Checker: node verify.mjs
+    Checker->>Repo: check web/ against release.json
+    Checker->>Site: fetch every listed file and the WAICT header
+    Checker-->>User: PASS or nonzero exit
+    User->>Repo: optional rebuild in source/
+    User->>Checker: node verify.mjs rebuild
+    Checker-->>User: PASS when source/dist/ matches release.json
+```
+
+## Components
+
+| Component | Path | Role |
+| --- | --- | --- |
+| Release checker | [`verify.mjs`](verify.mjs) | Local, live and rebuild verification against `release.json`; also `create`, `verify`, `verify-url` subcommands. |
+| Checker tests | [`verify.test.mjs`](verify.test.mjs) | Offline `node --test` regression suite. |
+| WAICT tool | [`waict.mjs`](waict.mjs) | Builds and validates the WAICT integrity manifest and policy header. |
+| Release manifest | [`release.json`](release.json) | Path, byte size and SHA-256 of every released file, plus `source_sha`, `release_id`, `app_version`, `origin`. |
+| Released site | [`web/`](web/) | Exact static files served at app.nuri.com, incl. `deployment.json` and `waict/`. |
+| Web source | [`source/`](source/) | Expo web source subset; entry `source/index.js` then `source/App.tsx`; `screens/`, `services/`, `lib/`, `config/`. |
+| Build checks | [`source/scripts/`](source/scripts/) | `check-no-legacy-cosigner.sh`, `check-no-dynamic-imports.mjs`. |
+| Attestation workflow | [`.github/workflows/attest.yml`](.github/workflows/attest.yml) | On `pwa-*` tag push: tests, local check, rebuild check, live check, Sigstore attestation. |
+
+## API / Endpoints
+
+No HTTP server. CLI commands from `verify.mjs` and `waict.mjs`:
+
+| Command | Purpose |
+| --- | --- |
+| `node verify.mjs` | Local check, then live check of every file and the WAICT header on the `release.json` origin. |
+| `node verify.mjs local` | Check `web/` against `release.json` only. |
+| `node verify.mjs rebuild` | Check `web/`, then compare `source/dist/` with the application files. |
+| `node verify.mjs create <assets> <manifest> <source-sha>` | Write a new manifest outside the asset directory. |
+| `node verify.mjs verify <manifest> <assets>` | Check an asset directory against a manifest. |
+| `node verify.mjs verify-url <manifest> <https-origin>` | Check a live origin against a manifest. |
+| `node waict.mjs <assets-dir> <https-origin>` | Write the WAICT manifest into `<assets-dir>/waict/` and print its path and SHA-256. |
+
+## Run
+
+Node.js 22 (`source/.nvmrc`).
+
+```sh
+node verify.mjs              # live check, no install needed
+node verify.mjs local
+node --test verify.test.mjs
+cd source && npm ci --legacy-peer-deps && npm run build && cd .. && node verify.mjs rebuild
+cd source && npm run check   # cosigner guard, dynamic import guard, checker tests
+```
+
+Build-time env var names read by `source/` (values are not in this repo):
+`EXPO_PUBLIC_ALCHEMY_API_KEY`, `EXPO_PUBLIC_BASE_MAINNET_RPC_URL`,
+`EXPO_PUBLIC_BASE_SEPOLIA_PUBLIC_RPC_URL`, `EXPO_PUBLIC_BASE_SEPOLIA_RPC_URL`,
+`EXPO_PUBLIC_LOG_LEVEL`, `EXPO_PUBLIC_NOSTR_BACKUP_RELAY`,
+`EXPO_PUBLIC_NOTIFICATIONS_API_URL`, `EXPO_PUBLIC_VAPID_PUBLIC_KEY`,
+`EXPO_PUBLIC_WIREX_AA_SELFHOST_BUNDLER_RPC_URL`, `EXPO_PUBLIC_WIREX_AA_SELFHOST_PAYMASTER_ADDRESS`,
+`EXPO_PUBLIC_WIREX_DEV_BASIC_AUTH`, `EXPO_PUBLIC_WIREX_PROXY_API_KEY`,
+`EXPO_PUBLIC_WIREX_PROXY_BASIC_AUTH`, `EXPO_PUBLIC_WIREX_SELFHOST_BUNDLER_RPC_URL`,
+`EXPO_PUBLIC_WIREX_SELFHOST_PAYMASTER_ADDRESS`, `EXPO_PUBLIC_WIREX_SUMSUB_CLIENT_ID`.
+
 ## Contents
 
 - [Check the live app](#check-the-live-app)
