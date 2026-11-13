@@ -413,6 +413,8 @@ export const tr = {
       bicLabel: "BIC",
       cardHolderLabel: "Kart üzerindeki ad",
       accountHolderLabel: "Hesap sahibi",
+      ownNameDepositsOnly:
+        "Banka hesabındaki isim, Nuri hesabındaki isimle tam olarak aynı olmalıdır.",
       detailsError: "Kart ayrıntıları yüklenemedi. Tekrar dene.",
       actionError: "Kart güncellenemedi. Tekrar dene.",
       frozenRevealHint: "Ayrıntılarını görmek için kartının dondurulmasını kaldır.",

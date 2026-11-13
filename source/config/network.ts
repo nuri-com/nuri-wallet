@@ -119,6 +119,11 @@ export const WIREX_PROXY_BASE_URL = IS_MAINNET
   ? "https://banking.nuri.com"
   : "https://wirex.nuri.com";
 
+// ── Base gas faucet ───────────────────────────────────────────────────
+// The faucet drips Base mainnet gas only and runs on the production host, so
+// every build calls it there, whatever network the build targets.
+export const BASE_FAUCET_BASE_URL = "https://banking.nuri.com";
+
 // ── Remit corridor (Lightning → Tanzanian shilling mobile money) ──────
 // The MCP endpoint the send screen quotes and mints its BOLT11 against. A public
 // hostname, pinned here for the same reason as WIREX_PROXY_BASE_URL.

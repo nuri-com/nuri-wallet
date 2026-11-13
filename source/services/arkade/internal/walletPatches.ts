@@ -14,6 +14,7 @@ import {
 } from "@arkade-os/sdk";
 import { ExpoArkProvider } from "@arkade-os/sdk/adapters/expo";
 import { reopenWhenCut } from "./roundEventStream";
+import { createRoundWatchdog, type RoundWatchdog } from "./roundWatchdog";
 import type { ArkadeInfo } from "@arkade-os/sdk";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { base64 } from "@scure/base";
@@ -526,6 +527,11 @@ export function installArkadeProviderTracePatch(wallet: PatchableArkadeWallet): 
   const activeBatchIds = new Set<string>();
   let streamReadyPromise: Promise<void> | null = null;
   let resolveStreamReady: (() => void) | null = null;
+  // Each open join stream's watchdog with the topics it subscribed to. The SDK
+  // subscribes a join to the wallet's cosigner key and the join's own input
+  // outpoints, and the registration names the same inputs, so a registration
+  // finds its own stream by them even when joins overlap on this provider.
+  const openRoundWatchdogs = new Map<RoundWatchdog, Set<string>>();
 
   const originalConfirmRegistration =
     typeof provider.confirmRegistration === "function"
@@ -536,6 +542,7 @@ export function installArkadeProviderTracePatch(wallet: PatchableArkadeWallet): 
     typeof provider.registerIntent === "function" ? provider.registerIntent.bind(provider) : null;
   if (originalRegisterIntent) {
     provider.registerIntent = async (intent: ArkProviderIntent) => {
+      const owner = roundWatchdogForIntent(openRoundWatchdogs, intent);
       const startedAt = Date.now();
       const type = String(intent?.message?.type || "n/a");
       const cosigners = Array.isArray(intent?.message?.cosigners_public_keys)
@@ -603,6 +610,7 @@ export function installArkadeProviderTracePatch(wallet: PatchableArkadeWallet): 
           if (rawId) {
             const intentHash = bytesToHex(sha256(new TextEncoder().encode(rawId))).toLowerCase();
             pendingIntentHashes.add(intentHash);
+            owner?.registered(intentHash);
             emitTrace({
               atMs: Date.now(),
               op: "ark_provider_register_intent",
@@ -710,6 +718,24 @@ export function installArkadeProviderTracePatch(wallet: PatchableArkadeWallet): 
         },
       });
       const queuedEvents: unknown[] = [];
+      const roundWatchdog = createRoundWatchdog({
+        onExpire: (error) => {
+          emitTrace({
+            atMs: Date.now(),
+            op: "ark_provider_stream",
+            status: "round_deadline",
+            detail: `events=${count} err=${error.message}`,
+          });
+          logArkadeWalletErrorTrace("ark_provider_round_deadline", {
+            status: "expired",
+            err: error.message,
+            expected_next: "sdk_deletes_intent_and_throws",
+          });
+          finish(error);
+          void Promise.resolve(baseIter.return?.(undefined)).catch(() => {});
+        },
+      });
+      openRoundWatchdogs.set(roundWatchdog, topicSet);
       const waiters: Array<{
         resolve: (result: IteratorResult<unknown>) => void;
         reject: (error: unknown) => void;
@@ -727,6 +753,9 @@ export function installArkadeProviderTracePatch(wallet: PatchableArkadeWallet): 
         queuedEvents.push(event);
       };
       const finish = (error?: unknown) => {
+        if (done) return;
+        roundWatchdog.stop();
+        openRoundWatchdogs.delete(roundWatchdog);
         done = true;
         streamError = error || null;
         while (waiters.length > 0) {
@@ -815,6 +844,7 @@ export function installArkadeProviderTracePatch(wallet: PatchableArkadeWallet): 
                 expected_next: "surface_send_error",
               });
             }
+            roundWatchdog.observe(event);
             emitTrace({
               atMs: Date.now(),
               op: "ark_provider_stream",
@@ -907,4 +937,55 @@ export function installArkadeProviderTracePatch(wallet: PatchableArkadeWallet): 
   }
 
   provider[ARKADE_PROVIDER_TRACE_PATCH_FLAG] = true;
+}
+
+/**
+ * What a registration shares with its join's stream topics, lowercased: the
+ * input outpoints, which only that join subscribes to, and the cosigner keys,
+ * which every join of this wallet shares.
+ */
+export function intentStreamKeys(intent: ArkProviderIntent): {
+  inputs: string[];
+  cosigners: string[];
+} {
+  const inputs: string[] = [];
+  const cosigners: string[] = [];
+  const keys = intent?.message?.cosigners_public_keys;
+  if (Array.isArray(keys)) {
+    for (const key of keys) {
+      const normalized = String(key || "")
+        .trim()
+        .toLowerCase();
+      if (normalized) cosigners.push(normalized);
+    }
+  }
+  try {
+    const proof = Transaction.fromPSBT(base64.decode(String(intent?.proof || "")));
+    for (let i = 0; i < proof.inputsLength; i += 1) {
+      const input = proof.getInput(i);
+      if (input?.txid instanceof Uint8Array && input.index !== undefined) {
+        inputs.push(`${bytesToHex(input.txid).toLowerCase()}:${input.index}`);
+      }
+    }
+  } catch {}
+  return { inputs, cosigners };
+}
+
+/**
+ * The one open join stream a registration belongs to: the newest stream
+ * subscribed to one of its inputs. Without such a stream, the only stream
+ * subscribed to its cosigner key, or the only open stream. When that is still
+ * ambiguous, none: the registration then has no deadline, as before.
+ */
+export function roundWatchdogForIntent(
+  open: Map<RoundWatchdog, Set<string>>,
+  intent: ArkProviderIntent,
+): RoundWatchdog | null {
+  const { inputs, cosigners } = intentStreamKeys(intent);
+  const entries = [...open];
+  const byInput = entries.filter(([, topics]) => inputs.some((key) => topics.has(key)));
+  if (byInput.length > 0) return byInput[byInput.length - 1][0];
+  const byCosigner = entries.filter(([, topics]) => cosigners.some((key) => topics.has(key)));
+  if (byCosigner.length === 1) return byCosigner[0][0];
+  return open.size === 1 ? entries[0][0] : null;
 }

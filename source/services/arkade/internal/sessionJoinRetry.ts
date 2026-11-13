@@ -3,26 +3,33 @@
 // outlasts the window fails with the session expired even though nothing about
 // the request was wrong: the registration is not refused, it merely points at a
 // round that no longer exists, so getting into a valid session means registering
-// once more.
+// once more. The same goes for a registration no round ever picked up
+// (roundWatchdog.ts), and for a round that failed because not every
+// registration confirmed in time: either way Arkade dropped the registration,
+// and only a new one gets into a round. A phone that missed its round's start
+// gets exactly that failure (seen live, 13 Nov 2026).
 //
-// That is the only failure this retries, and it retries it once. A round can also
-// end for reasons that have nothing to do with our nonce window (another
-// participant failing, missing intent confirmations), and retrying those only
-// added registration attempts without changing the outcome. A refused
-// registration is never retried either: an earlier registration still holds the
-// inputs, which another attempt cannot change (see boardingSweepBlocked.ts).
+// Those are the only failures this retries, and it retries once. A round can also
+// end for reasons that have nothing to do with our registration (another
+// participant's bad signature, liquidity), and retrying those only added
+// registration attempts without changing the outcome. A refused
+// registration is not retried here either: the inputs are in a round that is
+// still running (see duplicatedIntent.ts), so an immediate retry is refused too.
 import { isDuplicatedIntentError, isOrphanedIntentRegistrationRefusal } from "./duplicatedIntent";
+import { ROUND_NOT_STARTED_MESSAGE } from "./roundWatchdog";
 
 /**
- * Failures that mean the session expired under our nonces.
+ * Failures that mean our registration is no longer in any round.
  *
- * The same event seen from either side: the ASP's signing session timed out
- * collecting nonces, or it answered a nonce submission for a round it had already
- * dropped.
+ * The ASP's signing session timed out collecting nonces, or it answered a nonce
+ * or signature submission for a round it had already dropped (arkd v0.9.26 says
+ * "for round" or "for batch" depending on where it notices), or no round picked
+ * the registration up, or the round failed waiting for confirmations.
  */
 const SESSION_EXPIRED_RES: RegExp[] = [
   /SIGNING_SESSION_TIMED_OUT/i,
-  /signing session not found for round/i,
+  /signing session not found for (round|batch)/i,
+  /not[ _]enough[ _]intent[ _]confirmations[ _]received/i,
 ];
 
 /** One join attempt plus one re-registration into a valid session. */
@@ -54,6 +61,7 @@ export function isSessionExpiredFailure(error: unknown): boolean {
   if (isOrphanedIntentRegistrationRefusal(error)) return false;
   const text = errorText(error);
   if (!text) return false;
+  if (text.includes(ROUND_NOT_STARTED_MESSAGE)) return true;
   return SESSION_EXPIRED_RES.some((pattern) => pattern.test(text));
 }
 

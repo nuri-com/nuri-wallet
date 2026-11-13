@@ -421,6 +421,8 @@ export const nl = {
       bicLabel: "BIC",
       cardHolderLabel: "Naam op de kaart",
       accountHolderLabel: "Rekeninghouder",
+      ownNameDepositsOnly:
+        "De naam op je bankrekening moet precies overeenkomen met de naam op je Nuri-account.",
       detailsError: "Kaartgegevens konden niet worden geladen. Probeer het opnieuw.",
       actionError: "De kaart kon niet worden bijgewerkt. Probeer het opnieuw.",
       frozenRevealHint: "Ontdooi je kaart om de gegevens te zien.",

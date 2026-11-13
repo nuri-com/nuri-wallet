@@ -418,6 +418,8 @@ export const sw = {
       bicLabel: "BIC",
       cardHolderLabel: "Jina kwenye kadi",
       accountHolderLabel: "Mmiliki wa akaunti",
+      ownNameDepositsOnly:
+        "Jina kwenye akaunti yako ya benki lazima lilingane kabisa na jina kwenye akaunti yako ya Nuri.",
       detailsError: "Imeshindwa kupakia maelezo ya kadi. Jaribu tena.",
       actionError: "Imeshindwa kusasisha kadi. Jaribu tena.",
       frozenRevealHint: "Ondoa usimamishaji wa kadi yako ili kuona maelezo yake.",

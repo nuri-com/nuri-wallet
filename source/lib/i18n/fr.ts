@@ -423,6 +423,8 @@ export const fr = {
       bicLabel: "BIC",
       cardHolderLabel: "Nom sur la carte",
       accountHolderLabel: "Titulaire du compte",
+      ownNameDepositsOnly:
+        "Le nom sur ton compte bancaire doit correspondre exactement au nom sur ton compte Nuri.",
       detailsError: "Impossible de charger les détails de la carte. Réessaie.",
       actionError: "Impossible de mettre à jour la carte. Réessaie.",
       frozenRevealHint: "Dégèle ta carte pour voir ses détails.",

@@ -1,25 +1,25 @@
 // A settle refused because the input is already spoken for.
 //
-// `wallet.settle` registers an intent over its inputs, waits for the batch, and
-// on failure deletes the intent again. When that delete does not land — the
-// operator answers `INVALID_INTENT_PROOF: no matching intents found` — the
-// registration survives the attempt that created it. Every later settle over
-// the same input is then refused for as long as the orphan lives:
+// Arkade refuses a registration over an input another registration already
+// holds:
 //
 //   INTERNAL_ERROR (0): failed to push intent: failed to push intent after max
 //   number of retries: duplicated input, <txid>:<vout> already registered by
 //   another intent
 //
-// The SDK warns about exactly this in its own cleanup path ("intent may linger
-// on server and cause 'duplicated input' on next settle").
+// In arkd v0.9.26 that hold lasts only while the other registration is queued
+// or inside a running round. When a round starts, it takes every queued
+// registration out of the queue but keeps their inputs held; the hold is
+// released when the next round starts, or the input is spent if that round
+// finished (`Pop` and `DeleteVtxos` in the intent store, `startRound`). So the
+// other registration is an attempt still in flight, from this device or another
+// one, and the input frees up within about a minute.
 //
-// This is not a transient error and retrying cannot clear it: each attempt
-// builds a fresh intent over the same input and is refused the same way. The
-// wallet is stuck on those sats until the orphaned intent is removed or
-// expires. Surfacing it as a generic failure invites exactly the retry loop
-// that cannot work, so it is named here and reported as its own condition.
+// The same moment explains the delete refusal below: the SDK's cleanup delete
+// only searches the queue, and the registration holding the input has already
+// left it for its round.
 
-/** Inputs an orphaned intent is holding, as `txid:vout`. */
+/** Inputs another registration is holding, as `txid:vout`. */
 export type DuplicatedIntentInput = { txid: string; vout: number };
 
 export type ArkadeDuplicatedIntentDetails = {
@@ -64,22 +64,15 @@ const ORPHANED_REGISTRATION_DELETE_REFUSAL_RE = /no matching intents found for i
  * The SAME condition as {@link isDuplicatedIntentError}, in the shape it usually
  * arrives in.
  *
- * The refusal above almost never reaches a caller intact. `Wallet.settle`
- * registers the intent through the SDK's own recovery wrapper, which on
- * `ArkError { code: 0, message: "... duplicated input ..." }` builds a delete
- * proof over its inputs and calls `deleteIntent` — without catching it. The ASP
- * holding those inputs is the *older* registration, not ours, so the delete
- * matches nothing and is refused with
- * `INVALID_INTENT_PROOF (23): no matching intents found for intent proof`. That
- * error replaces the register error on the way out (the later delete attempt
- * inside the settle is caught and only warned about), so a caller matching the
- * duplicated-input text alone sees only the delete refusal, records nothing, and
- * re-selects the same stuck coin forever.
+ * `Wallet.settle` registers through the SDK's own recovery wrapper, which on a
+ * `duplicated input` refusal builds a delete proof over its inputs and calls
+ * `deleteIntent` without catching it. The registration holding those inputs has
+ * already left the queue for its round, so the delete matches nothing and is
+ * refused with `INVALID_INTENT_PROOF (23): no matching intents found for intent
+ * proof`. That error replaces the register error on the way out.
  *
- * Reading only the text: this refusal can only come out of that branch. A
- * register refused for any OTHER reason carries a different code and the SDK
- * rethrows it without attempting a delete at all, so the two conditions are the
- * same state — an earlier registration still holds one of this attempt's inputs.
+ * A register refused for any OTHER reason carries a different code and the SDK
+ * rethrows it without attempting a delete, so the two shapes are the same state.
  */
 export function isOrphanedIntentRegistrationRefusal(error: unknown): boolean {
   return ORPHANED_REGISTRATION_DELETE_REFUSAL_RE.test(errorText(error));
@@ -114,16 +107,13 @@ export function duplicatedIntentInputs(error: unknown): DuplicatedIntentInput[] 
 }
 
 /**
- * What to tell the user. Names the condition rather than the sats: the money is
- * safe on-chain and needs no action, and "try again" is the one instruction
- * that is guaranteed not to work.
+ * What to tell the user, for either shape of the refusal. The money is safe and
+ * the hold clears by itself within about a minute.
  */
 export function formatDuplicatedIntentError(error: unknown): string {
-  const inputs = duplicatedIntentInputs(error);
-  if (inputs.length === 0) return "";
+  if (!isDuplicatedIntentError(error) && !isOrphanedIntentRegistrationRefusal(error)) return "";
   return (
-    "These funds are held by an earlier claim that did not finish. " +
-    "They are safe and nothing was lost, but the claim has to clear on the " +
-    "server before it can run again. Retrying now will not help."
+    "These funds are already in a claim that is still running, from an earlier " +
+    "attempt or another device. They are safe. Try again in a minute."
   );
 }

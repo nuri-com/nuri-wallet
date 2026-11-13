@@ -413,6 +413,8 @@ export const en = {
       bicLabel: "BIC",
       cardHolderLabel: "Name on card",
       accountHolderLabel: "Account holder",
+      ownNameDepositsOnly:
+        "The name on your bank account must exactly match the name on your Nuri account.",
       detailsError: "Couldn't load card details. Try again.",
       actionError: "Couldn't update the card. Try again.",
       frozenRevealHint: "Unfreeze your card to view its details.",

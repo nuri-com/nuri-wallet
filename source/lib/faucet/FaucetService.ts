@@ -4,7 +4,7 @@ import {
   FAUCET_RELAY_RETRY_DELAY_MS,
   FAUCET_RELAY_TIMEOUT_MS,
 } from "../../config/constants";
-import { WIREX_PROXY_BASE_URL } from "../../config/network";
+import { BASE_FAUCET_BASE_URL } from "../../config/network";
 import { errMsg, errName } from "../errorMessage";
 
 export type DripResult = {
@@ -79,11 +79,11 @@ async function postDrip(url: string, beneficiary: string): Promise<DripResult> {
 }
 
 /**
- * Drip Base mainnet gas via the wirex proxy faucet (nginx injects the server
+ * Drip Base mainnet gas via the faucet on banking.nuri.com (nginx injects the server
  * key — no client key needed). Server refuses non-fatally with reasons like
  * already_claimed / has_gas / faucet_empty; callers must proceed regardless.
  */
 export async function dripBaseGas(beneficiary: string): Promise<DripResult> {
-  const base = WIREX_PROXY_BASE_URL.replace(/\/$/, "");
+  const base = BASE_FAUCET_BASE_URL.replace(/\/$/, "");
   return postDrip(`${base}/faucet/drip`, beneficiary);
 }

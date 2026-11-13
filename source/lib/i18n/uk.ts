@@ -417,6 +417,8 @@ export const uk = {
       bicLabel: "BIC",
       cardHolderLabel: "Ім'я на картці",
       accountHolderLabel: "Власник рахунку",
+      ownNameDepositsOnly:
+        "Ім'я на вашому банківському рахунку має точно збігатися з ім'ям у вашому акаунті Nuri.",
       detailsError: "Не вдалося завантажити деталі картки. Спробуй ще раз.",
       actionError: "Не вдалося оновити картку. Спробуй ще раз.",
       frozenRevealHint: "Розморозь картку, щоб побачити її деталі.",

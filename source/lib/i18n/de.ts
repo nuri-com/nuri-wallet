@@ -426,6 +426,8 @@ export const de = {
       bicLabel: "BIC",
       cardHolderLabel: "Name auf der Karte",
       accountHolderLabel: "Kontoinhaber",
+      ownNameDepositsOnly:
+        "Der Name auf deinem Bankkonto muss genau mit dem Namen auf deinem Nuri-Konto übereinstimmen.",
       detailsError: "Kartendetails konnten nicht geladen werden. Bitte erneut versuchen.",
       actionError: "Karte konnte nicht aktualisiert werden. Bitte erneut versuchen.",
       frozenRevealHint: "Entsperre deine Karte, um die Details zu sehen.",

@@ -35,6 +35,7 @@ import {
   duplicatedIntentInputs,
   formatDuplicatedIntentError,
   isDuplicatedIntentError,
+  isOrphanedIntentRegistrationRefusal,
 } from "./internal/duplicatedIntent";
 import { getArkadeWalletSummary, loadArkadeWalletSummary } from "./internal/walletSummary";
 import type { ArkadeWalletSummary } from "./types/wallet";
@@ -585,12 +586,11 @@ async function runStep(
       error instanceof Error ? error.message : String(error || "unknown"),
       180,
     );
-    // A settle refused for `duplicated input` is not a failure the user can
-    // retry away: an earlier attempt left its intent registered over these
-    // sats, and every new attempt is refused the same way until that intent
-    // clears server-side. Reported as its own condition so the modal stops
-    // inviting the retry loop that cannot succeed.
-    if (isDuplicatedIntentError(error)) {
+    // A settle refused because another attempt holds these sats in a round that
+    // is still running, in either shape the refusal arrives in. It clears within
+    // about a minute, so it is reported as its own condition instead of the raw
+    // refusal.
+    if (isDuplicatedIntentError(error) || isOrphanedIntentRegistrationRefusal(error)) {
       const held = duplicatedIntentInputs(error)
         .map((input) => `${input.txid}:${input.vout}`)
         .join(",");

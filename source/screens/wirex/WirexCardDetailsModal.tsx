@@ -24,6 +24,7 @@ import {
   ListActionTextMuted,
   ListActionTrailIcon,
   ListSeparator,
+  NuriIcon,
   Scroll,
   Text,
   Topbar,
@@ -523,6 +524,30 @@ const WirexCardDetailsModal: React.FC<Props> = ({
                 </View>
               ) : null}
               {items.length ? renderRows(items) : null}
+              {activeTab === "bank" && iban ? (
+                // Wirex only credits SEPA transfers sent from an account in the
+                // holder's own name; anything else bounces. A soft card rather
+                // than an Alert: the Alert message is one line and would cut
+                // the sentence off.
+                <View paddingX="lg">
+                  <View
+                    variant="soft"
+                    radius="md"
+                    paddingX="lg"
+                    paddingY="md"
+                    direction="row"
+                    align="center"
+                    gap="md"
+                  >
+                    <NuriIcon name="bank" />
+                    <View direction="column" fill="grow-shrink">
+                      <Text size="sm" muted>
+                        {t("screen.WirexCard.ownNameDepositsOnly")}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              ) : null}
               {activeTab === "card" && showFreezeRow ? (
                 <View paddingX="lg">
                   {isFrozen === true ? (

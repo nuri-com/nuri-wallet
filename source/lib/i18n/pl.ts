@@ -422,6 +422,8 @@ export const pl = {
       bicLabel: "BIC",
       cardHolderLabel: "Imię i nazwisko na karcie",
       accountHolderLabel: "Właściciel konta",
+      ownNameDepositsOnly:
+        "Imię i nazwisko na Twoim koncie bankowym muszą dokładnie zgadzać się z imieniem i nazwiskiem na Twoim koncie Nuri.",
       detailsError: "Nie udało się wczytać danych karty. Spróbuj ponownie.",
       actionError: "Nie udało się zaktualizować karty. Spróbuj ponownie.",
       frozenRevealHint: "Odmroź kartę, aby zobaczyć jej dane.",

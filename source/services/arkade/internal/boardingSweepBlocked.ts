@@ -1,36 +1,29 @@
-// Boarding outpoints the ASP has refused because an earlier intent still holds
+// Boarding outpoints the ASP has refused because another registration holds
 // them.
 //
-// A settle that fails after its register can leave an intent registered over a
-// boarding UTXO on the Arkade ASP (arkade.computer). Every later attempt to
-// sweep THAT coin is then refused with
+// While an attempt's registration is queued or in a running round, every other
+// attempt over the same coin is refused with
 // `duplicated input, <txid>:<vout> already registered by another intent`, and
-// the matching `deleteIntent` is refused too, so nothing on the client can
-// release it. The registration clears server-side only.
+// the matching `deleteIntent` is refused too. In arkd v0.9.26 that hold ends
+// when the next round starts, within about a minute (see duplicatedIntent.ts).
 //
-// Without this list the sweep re-selects the same blocked outpoint on every
-// tick: `selectSingleBoardingUtxoForSweep` sorts candidates and takes the
-// lowest, so a single stuck coin is picked forever and every other boarding
-// UTXO the user deposits afterwards is never attempted at all. That turns one
-// stuck coin into a wallet that cannot claim anything.
+// Without this list the sweep re-selects the same held outpoint on every tick:
+// `selectSingleBoardingUtxoForSweep` sorts candidates and takes the lowest, so a
+// held coin would be picked again before any other boarding UTXO is attempted.
 //
 // So: remember the outpoints the ASP named in that refusal and skip them while
-// other candidates exist. The TTL keeps it self-healing, because the ASP can
-// clear a registration at any moment (expiry, or an operator delete) and we
-// must not skip a coin that has since become sweepable. In-memory only, so a
-// reload costs one retry of the blocked coin before it is skipped again.
+// other candidates exist, for about as long as the hold can last. In-memory
+// only, so a reload costs one retry of the held coin before it is skipped again.
 import { emitTrace } from "./logging";
 
 /** Outpoints named in a `duplicated input` refusal, as `txid:vout`. */
 export type BoardingOutpointRef = { txid: string; vout: number };
 
 /**
- * How long an outpoint stays skipped after the ASP refused it.
- *
- * Long enough that a stuck coin stops consuming every sweep attempt, short
- * enough that a registration the ASP clears is retried without user action.
+ * How long an outpoint stays skipped after the ASP refused it: one round to end
+ * and the next to start, with margin.
  */
-export const BOARDING_SWEEP_BLOCKED_TTL_MS = 30 * 60 * 1000;
+export const BOARDING_SWEEP_BLOCKED_TTL_MS = 2 * 60 * 1000;
 
 type BlockedOutpointEntry = {
   expiresAtMs: number;

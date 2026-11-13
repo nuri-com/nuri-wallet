@@ -418,6 +418,8 @@ export const ptBR = {
       bicLabel: "BIC",
       cardHolderLabel: "Nome no cartão",
       accountHolderLabel: "Titular da conta",
+      ownNameDepositsOnly:
+        "O nome na sua conta bancária deve ser exatamente igual ao nome na sua conta Nuri.",
       detailsError: "Não foi possível carregar os dados do cartão. Tente de novo.",
       actionError: "Não foi possível atualizar o cartão. Tente de novo.",
       frozenRevealHint: "Descongele o cartão para ver os dados.",
