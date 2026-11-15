@@ -14,7 +14,10 @@ import type { ActivityItem } from "../../components/ActivitySheet";
 import { ACCOUNT_EMAIL_KEY as WIREX_EMAIL_KEY } from "../../lib/accountEmail";
 import { bytesToHex, zeroize } from "../../lib/crypto";
 import { errorWithId, LOG_EMOJI, logWithId } from "../../lib/OperationLogUtils";
-import { pendingWithdrawKeyFor } from "../../lib/wirex/pendingWithdrawKey";
+import { directWithdrawKeyFor, pendingWithdrawKeyFor } from "../../lib/wirex/pendingWithdrawKey";
+import { isHostedWithdrawDown, parseDirectWithdrawRecord } from "../../lib/wirex/directWithdraw";
+import { reconcileDirectWithdraw, runDirectWithdraw } from "./directWithdraw";
+import { directWithdrawDeps } from "./directWithdrawRuntime";
 import { WIREX_WITHDRAW_UNCONFIRMED_ERROR_NAME } from "../../lib/wirex/withdrawRollback";
 import {
   isPendingWithdrawMarkerExpired,
@@ -422,6 +425,17 @@ export class WirexApiError extends Error {
   }
 }
 
+/**
+ * The hosted withdrawal could not be started: no connection, a timeout or a
+ * server error. Nothing was signed, so the withdrawal goes onchain instead.
+ */
+class WirexWithdrawRouteDownError extends Error {
+  constructor() {
+    super("wirex_withdraw_route_down");
+    this.name = "WirexWithdrawRouteDownError";
+  }
+}
+
 /** Another card withdrawal or swap is running: nothing was started. */
 export class WirexWithdrawBusyError extends Error {
   constructor() {
@@ -590,6 +604,12 @@ const WITHDRAW_BACKGROUND_CHECK_MS = 60_000;
  * simply still unknown and the marker stays.
  */
 const WITHDRAW_BACKGROUND_READ_TIMEOUT_MS = 15_000;
+/**
+ * How long the hosted withdrawal's start may take before the route counts as
+ * down. A start only prepares the request (an onchain read and one Wirex read),
+ * and nothing is signed until it answers, so giving up on it is always safe.
+ */
+const WITHDRAW_START_TIMEOUT_MS = 30_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -792,6 +812,38 @@ class WirexService {
       body: JSON.stringify(body),
     });
     return this.unwrap<T>(response, `POST ${path}`);
+  }
+
+  // The hosted withdrawal's start, told apart from a refusal: a route that does
+  // not answer, times out or fails on the server throws the route-down error;
+  // an answer of any kind (ok:false included) is returned or thrown as usual.
+  private async postWithdrawStart<T>(body: unknown): Promise<T> {
+    const path = wirexConfig.routes.withdrawStart;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), WITHDRAW_START_TIMEOUT_MS);
+    try {
+      let response: Response;
+      try {
+        response = await fetch(`${this.restBaseUrl}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } catch {
+        throw new WirexWithdrawRouteDownError();
+      }
+      if (isHostedWithdrawDown({ status: response.status }))
+        throw new WirexWithdrawRouteDownError();
+      try {
+        return await this.unwrap<T>(response, `POST ${path}`);
+      } catch (error) {
+        if (controller.signal.aborted) throw new WirexWithdrawRouteDownError();
+        throw error;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // `authorized` routes are server-gated reads: they carry the wallet-signed
@@ -1532,6 +1584,18 @@ class WirexService {
     trace: (label: string, data?: unknown) => void,
     opts: { once?: boolean } = {},
   ): Promise<WirexWithdrawalResult | null> {
+    // A direct withdrawal's signed final step first: it is settled by the
+    // chain, and until then nothing else may start.
+    const directRaw = (await getAuthData(directWithdrawKeyFor(wallet)))?.trim();
+    if (directRaw) {
+      const direct = parseDirectWithdrawRecord(directRaw);
+      // Only this app writes it, always whole; one that cannot be read cannot
+      // be settled either, so it keeps the lock rather than guess.
+      if (!direct) throw new WirexWithdrawUnconfirmedError();
+      trace("reconcile pending onchain withdrawal", { tx: direct.finalTxHash });
+      const settled = await reconcileDirectWithdraw(this.directDeps(wallet, trace), direct, opts);
+      if (settled) return { ok: true, ...settled };
+    }
     const key = pendingWithdrawKeyFor(wallet);
     const raw = (await getAuthData(key))?.trim();
     if (!raw) return null;
@@ -1686,7 +1750,11 @@ class WirexService {
     if (this.activeWithdrawals > 0) return true;
     const wallet = await getEthereumAddress();
     if (!wallet) return false;
-    if (!(await getAuthData(pendingWithdrawKeyFor(wallet)))?.trim()) return false;
+    const [hosted, direct] = await Promise.all([
+      getAuthData(pendingWithdrawKeyFor(wallet)),
+      getAuthData(directWithdrawKeyFor(wallet)),
+    ]);
+    if (!hosted?.trim() && !direct?.trim()) return false;
     // A marker alone is not an answer: ask its execution session, through the
     // same reconciliation the next withdrawal runs. Completed, definitively
     // failed, expired or unreadable releases the lock and the row with it; an
@@ -1766,6 +1834,49 @@ class WirexService {
     }
     if (!match) return "unlisted";
     return match.status;
+  }
+
+  /**
+   * The chain side of a direct withdrawal. Its record has its own key, which
+   * no logout or reset wipes: only the chain releases it.
+   */
+  private directDeps(wallet: string, trace?: (label: string, data?: unknown) => void) {
+    const key = directWithdrawKeyFor(wallet);
+    return directWithdrawDeps({
+      writeRecord: (record) => storeAuthData(key, JSON.stringify(record)),
+      clearRecord: () => deleteAuthData(key),
+      unconfirmed: () => new WirexWithdrawUnconfirmedError(),
+      trace,
+    });
+  }
+
+  private async runDirectWithdrawal(
+    wallet: string,
+    amount: string,
+    asset: WirexWithdrawAsset,
+    opts: Parameters<WirexService["withdrawToWallet"]>[1],
+    trace: (label: string, data?: unknown) => void,
+  ): Promise<WirexWithdrawalResult> {
+    const result = await runDirectWithdraw(this.directDeps(wallet, trace), {
+      wallet,
+      amount,
+      asset,
+      onRequestApproved: opts?.onRequestApproved,
+      onSubmitted: opts?.onSubmitted,
+    });
+    logWithId(
+      `${LOG_EMOJI.card} WirexService.withdrawToWallet`,
+      "onchain withdrawal completed",
+      { asset: result.asset },
+      {
+        context: "user",
+        event: "FLOW",
+        scope: "Wirex",
+        flow: "withdrawToWallet",
+        source: "services/wirex/WirexService.ts#runDirectWithdrawal",
+      },
+    );
+    return { ok: true, ...result };
   }
 
   async withdrawToWallet(
@@ -1898,12 +2009,25 @@ class WirexService {
           }),
         )
       : await traced(`POST ${wirexConfig.routes.withdrawStart}`, () =>
-          this.post<WithdrawalStartData>(wirexConfig.routes.withdrawStart, {
+          this.postWithdrawStart<WithdrawalStartData>({
             wallet,
             amount: normalizedAmount,
             asset,
           }),
-        );
+        ).catch((error: unknown): null => {
+          if (error instanceof WirexWithdrawRouteDownError) return null;
+          throw error;
+        });
+    // The Wirex route is down and nothing was signed: withdraw straight onchain.
+    if (!start) {
+      logWithId(
+        `${LOG_EMOJI.card} WirexService.withdrawToWallet`,
+        "withdrawal route down: withdrawing onchain",
+        { asset },
+        { ...logMeta, event: "FLOW" },
+      );
+      return this.runDirectWithdrawal(wallet, normalizedAmount, asset, opts, trace);
+    }
     if (!start.approval_url || !start.session_id) {
       throw new Error("wirex_withdraw_start_invalid");
     }

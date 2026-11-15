@@ -17,6 +17,7 @@
 import { bytesToBase64url, base64urlToBytes, sha256 } from "./crypto";
 import { bytesToHex } from "./bytes";
 import { deriveNostrPrivateKeyFromBitcoinKey } from "./walletDerivation";
+import { DIRECT_WITHDRAW_KEY_PREFIX } from "./wirex/pendingWithdrawKey";
 
 // Same identifiers the native Keychain used, so semantics match and a future
 // import/migration path is trivial.
@@ -449,13 +450,18 @@ export async function wipeAllKeychainData(_extraServers: string[] = []): Promise
   // The HTLC counter outlives logout, as on native (#1896): the roots return
   // from the PRF at the next sign-in, so a wiped counter re-issues preimages.
   const keep = PREFIX + SWAPKIT_HTLC_KEYSTATE_ID;
+  // A direct card withdrawal's signed final step (#1956) is released by the
+  // chain only, never by a logout: the transaction may still land.
+  const keepDirectWithdraw = PREFIX + DIRECT_WITHDRAW_KEY_PREFIX;
   const store = ls();
   if (store) {
     try {
       const toRemove: string[] = [];
       for (let i = 0; i < store.length; i++) {
         const k = store.key(i);
-        if (k && k.startsWith(PREFIX) && k !== keep) toRemove.push(k);
+        if (k && k.startsWith(PREFIX) && k !== keep && !k.startsWith(keepDirectWithdraw)) {
+          toRemove.push(k);
+        }
       }
       for (const k of toRemove) {
         try {
@@ -465,7 +471,8 @@ export async function wipeAllKeychainData(_extraServers: string[] = []): Promise
     } catch {}
   }
   for (const id of [...mem.keys()]) {
-    if (id !== SWAPKIT_HTLC_KEYSTATE_ID) mem.delete(id);
+    if (id !== SWAPKIT_HTLC_KEYSTATE_ID && !id.startsWith(DIRECT_WITHDRAW_KEY_PREFIX))
+      mem.delete(id);
   }
 }
 
