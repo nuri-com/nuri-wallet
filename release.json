@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_sha": "9bcc4af1e59df27963a7d633a1f9806ff778218f",
-  "release_id": "pwa-9bcc4af1e59d",
+  "source_sha": "2925758ddc216bf767a7a889e5a7f4396600c3df",
+  "release_id": "pwa-2925758ddc21",
   "app_version": "0.111.0",
   "origin": "https://app.nuri.com",
   "files": [
@@ -631,14 +631,14 @@
       "sha256": "b0e9f12526f37192bbd89cfe671e86edc6c39ddfb68dfde79724bb50ebb815e6"
     },
     {
-      "path": "_expo/static/js/web/index-191e1532ec8d9b4fdf0480ac2f3741f0.js",
-      "bytes": 12795125,
-      "sha256": "7fecd96cca962da3c609ae829905c5122390a30fb3ceab7f01dcf9623172de12"
-    },
-    {
       "path": "_expo/static/js/web/index-2588ead6f097849acc4690683769cb32.js",
       "bytes": 15787,
       "sha256": "9b124224e142f3eb853d2803a9d6f1b8a501355bf39a36d661eda7ba75c040bf"
+    },
+    {
+      "path": "_expo/static/js/web/index-53180f043fd01d925f560849874ab1f3.js",
+      "bytes": 12793673,
+      "sha256": "d1a3aae432464c444bf9694affe3b5e2e5480a1c74e3c1da46fe575fedc2506b"
     },
     {
       "path": "_expo/static/js/web/index-5efee8ea2c7d6b26896238ebf7baa330.js",
@@ -1508,7 +1508,7 @@
     {
       "path": "deployment.json",
       "bytes": 665,
-      "sha256": "f490f887bba05cdf9c4822325e5a5c7882e1861258e6b2d56acc0b4e729efede"
+      "sha256": "c62673913f0f794c200b7ffde511aa84e9f3bfbdb48fb5fef70b7fac6b295719"
     },
     {
       "path": "favicon-32.png",
@@ -1543,7 +1543,7 @@
     {
       "path": "index.html",
       "bytes": 13542,
-      "sha256": "3c529e86876025d28ebd564046603c198a1027cefb07593c62d11496a0481fbe"
+      "sha256": "5695f1aa1e7b2ef63de777063ea5407c8435cd80cc0a380394e005b7f7d3d8c0"
     },
     {
       "path": "manifest.json",
@@ -1566,9 +1566,9 @@
       "sha256": "d3f499490d1f70abbff5a07f3baa941470645365508ff00c837438bc190ca9b9"
     },
     {
-      "path": "waict/oXEyKbCxOXbWwNsYSZz6Sn",
+      "path": "waict/fwUEVgsR01kGr2XdRzxIOB",
       "bytes": 43645,
-      "sha256": "a1713229b0b13976d6c0db18499cfa4a765e4f24a176224abd2143a55f76b186"
+      "sha256": "7f0504560b11d35906af65dd473c48381bebbdb5d51bec64ece1e4895314127c"
     }
   ]
 }

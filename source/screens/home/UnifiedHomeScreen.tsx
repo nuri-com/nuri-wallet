@@ -241,13 +241,10 @@ import { checkSwapKitSweep } from "../../services/swapkit/SwapKitV2SweepService"
 import type { SwapKitV2SweepResult } from "../../services/swapkit/SwapKitV2SweepService";
 import { wirexAccountService } from "../../services/wirex/WirexAccountService";
 import {
-  WirexWithdrawBusyError,
   WirexWithdrawUnconfirmedError,
   type WirexWithdrawAsset,
-  wirexService,
 } from "../../services/wirex/WirexService";
-import { autoSwapAmount, cardSwapStep, foundMoneyAmount } from "../../lib/wirex/cardAutoSwap";
-import { errorWithId } from "../../lib/OperationLogUtils";
+import { foundMoneyAmount } from "../../lib/wirex/cardFoundMoney";
 import { reportErrorToSupport } from "../../lib/support/reportErrorToSupport";
 import { isUserCancelledAuth } from "../../lib/support/isUserCancelledAuth";
 import { sendDollarToCard, sendEuroToCard } from "../../services/wallet/CardTransferService";
@@ -1435,88 +1432,13 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   }, [openRail, onchainSats, arkadeSats, walletEur, usdcBalance, listSatsStr, heldList]);
 
   // Money on the card in the currency it does not settle in. It cannot be
-  // spent through the card's one currency, so from Wirex's minimum of 10 it is
-  // swapped into the home currency on its own (Wirex FX: the same two silent
-  // approvals as a withdrawal, then the home currency lands on the card). Less
-  // than that is offered back as found money, below.
+  // spent through the card's one currency, so it is offered back as found
+  // money, whatever the amount: withdrawn to the wallet holding that currency.
+  // The app no longer swaps it through Wirex FX, which took the payment and
+  // then refused to run the swap.
   const cardOtherFiat: FiatCode = home === "USD" ? "EUR" : "USD";
   const cardOtherReading = cardActive ? wirex.balancesByFiat?.[cardOtherFiat] : undefined;
-  const cardSwapAmount = autoSwapAmount(cardOtherReading);
-  // The reading a swap already ran for (or may have run for, when its outcome
-  // is unconfirmed): never swapped again until the balance reads differently,
-  // and nothing starts while one is running, so the same money moves once.
-  const cardSwapKey = `${cardOtherFiat}:${cardOtherReading ?? 0}`;
-  const cardSwapTakenRef = useRef<string | null>(null);
-  const cardSwapRunningRef = useRef(false);
-  // Bumped when a swap ends, so the latest reading (which may have changed
-  // while it ran) is looked at again.
-  const [cardSwapEnded, setCardSwapEnded] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `cardSwapEnded` is the re-check trigger when a swap ends, not a value read
-  useEffect(() => {
-    const step = cardSwapStep({
-      running: cardSwapRunningRef.current,
-      reading: cardOtherReading,
-      key: cardSwapKey,
-      taken: cardSwapTakenRef.current,
-    });
-    // Zero: the money left, so the same amount arriving later is new money.
-    if (step === "reset") cardSwapTakenRef.current = null;
-    if (step !== "start" || !cardSwapAmount) return;
-    cardSwapTakenRef.current = cardSwapKey;
-    cardSwapRunningRef.current = true;
-    const to = home === "USD" ? "USD" : "EUR";
-    // Another card movement (a withdrawal from the Move sheet) holds the card:
-    // nothing started, so the reading is not used up. Asked again once it is
-    // done, from a fresh reading.
-    let busy = false;
-    void wirexService
-      .swapCardCurrency(to, cardSwapAmount)
-      .then((done) => {
-        // The money left the card but Wirex did not run the swap: it sits at
-        // Wirex's swap address and only support can settle it.
-        if (done.fx?.status !== "done") {
-          void reportErrorToSupport({
-            error: new Error(done.fx?.error ?? "wirex_fx_outcome_missing"),
-            userMessage:
-              done.fx?.status === "failed"
-                ? "Card currency swap did not run"
-                : "Card currency swap is unconfirmed",
-          }).catch(() => {});
-        }
-      })
-      .catch((error) => {
-        if (error instanceof WirexWithdrawBusyError) {
-          busy = true;
-          cardSwapTakenRef.current = null;
-          return;
-        }
-        if (error instanceof WirexWithdrawUnconfirmedError) {
-          void reportErrorToSupport({
-            error,
-            userMessage: "Card currency swap is unconfirmed",
-          }).catch(() => {});
-          return;
-        }
-        // Nothing moved (no capability, a server without swaps, a blip): the
-        // same reading is not tried again until the app starts anew.
-        errorWithId("💳 UnifiedHomeScreen.cardSwap", "card currency swap failed", {
-          reason: error instanceof Error ? error.message : String(error),
-        });
-      })
-      .finally(() => {
-        const ready = busy ? wirexService.whenWithdrawalsIdle() : Promise.resolve();
-        void ready
-          .then(() => wirexAccountService.silentRefresh(true))
-          .catch(() => {})
-          .finally(() => {
-            cardSwapRunningRef.current = false;
-            setCardSwapEnded((n) => n + 1);
-          });
-      });
-  }, [cardSwapAmount, cardSwapKey, cardOtherReading, home, cardSwapEnded]);
 
-  // Under Wirex's swap minimum of 10 the money cannot be swapped, so it is
-  // offered back as found money: withdrawn to the wallet holding that currency.
   const cardOtherHeld = foundMoneyAmount(cardOtherReading) ?? 0;
   const [cardFoundVisible, setCardFoundVisible] = useState(false);
   // Offered unprompted for each amount found in a currency; the row on the
@@ -3582,7 +3504,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         bitcoinAddress={buyFlow.bitcoinAddress}
       />
 
-      {/* The card's other-currency money under the swap minimum: withdrawn to the wallet holding it. */}
+      {/* The card's other-currency money: withdrawn to the wallet holding it. */}
       <SweepClaimSheet
         visible={cardFoundVisible && sweepResult == null}
         result={null}
