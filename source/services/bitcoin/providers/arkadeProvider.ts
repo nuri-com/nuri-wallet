@@ -48,6 +48,8 @@ function unifiedArkadeRowToTransaction(atx: UnifiedTransaction): BitcoinTransact
     timestamp: atx.timestamp,
     status: atx.status,
     txid: atx.txid,
+    ...(atx.arkTxid ? { arkTxid: atx.arkTxid } : {}),
+    ...(atx.exitTxid ? { exitTxid: atx.exitTxid } : {}),
     kind: atx.kind,
     isMigrationTx: atx.isMigrationTx,
     counterpartyScripts: atx.counterpartyScripts,
@@ -117,7 +119,10 @@ export const arkadeProvider: BtcL2Provider = {
 
   async send(target: BitcoinSendTarget): Promise<BitcoinSendResult> {
     if (target.kind === "bolt11") {
-      const result = await payArkadeLightningInvoice({ invoice: target.invoice });
+      const result = await payArkadeLightningInvoice({
+        invoice: target.invoice,
+        payBy: target.payBy,
+      });
       emitPostSendRefresh();
       return { kind: "bolt11", paymentHash: result.paymentHash, raw: result };
     }

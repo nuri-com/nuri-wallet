@@ -53,6 +53,8 @@ export type PasskeyWebAuthnPrfProps = {
   overlay?: boolean;
   disabled?: boolean;
   onAttemptStart?: () => void;
+  /** The tap only focused the page: no ceremony ran, the button stays for the next tap. */
+  onFocusRetry?: () => void;
   onCreateResult?: (result: PasskeyWebAuthnPrfCreateResult) => void;
   onAssertionResult?: (result: PasskeyWebAuthnPrfAssertionResult) => void;
   onError: (message: string) => void;
@@ -305,6 +307,7 @@ function PasskeyWebAuthnPrfViewInner({
   overlay = false,
   disabled,
   onAttemptStart,
+  onFocusRetry,
   onCreateResult,
   onAssertionResult,
   onError,
@@ -367,7 +370,10 @@ function PasskeyWebAuthnPrfViewInner({
       }
 
       // Focus refusal: the page keeps its button for another tap, no error.
-      if (data === "info:focus_retry") return;
+      if (data === "info:focus_retry") {
+        onFocusRetry?.();
+        return;
+      }
 
       if (data.startsWith("create:")) {
         const [, prfB64u, credId, credPubkey] = data.split(":");
@@ -417,7 +423,7 @@ function PasskeyWebAuthnPrfViewInner({
         onError(data);
       }
     },
-    [onAttemptStart, onCreateResult, onAssertionResult, onError, replacePrf],
+    [onAttemptStart, onFocusRetry, onCreateResult, onAssertionResult, onError, replacePrf],
   );
 
   if (unsupported) {

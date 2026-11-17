@@ -306,6 +306,33 @@ export function noteV2TransferPhase(
   });
 }
 
+// What a failed transfer threw or returned, kept beside the move rather than in
+// it: it is an arbitrary value, for the details sheet and the support report.
+const transferFailures = new Map<string, { error: unknown; at: number }>();
+
+/**
+ * A wallet↔card transfer failed. `error` is whatever the attempt threw or
+ * returned, or undefined when nothing said why (a reverted tx, a dropped row):
+ * the details sheet then says so rather than inventing a reason.
+ */
+export function noteV2TransferFailed(
+  id: string,
+  error?: unknown,
+  inFlightId?: string | null,
+): void {
+  const key = String(id || "").trim();
+  if (!key) return;
+  const existing = moves.get(key);
+  if (existing && isTerminalMovePhase(existing.phase)) return;
+  transferFailures.set(key, { error, at: Date.now() });
+  noteV2TransferPhase(key, "failed", inFlightId);
+}
+
+/** The recorded failure of a failed transfer, if it had one. */
+export function getV2TransferFailure(id: string): { error: unknown; at: number } | null {
+  return transferFailures.get(id) ?? null;
+}
+
 /** Hide the presentation. Tracking, recovery and accounting are untouched. */
 export function dismissV2Move(orderId: string): void {
   const existing = moves.get(orderId);
@@ -316,6 +343,7 @@ export function dismissV2Move(orderId: string): void {
 
 /** Drop a finished move from the pill once the user has seen its outcome. */
 export function forgetV2Move(orderId: string): void {
+  transferFailures.delete(orderId);
   if (!moves.delete(orderId)) return;
   publish();
 }
@@ -323,6 +351,7 @@ export function forgetV2Move(orderId: string): void {
 /** Soft logout: in-flight moves belong to the previous account. */
 export function clearV2Moves(): void {
   replacedBy.clear();
+  transferFailures.clear();
   if (moves.size === 0) return;
   moves.clear();
   publish();

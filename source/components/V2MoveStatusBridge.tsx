@@ -7,17 +7,22 @@ import { Animated, Easing, View as RNView, type ViewStyle } from "react-native";
 import { COMPACT_AFTER_MS, PILL_MORPH_MS, fullPillScaleAtCompact } from "./movePillGeometry";
 
 import { t } from "../lib/i18n";
+import { subscribeSupportReports, supportReportState } from "../lib/support/reportErrorToSupport";
 import { hasOpenSurface, subscribeOpenSurfaces } from "../lib/ui/openSurfaces";
 import SwapStatusDetailSheet from "../screens/swapkit/SwapStatusDetailSheet";
 import {
   dismissV2Move,
   forgetV2Move,
+  getV2TransferFailure,
   isTerminalMovePhase,
   resolveV2MoveId,
   subscribeV2Moves,
   type SwapKitV2Move,
 } from "../services/swapkit/SwapKitV2MoveStatus";
 import { resumeSwapKitV2Order } from "../services/swapkit/SwapKitV2PendingTracker";
+import { type MoveFailureAttempt, moveFailureAttempt } from "../services/support/MoveFailureReport";
+import { keepFailedReportReachable } from "../services/support/keepFailedReportReachable";
+import MoveFailureSheet from "./MoveFailureSheet";
 import { movePillSignature, v2MoveLabel } from "./v2MoveLabel";
 
 /**
@@ -40,6 +45,12 @@ export default function V2MoveStatusBridge(): React.ReactElement | null {
   const toast = useToast();
   const [moves, setMoves] = React.useState<readonly SwapKitV2Move[]>([]);
   const [detailOrderId, setDetailOrderId] = React.useState<string | null>(null);
+  // A failed transfer's details, taken when the pill is tapped: the pill
+  // forgets the move once its outcome has shown, the sheet must not. Kept after
+  // the sheet closes while its report is still on its way, so a report that
+  // then fails comes back to where it can be sent again.
+  const [failure, setFailure] = React.useState<MoveFailureAttempt | null>(null);
+  const [failureOpen, setFailureOpen] = React.useState(false);
   // What is currently on screen, so an unchanged store publication does not
   // re-show a pill the user just dismissed.
   const shownRef = React.useRef<string>("");
@@ -97,9 +108,23 @@ export default function V2MoveStatusBridge(): React.ReactElement | null {
           // or reporting an outcome stays full.
           compactable={!terminal && !needsUser && visible.phase !== "preparing"}
           onPress={
-            // A wallet↔card transfer has no order behind it to open.
+            // A wallet↔card transfer has no order behind it to open; a failed
+            // one opens its own failure details.
             visible.kind === "transfer"
-              ? undefined
+              ? visible.phase === "failed"
+                ? () => {
+                    dismissV2Move(orderId);
+                    setFailure(
+                      moveFailureAttempt(
+                        getV2TransferFailure(orderId) ?? {
+                          error: undefined,
+                          at: visible.updatedAt,
+                        },
+                      ),
+                    );
+                    setFailureOpen(true);
+                  }
+                : undefined
               : () => {
                   // Acting on a move is also acknowledging it: this is the one
                   // place a pill stops speaking for an order without its phase
@@ -142,6 +167,41 @@ export default function V2MoveStatusBridge(): React.ReactElement | null {
     return subscribeOpenSurfaces(() => offer());
   }, [visible, othersRunning, toast]);
 
+  const closeFailure = React.useCallback(() => {
+    setFailureOpen(false);
+    // Nothing left to follow unless its report is still on its way.
+    if (failure && supportReportState(failure.subject)?.state !== "sending") setFailure(null);
+  }, [failure]);
+
+  // The sheet closed while its report was sending: once that ends, a sent
+  // report needs nothing more, a failed one comes back as a pill whose tap
+  // reopens the same attempt, ready to send again. Closing that sheet again
+  // without sending is the user letting it go.
+  React.useEffect(() => {
+    if (!failure || failureOpen) return;
+    return keepFailedReportReachable({
+      state: () => supportReportState(failure.subject),
+      // Never over a sheet, and never in place of a move's own pill.
+      canShow: () => !hasOpenSurface() && !onScreenRef.current,
+      onSent: () => setFailure(null),
+      subscribe: [subscribeSupportReports, subscribeOpenSurfaces],
+      show: (gone) =>
+        toast.show(
+          <ReportNotSentPill
+            onGone={gone}
+            onView={() => {
+              toast.hide();
+              setFailureOpen(true);
+            }}
+          />,
+          { duration: null },
+        ),
+    });
+  }, [failure, failureOpen, toast]);
+
+  if (failure && failureOpen) {
+    return <MoveFailureSheet visible attempt={failure} onClose={closeFailure} />;
+  }
   if (!detailOrderId) return null;
   // A pill opened while the swap still had its provisional id follows the real
   // order as soon as the server names it (`moves` re-renders this on that).
@@ -151,6 +211,46 @@ export default function V2MoveStatusBridge(): React.ReactElement | null {
       orderId={resolveV2MoveId(detailOrderId)}
       onClose={() => setDetailOrderId(null)}
     />
+  );
+}
+
+/**
+ * The pill for a failed support report. It tells its owner when it leaves the
+ * screen without a tap (replaced by another toast, swiped away), so the report
+ * is offered again rather than lost.
+ */
+function ReportNotSentPill({
+  onView,
+  onGone,
+}: {
+  onView: () => void;
+  onGone: () => void;
+}): React.ReactElement {
+  const tappedRef = React.useRef(false);
+  React.useEffect(
+    () => () => {
+      if (!tappedRef.current) onGone();
+    },
+    [onGone],
+  );
+  return (
+    <NuriScope>
+      <Alert variant="soft" accent="orange">
+        <AlertIcon name="warning-circle" />
+        <Text size="md" muted>
+          {t("screen.MoveFailureSheet.reportNotSent")}
+        </Text>
+        <AlertButton
+          accessibilityLabel={t("swap.move.view")}
+          onPress={() => {
+            tappedRef.current = true;
+            onView();
+          }}
+        >
+          {t("swap.move.view")}
+        </AlertButton>
+      </Alert>
+    </NuriScope>
   );
 }
 

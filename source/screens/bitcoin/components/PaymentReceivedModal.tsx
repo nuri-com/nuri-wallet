@@ -18,9 +18,15 @@ import {
   unlockRunOutcome,
 } from "../../../lib/support/unlockFailureReport";
 import {
-  armReceiveClaimPasskeyResult,
-  clearArmedReceiveClaimPasskey,
-} from "../../../services/arkade/ArkadeRemoteIdentity";
+  acceptsUnlockPasskeyResult,
+  armUnlockPasskey,
+  clearArmedUnlockPasskey,
+  oneTapUnlockPasskeyKind,
+  type PreparedUnlockPasskey,
+  type UnlockPasskeyAttempt,
+  UNLOCK_PASSKEY_REFRESH_MS,
+  UNLOCK_PASSKEY_RETRY_MS,
+} from "../../../services/arkade/internal/armedUnlockPasskey";
 import { reportUnlockFailureToSupport } from "../../../services/arkade/ArkadeUnlockSupportService";
 import { getOrCreateArkadeIdentity } from "../../../services/arkade/internal/identity";
 import type {
@@ -30,7 +36,10 @@ import type {
 } from "../../../services/arkade/ArkadeReceiveUnlockService";
 import { ARKADE_RECEIVE_UNLOCK_PROGRESS_EVENT } from "../../../services/arkade/ArkadeReceiveUnlockService";
 import { EventBus } from "../../../services/events/AppEventBusService";
-import { noteV2TransferPhase } from "../../../services/swapkit/SwapKitV2MoveStatus";
+import {
+  noteV2TransferFailed,
+  noteV2TransferPhase,
+} from "../../../services/swapkit/SwapKitV2MoveStatus";
 
 type Props = {
   visible: boolean;
@@ -46,11 +55,12 @@ function formatSats(sats: number): string {
 export default function PaymentReceivedModal({ visible, state, onUnlock, onClose }: Props) {
   const [running, setRunning] = useState(false);
   const failureCountRef = useRef(0);
-  // The prefetch overlay is an iframe that holds document focus, so it may only
-  // arm when the sole pending item is a Lightning claim. Anything else (a
-  // boarding sweep) runs its ceremony in the parent document and needs the focus.
-  const usesReceiveClaimPasskey =
-    state.actionableItems.length === 1 && state.actionableItems[0]?.kind === "ln_receive_claim";
+  // The button runs the passkey ceremony itself on the tap, for a lone
+  // Lightning claim or a lone boarding sweep (#1938). Mixed work keeps the plain
+  // button: one ceremony approves one approval, and the second would need the
+  // focus the button's page took.
+  const oneTapKind = oneTapUnlockPasskeyKind(state.actionableItems);
+  const usesReceiveClaimPasskey = oneTapKind === "ln_receive_claim";
   // A renewal is not a payment: it shows the real wallet lock screen users
   // already know ("Access wallet"), not a screen of its own.
   const renewal =
@@ -58,34 +68,62 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
   // Pre-fetched auth so the "Passkey Unlock" button itself can run the WebView
   // passkey ceremony on one tap (no second confirm screen). Null → fall back to
   // the plain button (which prompts via the overlay).
-  const [passkeyPrefetch, setPasskeyPrefetch] = useState<{
-    rpId: string;
-    challengeB64u: string;
-    credIdB64u: string;
-  } | null>(null);
+  const [passkeyPrefetch, setPasskeyPrefetch] = useState<PreparedUnlockPasskey | null>(null);
+  const [prefetchRound, setPrefetchRound] = useState(0);
+  // A ceremony in progress on the button (tap seen, no result yet). It pins its
+  // challenge, so no refresh may replace (and remount) the view meanwhile.
+  const attemptRef = useRef<UnlockPasskeyAttempt | null>(null);
+  const [attemptActive, setAttemptActive] = useState(false);
+  // One screen session: hiding, dismissing or a change of the work it shows
+  // starts a new one, and a result from an older session runs nothing.
+  const generationRef = useRef(0);
+  const liveRef = useRef({ visible, kind: oneTapKind, prepared: passkeyPrefetch });
+  liveRef.current = { visible, kind: oneTapKind, prepared: passkeyPrefetch };
 
-  // Pre-fetch the combined-assertion auth only for a Lightning receive claim.
-  // Boarding sweeps must keep focus in the parent document for WebAuthn.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `visible` and `oneTapKind` are the session boundary, not values read
+  useEffect(
+    () => () => {
+      generationRef.current += 1;
+      attemptRef.current = null;
+      setAttemptActive(false);
+    },
+    [oneTapKind, visible],
+  );
+
+  // Fetch the challenge while the screen is open and idle, and again after
+  // every run (a used or cancelled challenge cannot serve the next tap), on a
+  // timer well inside the server token's life, and shortly after a failure.
+  // Paused while a ceremony is open on the button.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `prefetchRound` is the re-fetch trigger, not a value read
   useEffect(() => {
-    if (!visible || !usesReceiveClaimPasskey) {
-      clearArmedReceiveClaimPasskey();
+    if (!visible || !oneTapKind) {
+      clearArmedUnlockPasskey();
       setPasskeyPrefetch(null);
       return;
     }
+    if (running || attemptActive) return;
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     void (async () => {
+      let prep: PreparedUnlockPasskey | null = null;
       try {
         const identity = await getOrCreateArkadeIdentity();
-        const prep = await identity.prepareReceiveClaimPasskey();
-        if (active) setPasskeyPrefetch(prep);
+        prep = await identity.prepareUnlockPasskey();
       } catch {
-        if (active) setPasskeyPrefetch(null);
+        prep = null;
       }
+      if (!active) return;
+      setPasskeyPrefetch(prep);
+      timer = setTimeout(
+        () => setPrefetchRound((round) => round + 1),
+        prep ? UNLOCK_PASSKEY_REFRESH_MS : UNLOCK_PASSKEY_RETRY_MS,
+      );
     })();
     return () => {
       active = false;
+      if (timer) clearTimeout(timer);
     };
-  }, [usesReceiveClaimPasskey, visible]);
+  }, [attemptActive, oneTapKind, prefetchRound, running, visible]);
 
   // The modal stays mounted and only toggles visibility, so reset the failure
   // count for each fresh claim session rather than carrying it across.
@@ -148,7 +186,10 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
       );
       try {
         const result = await onUnlock();
-        if (pillShown) noteV2TransferPhase(pillId, result.ok ? "completed" : "failed");
+        if (pillShown) {
+          if (result.ok) noteV2TransferPhase(pillId, "completed");
+          else noteV2TransferFailed(pillId, result);
+        }
         // Reporting and closing are decided separately: a failed run that
         // also closes the screen still goes to support (#1823 review).
         const outcome = unlockRunOutcome(result, closedEarly);
@@ -159,9 +200,12 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
           onClose();
         }
       } catch (error) {
-        if (pillShown) noteV2TransferPhase(pillId, "failed");
+        if (pillShown) noteV2TransferFailed(pillId, error);
         registerFailure(error, closedEarly);
       } finally {
+        // An armed result the run never took must not serve a later approval.
+        clearArmedUnlockPasskey();
+        setPasskeyPrefetch(null);
         offProgress();
         setRunning(false);
       }
@@ -169,11 +213,45 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
   }, [onClose, onUnlock, registerFailure, usesReceiveClaimPasskey]);
 
   // The "Passkey Unlock" button is a transparent WebView overlay: its tap runs
-  // the ceremony directly. Arm the result so the claim's signing uses it instead
-  // of prompting again, then run the unlock.
+  // the ceremony directly. The tap pins the attempt (challenge, session, work).
+  const handlePasskeyAttemptStart = useCallback((prepared: PreparedUnlockPasskey) => {
+    const kind = liveRef.current.kind;
+    if (!kind) return;
+    attemptRef.current = { prepared, generation: generationRef.current, kind };
+    setAttemptActive(true);
+  }, []);
+
+  // Ends the pinned attempt and hands it back, so each result is used once.
+  const endPasskeyAttempt = useCallback((): UnlockPasskeyAttempt | null => {
+    const attempt = attemptRef.current;
+    attemptRef.current = null;
+    setAttemptActive(false);
+    return attempt;
+  }, []);
+
+  // The result arms the claim's or sweep's approval (that work only) and runs
+  // the unlock, but only for the attempt that is still current; anything else
+  // runs nothing and a fresh challenge is fetched.
   const handlePasskeyResult = useCallback(
-    (result: PasskeyWebAuthnPrfAssertionResult) => {
-      armReceiveClaimPasskeyResult({
+    (prepared: PreparedUnlockPasskey, result: PasskeyWebAuthnPrfAssertionResult) => {
+      const attempt = endPasskeyAttempt();
+      const live = liveRef.current;
+      if (
+        !live.prepared ||
+        prepared !== live.prepared ||
+        !acceptsUnlockPasskeyResult(attempt, {
+          prepared,
+          generation: generationRef.current,
+          visible: live.visible,
+          kind: live.kind,
+        })
+      ) {
+        clearArmedUnlockPasskey();
+        setPasskeyPrefetch(null);
+        setPrefetchRound((round) => round + 1);
+        return;
+      }
+      armUnlockPasskey(attempt, {
         prfB64: result.prfB64u,
         credIdB64u: result.credIdB64u,
         clientDataB64u: result.clientDataB64u,
@@ -182,15 +260,20 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
       });
       handleUnlock();
     },
-    [handleUnlock],
+    [endPasskeyAttempt, handleUnlock],
   );
 
   const handlePasskeyError = useCallback(
     (message: string) => {
-      clearArmedReceiveClaimPasskey();
-      registerFailure(message);
+      const attempt = endPasskeyAttempt();
+      clearArmedUnlockPasskey();
+      // A late error from an older session is not a failure of this one.
+      if (!attempt || attempt.generation === generationRef.current) registerFailure(message);
+      // The challenge was spent on the cancelled ceremony: fetch a new one.
+      setPasskeyPrefetch(null);
+      setPrefetchRound((round) => round + 1);
     },
-    [registerFailure],
+    [endPasskeyAttempt, registerFailure],
   );
 
   // Renewal: one try, then the screen goes away whatever happened. The lock
@@ -228,16 +311,19 @@ export default function PaymentReceivedModal({ visible, state, onUnlock, onClose
             >
               <ButtonText>{t("screen.PaymentReceivedModal.unlockButton")}</ButtonText>
             </Button>
-            {usesReceiveClaimPasskey && passkeyPrefetch && !running && state.actionableCount > 0 ? (
+            {oneTapKind && passkeyPrefetch && !running && state.actionableCount > 0 ? (
               <RNView style={StyleSheet.absoluteFill}>
                 <PasskeyWebAuthnPrfView
+                  key={passkeyPrefetch.challengeB64u}
                   mode="assertion"
                   overlay
                   buttonLabel={t("screen.PaymentReceivedModal.unlockButton")}
                   rpId={passkeyPrefetch.rpId}
                   challengeB64u={passkeyPrefetch.challengeB64u}
                   credIdB64u={passkeyPrefetch.credIdB64u}
-                  onAssertionResult={handlePasskeyResult}
+                  onAttemptStart={() => handlePasskeyAttemptStart(passkeyPrefetch)}
+                  onFocusRetry={endPasskeyAttempt}
+                  onAssertionResult={(result) => handlePasskeyResult(passkeyPrefetch, result)}
                   onError={handlePasskeyError}
                 />
               </RNView>

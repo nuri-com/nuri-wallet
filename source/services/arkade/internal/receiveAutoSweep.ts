@@ -814,17 +814,6 @@ async function runArkadeBoardingSweep(
   const wallet = ownershipProof?.wallet || (await getOrCreateWallet());
   await assertArkadeRecoveryCsvCompatible(wallet, "arkade_boarding_sweep");
   let summarySource = "live";
-  // Pre-sweep: caller has just decided to sweep and needs an accurate
-  // confirmed-boarding count. Use the bare loader (bypasses the 30s
-  // rate-limit backoff) because the user-driven sweep can't proceed without
-  // a fresh number; on failure we fall back to the cached snapshot.
-  const summary = await loadArkadeWalletSummary({
-    scheduleAutoClaim: false,
-    scheduleAutoBoardingSweep: false,
-  }).catch(() => {
-    summarySource = "cached";
-    return getCachedWalletSummary();
-  });
   const walletExt = wallet as unknown as {
     arkProvider?: {
       getInfo?: () => Promise<{
@@ -837,20 +826,34 @@ async function runArkadeBoardingSweep(
     };
     getBoardingUtxos: () => Promise<BoardingUtxo[]>;
   };
-  const providerInfo = await walletExt?.arkProvider?.getInfo?.().catch((): null => null);
+  // The three reads are independent, so they run together (#1938); nothing is
+  // selected or signed until all of them are back.
+  const [summary, providerInfo, allBoardingUtxos] = await Promise.all([
+    // Pre-sweep: caller has just decided to sweep and needs an accurate
+    // confirmed-boarding count. Use the bare loader (bypasses the 30s
+    // rate-limit backoff) because the user-driven sweep can't proceed without
+    // a fresh number; on failure we fall back to the cached snapshot.
+    loadArkadeWalletSummary({
+      scheduleAutoClaim: false,
+      scheduleAutoBoardingSweep: false,
+    }).catch(() => {
+      summarySource = "cached";
+      return getCachedWalletSummary();
+    }),
+    walletExt?.arkProvider?.getInfo?.().catch((): null => null),
+    // forceFresh: this read feeds the transaction that is about to be SIGNED, so
+    // it must never come from the shared cache. A stale row here would build a
+    // sweep over an outpoint that has already moved.
+    readBoardingUtxosShared<BoardingUtxo>(walletExt, getCurrentArkadeWalletCacheKey(), {
+      forceFresh: true,
+      reason: "boarding_sweep",
+    }).catch((): BoardingUtxo[] => []),
+  ]);
   // Same response carries the floor this node applies to a boarding UTXO: cache
   // it before anything selects candidates, so the selection matches the node
   // being swept rather than a snapshot of mainnet.
   primeArkadeBoardingMinimumSats(providerInfo);
   const feeInfo = providerInfo?.fees;
-  // forceFresh: this read feeds the transaction that is about to be SIGNED, so
-  // it must never come from the shared cache. A stale row here would build a
-  // sweep over an outpoint that has already moved.
-  const allBoardingUtxos: BoardingUtxo[] = await readBoardingUtxosShared<BoardingUtxo>(
-    walletExt,
-    getCurrentArkadeWalletCacheKey(),
-    { forceFresh: true, reason: "boarding_sweep" },
-  ).catch((): BoardingUtxo[] => []);
   const allBoardingSelection = getBoardingSelectionSnapshot(allBoardingUtxos);
   // Candidates must come from the forced-fresh read, ALWAYS. The ownership proof
   // decides WHICH outpoints this wallet may sweep (its server-row matching is

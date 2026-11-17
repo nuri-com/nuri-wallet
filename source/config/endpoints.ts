@@ -28,6 +28,13 @@ export const MEMPOOL_PRICES_URL = `${MEMPOOL_API_BASE_URL}/v1/prices`;
 export const ESPLORA_FALLBACK_API_BASE_URL = "https://blockstream.info/api";
 export const mempoolTxUrl = (txid: string) => `${MEMPOOL_BASE_URL}/tx/${encodeURIComponent(txid)}`;
 
+// ── Arkade Explorer ──────────────────────────────────────────────────
+// Arkade payments are not on the Bitcoin chain, so mempool.space cannot show
+// them; the Arkade explorer reads the default Arkade server's payments.
+export const ARKADE_EXPLORER_URL = "https://arkade.space";
+export const arkadeTxUrl = (arkTxid: string) =>
+  `${ARKADE_EXPLORER_URL}/tx/${encodeURIComponent(arkTxid)}`;
+
 // ── Base Chain Explorer ──────────────────────────────────────────────
 // The wallet's onchain transactions live on Base, so explorer links must
 // point at basescan (mainnet) / sepolia.basescan (testnet).

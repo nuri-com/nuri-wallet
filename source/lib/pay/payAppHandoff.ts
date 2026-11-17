@@ -9,8 +9,8 @@
 //
 // Two ways in, because the app is reachable two ways:
 //   · installed PWA: the same origin, so it is a plain in-place navigation that
-//     keeps the standalone window (`/?pay=@name&to=…&amount=…`);
-//   · native app: the link scheme (`nuri://pay/@name?…`), fired through a
+//     keeps the standalone window (`/?pay=name&to=…&amount=…`);
+//   · native app: the link scheme (`nuri://pay/name?…`), fired through a
 //     hidden frame so a phone WITHOUT the app gets no "cannot open page" dialog.
 //
 // Either way the app has to be able to PAY the link, or the payer lands on a
@@ -21,18 +21,18 @@ import { useEffect, useRef } from "react";
 
 import type { PayIntent } from "./payIntent";
 
-/** `nuri://pay/@name?to=…&amount=…`, what the native app's router reads. */
+/** `nuri://pay/name?to=…&amount=…`, what the native app's router reads. */
 export function payIntentDeepLink(intent: PayIntent): string {
   const params = payIntentParams(intent);
   const query = params.toString();
-  return `nuri://pay/@${intent.username}${query ? `?${query}` : ""}`;
+  return `nuri://pay/${intent.username}${query ? `?${query}` : ""}`;
 }
 
-/** `/?pay=@name&to=…&amount=…`, what the signed-in web app (and the PWA) reads. */
+/** `/?pay=name&to=…&amount=…`, what the signed-in web app (and the PWA) reads. */
 export function payIntentWebUrl(intent: PayIntent, origin: string): string {
   const base = origin.replace(/\/+$/, "");
   const params = payIntentParams(intent);
-  params.set("pay", `@${intent.username}`);
+  params.set("pay", intent.username);
   return `${base}/?${params.toString()}`;
 }
 
@@ -60,7 +60,7 @@ export function payLinkBrowserUrl(intent: PayIntent, origin: string): string {
   const base = origin.replace(/\/+$/, "");
   const params = payIntentParams(intent);
   params.set(PAY_LINK_STAY_PARAM, "1");
-  return `${base}/pay/@${intent.username}?${params.toString()}`;
+  return `${base}/pay/${intent.username}?${params.toString()}`;
 }
 
 /** Whether the page was opened by the app handing the link back (`?browser=1`). */

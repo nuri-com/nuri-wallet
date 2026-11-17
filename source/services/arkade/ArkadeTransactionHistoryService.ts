@@ -21,6 +21,9 @@ export type ArkadeRawTransaction = {
   boardingTxid?: string;
   /** The offchain transaction (the SDK's `key.arkTxid`). */
   arkTxid?: string;
+  /** A send out of Arkade to a Bitcoin address: the onchain transaction that
+   * paid it (the SDK's `key.commitmentTxid` on an "exit" row). */
+  exitTxid?: string;
   kind?: "offchain" | "boarding" | "exit" | "batch" | "lightning_receive" | "lightning_send";
 };
 
@@ -33,6 +36,10 @@ export type UnifiedTransaction = {
   source: "legacy" | "arkade" | "lightning";
   kind?: "offchain" | "boarding" | "exit" | "batch" | "lightning_receive" | "lightning_send";
   txid?: string;
+  /** The Arkade payment's own id (the SDK's `key.arkTxid`), for its explorer link. */
+  arkTxid?: string;
+  /** A send out of Arkade to a Bitcoin address: its onchain transaction. */
+  exitTxid?: string;
   isMigrationTx?: boolean;
   /** The other party's output scripts (hex), for naming a saved contact. */
   counterpartyScripts?: string[];
@@ -73,6 +80,13 @@ function coerceRawTx(v: unknown): ArkadeRawTransaction {
     arkTxid:
       isRecord(r.key) && typeof r.key.arkTxid === "string" && r.key.arkTxid
         ? r.key.arkTxid
+        : undefined,
+    exitTxid:
+      r.tag === "exit" &&
+      isRecord(r.key) &&
+      typeof r.key.commitmentTxid === "string" &&
+      r.key.commitmentTxid
+        ? r.key.commitmentTxid.toLowerCase()
         : undefined,
     kind: typeof r.kind === "string" ? (r.kind as ArkadeRawTransaction["kind"]) : undefined,
   };
@@ -205,6 +219,8 @@ export async function getUnifiedTransactionHistory(opts: {
         source: "arkade",
         kind: tx.kind || "offchain",
         txid: tx.txid,
+        ...(tx.arkTxid ? { arkTxid: tx.arkTxid } : {}),
+        ...(tx.exitTxid ? { exitTxid: tx.exitTxid } : {}),
         isMigrationTx: false,
         // A receive is named by who paid, a send by who got paid.
         ...(tx.boarding ? { boarding: true as const } : {}),

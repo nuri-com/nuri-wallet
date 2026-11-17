@@ -39,6 +39,8 @@ import { withOutgoingBrowserApproval } from "./internal/browserApproval";
 import {
   assertInvoicePrefixForNetwork,
   assertInvoiceStillPayable,
+  assertPayeeStillHolding,
+  sendDeadlineSeconds,
 } from "./internal/lightningHelpers";
 import {
   type ArkadeLightningSendRecord,
@@ -175,6 +177,9 @@ export async function payArkadeLightningInvoice(_params: {
   invoice: string;
   amountSats?: number;
   maxFeeSats?: number;
+  /** The payee's own pay-by moment (epoch ms), such as a remit price hold that
+   * ends long before the BOLT11 does. Rechecked at the funding boundary. */
+  payBy?: number | null;
   /** Fires after the ceiling check, the invoice-expiry re-check and the user's
    * approval, immediately before the lockup is funded — the irreversible
    * boundary. Anything that refuses earlier moved nothing. */
@@ -562,6 +567,7 @@ export async function payArkadeLightningInvoice(_params: {
                   // out. Re-decoded from the invoice itself rather than trusting the
                   // figure read minutes ago.
                   assertInvoiceStillPayable(decodeBolt11Facts(invoice).expiresAt);
+                  assertPayeeStillHolding(_params.payBy);
                   // The server ends funding before the solver's cutoff; an
                   // approval that took longer must not fund a dead lockup.
                   ctx.assertBeforeDeadline?.();
@@ -572,6 +578,18 @@ export async function payArkadeLightningInvoice(_params: {
                   // Again with nothing awaited before the send: the hooks above
                   // can take long enough to cross the deadline themselves.
                   ctx.assertBeforeDeadline?.();
+                  assertPayeeStillHolding(_params.payBy);
+                  // The passkey prompt and signing run inside wallet.send, so
+                  // the hold also rides into it: the SDK refuses at its own
+                  // provider submission once it has passed, sending nothing.
+                  const payeeValidUntil = sendDeadlineSeconds(_params.payBy);
+                  if (payeeValidUntil !== undefined) {
+                    return wallet.send({
+                      recipients: [{ address: fundingAddress, amount: fundingAmountSats }],
+                      ...(fundingSelectedVtxos ? { selectedVtxos: fundingSelectedVtxos } : {}),
+                      validUntil: payeeValidUntil,
+                    });
+                  }
                   // Named inputs only when the split had to grow the pick to
                   // clear the floor; otherwise the wallet chooses as before.
                   return fundingSelectedVtxos

@@ -1,7 +1,7 @@
-// `/pay/@username` — the public payment link.
+// `/pay/username` — the public payment link.
 //
 // Deliberately a separate parser from `parsePasskeyUsernamePath`: `/@username`
-// signs a returning owner in, `/pay/@username` shows a stranger how to pay that
+// signs a returning owner in, `/pay/username` shows a stranger how to pay that
 // owner, and the two must never be reachable from one another's path. Sharing a
 // matcher would make a typo in one flow land in the other.
 const USERNAME = /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/;
@@ -111,8 +111,8 @@ export function parsePayLinkPath(pathname: string): string | null {
   } catch {
     return null;
   }
-  // The `@` is optional: people type `/pay/emino` as often as `/pay/@emino`,
-  // and a link shared through some apps arrives with it encoded (`%40`).
+  // Links are made without the `@` (`/pay/emino`), but `/pay/@emino` links
+  // already shared keep working, also with the `@` encoded (`%40`).
   const match = /^\/pay\/@?([^/@]+)\/?$/i.exec(decoded);
   const username = match?.[1]?.trim().toLowerCase() || "";
   return USERNAME.test(username) ? username : null;
@@ -124,5 +124,5 @@ export function payLinkUrl(origin: string, username: string | null | undefined):
     .trim()
     .toLowerCase();
   if (!USERNAME.test(handle)) return null;
-  return `${origin.replace(/\/+$/, "")}/pay/@${handle}`;
+  return `${origin.replace(/\/+$/, "")}/pay/${handle}`;
 }

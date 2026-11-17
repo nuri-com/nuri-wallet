@@ -42,6 +42,7 @@ export default function PasskeyWebAuthnPrfWeb({
   overlay,
   disabled,
   onAttemptStart,
+  onFocusRetry,
   onCreateResult,
   onAssertionResult,
   onError,
@@ -126,7 +127,10 @@ export default function PasskeyWebAuthnPrfWeb({
       const name = error instanceof Error ? error.name : "Error";
       const message = error instanceof Error ? error.message : String(error);
       // The tap only focused the page: the button stays for the next tap.
-      if (isPasskeyFocusRejection(name, message)) return;
+      if (isPasskeyFocusRejection(name, message)) {
+        onFocusRetry?.();
+        return;
+      }
       onError(`error:${mode}:${name}:${message}`);
     } finally {
       setBusy(false);
@@ -142,6 +146,7 @@ export default function PasskeyWebAuthnPrfWeb({
     onAttemptStart,
     onCreateResult,
     onError,
+    onFocusRetry,
     prfSalt,
     requestPrf,
     rpId,

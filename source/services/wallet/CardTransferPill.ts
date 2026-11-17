@@ -10,7 +10,11 @@ import { isUserCancelledAuth } from "../../lib/support/isUserCancelledAuth";
 import { shouldRevertOptimisticWithdraw } from "../../lib/wirex/withdrawRollback";
 import { EventBus } from "../events/AppEventBusService";
 import { MoneyInFlightStore } from "../money/MoneyInFlightStore";
-import { forgetV2Move, noteV2TransferPhase } from "../swapkit/SwapKitV2MoveStatus";
+import {
+  forgetV2Move,
+  noteV2TransferFailed,
+  noteV2TransferPhase,
+} from "../swapkit/SwapKitV2MoveStatus";
 
 // A broadcast whose receipt never arrives must not spin forever.
 const SETTLE_WATCH_MS = 10 * 60_000;
@@ -56,7 +60,7 @@ export async function withCardTransferPill<T>(
     // withdrawal may still settle (the Move sheet holds that state): neither is
     // a failure to report.
     if (isUserCancelledAuth(error) || !shouldRevertOptimisticWithdraw(error)) forgetV2Move(id);
-    else noteV2TransferPhase(id, "failed");
+    else noteV2TransferFailed(id, error);
     throw error;
   }
   if (options.handedOff?.(result)) {
@@ -80,7 +84,8 @@ export async function withCardTransferPill<T>(
           return;
         off();
         if (timer) clearTimeout(timer);
-        noteV2TransferPhase(id, payload?.reverted ? "failed" : "completed");
+        if (payload?.reverted) noteV2TransferFailed(id);
+        else noteV2TransferPhase(id, "completed");
       },
     );
     timer = setTimeout(() => {
@@ -106,8 +111,8 @@ export type MovePill = {
   handedOff: () => void;
   /** Nothing moved (a cancelled prompt, a refusal before signing). */
   drop: () => void;
-  /** Went wrong after the hand-off. */
-  fail: () => void;
+  /** Went wrong after the hand-off, with what was thrown when there was one. */
+  fail: (error?: unknown) => void;
 };
 
 /** The same pill, for a flow that is not one promise. Starts in Preparing. */
@@ -135,7 +140,11 @@ export function startMovePill(): MovePill {
     },
     handedOff: once(() => forgetV2Move(id)),
     drop: once(() => forgetV2Move(id)),
-    fail: once(() => noteV2TransferPhase(id, "failed")),
+    fail: (error?: unknown) => {
+      if (done) return;
+      done = true;
+      noteV2TransferFailed(id, error);
+    },
   };
 }
 
@@ -159,7 +168,8 @@ function settleWithRows(pillId: string, inFlightId: string): void {
     off?.();
     offOutcome();
     if (timer) clearTimeout(timer);
-    if (phase) noteV2TransferPhase(pillId, phase, inFlightId);
+    if (phase === "failed") noteV2TransferFailed(pillId, undefined, inFlightId);
+    else if (phase) noteV2TransferPhase(pillId, phase, inFlightId);
     else forgetV2Move(pillId);
   };
   const check = () => {

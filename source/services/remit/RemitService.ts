@@ -440,7 +440,7 @@ export async function createZapRemitLightningInvoice(params: {
   currency: string;
   amount: number;
   recipient: Record<string, unknown>;
-}): Promise<{ invoice: string; orderId: string }> {
+}): Promise<{ invoice: string; orderId: string; payBy: number }> {
   const amount = Math.floor(Number(params.amount) || 0);
   if (amount <= 0) throw new Error("amount required");
   const fullName = params.recipient?.fullName;
@@ -453,7 +453,7 @@ export async function createZapRemitLightningInvoice(params: {
     currency: params.currency,
     recipient: params.recipient,
     referenceId: randomUUID().toLowerCase(),
-  })) as { orderId?: unknown };
+  })) as Record<string, unknown>;
   const orderId = typeof quote?.orderId === "string" ? quote.orderId : "";
   if (!orderId) throw new Error("zapremit returned no order");
 
@@ -472,7 +472,46 @@ export async function createZapRemitLightningInvoice(params: {
       finiteNumber(payment?.amountSats) ?? "?"
     } src=services/remit/RemitService.ts#createZapRemitLightningInvoice`,
   );
-  return { invoice, orderId };
+  // No stated hold, no payment: the invoice outlives the price by an hour,
+  // so paying it blind is how a payout fails after the sats have left.
+  const payBy = zapPayBy(payment) ?? zapPayBy(quote);
+  if (payBy === null) throw new Error("zapremit returned no price hold");
+  return { invoice, orderId, payBy };
+}
+
+/**
+ * Time a ZapRemit invoice needs from the pay press until it settles: passkey,
+ * Arkade lockup and the Lightning swap. Measured at 36 s on 2026-11-15, when a
+ * press with 37 s of quote left still landed after the lock and failed.
+ */
+const ZAP_PAY_BUDGET_MS = 40_000;
+
+/**
+ * The last moment a press may still pay this ZapRemit invoice, epoch ms. Its
+ * quote lock (`quoteExpiresAt`, about a minute) ends long before the BOLT11
+ * does (an hour), and an invoice paid after the lock settles while the payout
+ * fails. Null when the service did not say.
+ */
+export function zapPayBy(payment: Record<string, unknown> | null | undefined): number | null {
+  const payout = payment?.payout as { expiresAt?: unknown } | undefined;
+  const lock = Date.parse(String(payment?.quoteExpiresAt ?? payout?.expiresAt ?? ""));
+  return Number.isFinite(lock) ? lock - ZAP_PAY_BUDGET_MS : null;
+}
+
+/** Whether a press now is past an invoice's last moment to pay. */
+export function remitPayByPassed(payBy: number | null | undefined, now = Date.now()): boolean {
+  return payBy != null && now > payBy;
+}
+
+/** Time the user gets to read a shown price and press pay. */
+const REMIT_DECIDE_MS = 15_000;
+
+/**
+ * Whether a freshly minted invoice leaves too little time to read its price
+ * and still pay in time. Showing it would only make the next press replace it.
+ */
+export function remitPayWindowTooShort(payBy: number | null, now = Date.now()): boolean {
+  return payBy !== null && payBy - now < REMIT_DECIDE_MS;
 }
 
 // ── Tanzania on the same host: bank, Lipa Namba, TanQR (`send_tzs`) ─────
@@ -552,6 +591,11 @@ export function parseTzOrder(data: unknown): TzOrder {
 
 /** Time a payment needs to land before its order lapses. */
 const TZ_ORDER_SAFETY_MS = 120_000;
+
+/** The last moment a press may still pay an order lapsing at `expiresAt`. */
+export function tzPayBy(expiresAt: number | null): number | null {
+  return expiresAt === null ? null : expiresAt - TZ_ORDER_SAFETY_MS;
+}
 
 /** Whether an order (or a quote paying it) is too close to lapsing to pay now. */
 export function tzPaymentLapsed(expiresAt: number | null, now = Date.now()): boolean {

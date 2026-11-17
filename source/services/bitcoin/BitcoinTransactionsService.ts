@@ -30,6 +30,10 @@ export type BitcoinTransaction = {
   timestamp: number;
   status: "confirmed" | "pending" | "preconfirmed";
   txid?: string;
+  /** Arkade: the payment's own id, for its explorer link. */
+  arkTxid?: string;
+  /** Arkade: a send out to a Bitcoin address, its onchain transaction. */
+  exitTxid?: string;
   kind?: UnifiedTransaction["kind"];
   isMigrationTx?: boolean;
   /** The other party's output scripts (hex), for naming a saved contact. */

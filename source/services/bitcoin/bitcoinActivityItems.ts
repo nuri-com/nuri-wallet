@@ -5,10 +5,12 @@ import { Linking } from "react-native";
 import type { ActivityItem } from "../../components/ActivitySheet";
 import { mempoolTxUrl } from "../../config/endpoints";
 import { singleInputAddress } from "../../lib/activityNames";
+import { arkadeRowExplorer } from "../../lib/bitcoin/arkadeRowExplorer";
 import { classifyTransaction } from "../../lib/bitcoin/convert";
 import { mergeRailsOneRowPerTx, withoutOwnBoardingLegs } from "../../lib/bitcoin/combinedRails";
 import { t } from "../../lib/i18n";
 import { formatActivityTime } from "../../lib/transactionRowUtils";
+import { arkadeServerConfigService } from "../arkade/ArkadeServerConfigService";
 import type { UnifiedTransaction } from "../arkade/ArkadeTransactionHistoryService";
 import { priceService } from "../pricing/PriceService";
 import { type Legs, swapRow } from "../swapkit/swapActivity";
@@ -28,6 +30,8 @@ export function arkadeHistoryRows(rows: BitcoinTransactionsResult["rows"]): Unif
       source: "arkade",
       kind: row.kind,
       txid: row.txid,
+      ...(row.arkTxid ? { arkTxid: row.arkTxid } : {}),
+      ...(row.exitTxid ? { exitTxid: row.exitTxid } : {}),
       isMigrationTx: row.isMigrationTx,
       counterpartyScripts: row.counterpartyScripts,
       // Kept so the combined history can tell an Arkade deposit is the
@@ -121,11 +125,17 @@ export function arkadeActivityItem(
   const swap = swapRow(swapLegs, atx.id, isIncoming);
   // A boarding deposit's own transaction is on the chain: its explorer
   // belongs to this row, which is the one the combined history keeps for
-  // a transfer into Arkade.
-  const boardingExplorer =
-    atx.boarding && atx.boardingTxid
-      ? () => Linking.openURL(`${mempoolTxUrl(String(atx.boardingTxid))}?mode=details`)
-      : null;
+  // a transfer into Arkade. A send out to a Bitcoin address is on the chain
+  // too; a payment inside Arkade is on the Arkade explorer (#1955).
+  const explorer = arkadeRowExplorer(
+    {
+      boardingTxid: atx.boarding ? atx.boardingTxid : undefined,
+      exitTxid: atx.exitTxid,
+      arkTxid: atx.arkTxid,
+    },
+    arkadeServerConfigService.getArkadeNodeUrl() ===
+      arkadeServerConfigService.getDefaults().nodeUrl,
+  );
   return {
     key: atx.id,
     icon: atx.isMigrationTx ? "transfer-horizontal" : isIncoming ? "plus" : "arrow-up",
@@ -133,10 +143,14 @@ export function arkadeActivityItem(
     label: atx.isMigrationTx ? "Migration" : (swap?.title ?? title),
     ...(swap?.image ? { image: swap.image } : {}),
     ...(swap?.sides ? { swap: swap.sides } : {}),
-    ...(boardingExplorer
+    ...(explorer
       ? {
-          onPress: boardingExplorer,
-          onPressLabel: t("component.ActivityRowActions.viewOnMempool"),
+          onPress: () => Linking.openURL(explorer.url),
+          onPressLabel: t(
+            explorer.site === "arkade"
+              ? "component.ActivityRowActions.viewOnArkade"
+              : "component.ActivityRowActions.viewOnMempool",
+          ),
         }
       : {}),
     amount: `${sign}BTC ${atx.amountSats}`,

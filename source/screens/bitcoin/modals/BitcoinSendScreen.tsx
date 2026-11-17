@@ -117,6 +117,9 @@ import {
   localToSats,
   quoteRemitSats,
   quoteTzPayout,
+  remitPayByPassed,
+  remitPayWindowTooShort,
+  tzPayBy,
   tzPaymentLapsed,
   type ZapRemitTerms,
 } from "../../../services/remit/RemitService";
@@ -335,6 +338,12 @@ export default function BitcoinSendScreen({
     sessionId: string | null;
     receiverName: string | null;
     feeTZS: number | null;
+    /**
+     * The last moment a press may still pay this invoice in time for the
+     * corridor to honour its price, epoch ms, or null when it did not say.
+     * Well before the BOLT11's own expiry.
+     */
+    payBy?: number | null;
     /**
      * A destination that takes USDC only (a Tanzanian bank): no invoice, but
      * an accepted swap of this many sats into the exact USDC the order asks,
@@ -1355,6 +1364,8 @@ export default function BitcoinSendScreen({
         // out itself once that invoice settles. Minting moves no money, so a
         // user who stops here has sent nothing.
         let remitInvoice: string | null = null;
+        // The corridor's own pay-by moment, rechecked where the sats move.
+        let remitPayBy: number | null = null;
         // Held by the send operation itself, not in form state: the Lightning
         // path closes this sheet from its `authenticated` event, long before
         // `sendBitcoin` resolves, and anything the close-reset clears would be
@@ -1369,8 +1380,12 @@ export default function BitcoinSendScreen({
           // the quote button.
           // A bank swap whose order or quote has lapsed is never executed:
           // this press fetches a fresh order and quote and shows them again.
+          // So is an invoice whose price hold is too close to its end for the
+          // payment to land in time: ZapRemit fails a payout funded after its
+          // quote lock, though the invoice itself still settles.
           const pending =
-            remitPendingInvoice?.swap && tzPaymentLapsed(remitPendingInvoice.swap.expiresAt)
+            (remitPendingInvoice?.swap && tzPaymentLapsed(remitPendingInvoice.swap.expiresAt)) ||
+            remitPayByPassed(remitPendingInvoice?.payBy)
               ? null
               : remitPendingInvoice;
           if (remitPressOutcome(pending !== null) === "show_price") {
@@ -1379,6 +1394,8 @@ export default function BitcoinSendScreen({
               sessionId: string | null;
               receiverName: string | null;
               feeTZS: number | null;
+              /** Absent where the invoice's own expiry is the deadline. */
+              payBy?: number | null;
             };
             if (zapRecipient) {
               if (keRecipient && !remitName.trim()) {
@@ -1386,10 +1403,12 @@ export default function BitcoinSendScreen({
               }
               if (zapBandLabel) throw new Error(zapBandLabel);
               let invoice: string;
+              let payBy: number | null = null;
               if (zapRecipient.provider === "tz") {
                 const order = await createTzOrder(remitAmount, zapRecipient.recipient);
                 if (order.invoice) {
                   invoice = order.invoice;
+                  payBy = tzPayBy(order.expiresAt);
                 } else if (order.usdc) {
                   // USDC only (a bank): swap the sats into the order's exact
                   // USDC, settled straight to its address. The server prices
@@ -1452,6 +1471,7 @@ export default function BitcoinSendScreen({
                   recipient: zapRecipient.recipient,
                 });
                 invoice = zap.invoice;
+                payBy = zap.payBy;
               }
               // The service's price is the invoice itself; it states no separate fee.
               created = {
@@ -1459,6 +1479,7 @@ export default function BitcoinSendScreen({
                 sessionId: null,
                 receiverName: zapRecipient.summary,
                 feeTZS: null,
+                payBy,
               };
             } else if (tzRecipient) {
               if (!remitSessionSeedRef.current) {
@@ -1503,12 +1524,18 @@ export default function BitcoinSendScreen({
                 }),
               );
             }
+            // A price hold shorter than the payment takes cannot be paid in
+            // time: say so instead of showing a price every press replaces.
+            if (remitPayWindowTooShort(created.payBy ?? null)) {
+              throw new Error(t("screen.BitcoinSendScreen.errorRemitRateUnavailable"));
+            }
             setRemitPendingInvoice({
               invoice: created.invoice,
               sats: mintedSats,
               sessionId: created.sessionId,
               receiverName: created.receiverName,
               feeTZS: created.feeTZS,
+              payBy: created.payBy,
             });
             setSubmittedAmountLocked(false);
             setInputMode("sats");
@@ -1574,12 +1601,13 @@ export default function BitcoinSendScreen({
           });
           if (payRefusal) throw new Error(describeRemitRefusal(payRefusal));
           remitInvoice = pending.invoice;
+          remitPayBy = pending.payBy ?? null;
           remitSessionId = pending.sessionId;
         }
         const target: BitcoinSendTarget = isArk
           ? { kind: "ark_send", address: addr, amountSats: currentSats }
           : remitInvoice
-            ? { kind: "bolt11", invoice: remitInvoice }
+            ? { kind: "bolt11", invoice: remitInvoice, payBy: remitPayBy }
             : isBolt11
               ? { kind: "bolt11", invoice: lightningRequest }
               : isLnurl
@@ -1678,7 +1706,7 @@ export default function BitcoinSendScreen({
           (closedAfterSubmitted || directArkadeReconciliationRequired) &&
           !isUserCancelledAuth(e)
         ) {
-          movePillRef.current?.fail();
+          movePillRef.current?.fail(e);
           movePillRef.current = null;
         } else {
           takeBackFromPill();

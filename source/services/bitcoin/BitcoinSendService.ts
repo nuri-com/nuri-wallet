@@ -13,7 +13,12 @@ type ArkadeLightningPayResult = Awaited<ReturnType<typeof payArkadeLightningInvo
 // over Lightning has no counterpart yet — no solver serves that direction — so
 // the receive sheet still offers onchain rails only.
 export type BitcoinSendTarget =
-  | { kind: "bolt11"; invoice: string }
+  | {
+      kind: "bolt11";
+      invoice: string;
+      /** The payee's own pay-by moment (epoch ms), earlier than the BOLT11 expiry. */
+      payBy?: number | null;
+    }
   | { kind: "lnurl"; lnurl: string; amountSats: number }
   | { kind: "bitcoin_onchain"; address: string; amountSats: number }
   | {

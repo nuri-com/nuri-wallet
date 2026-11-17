@@ -38,6 +38,7 @@ import {
 import { ArkadeRemoteSignerSession } from "./ArkadeRemoteSignerSession";
 import { AssertionCache, type SigningAssertionPayload } from "./internal/assertionCache";
 import { ArkadeSpendApprovalFlow } from "./internal/ArkadeSpendApprovalFlow";
+import { type PreparedUnlockPasskey, takeArmedUnlockPasskey } from "./internal/armedUnlockPasskey";
 import { emitArkadeReceiveUnlockProgress } from "./internal/receiveUpdatedEvents";
 import { SignerHttpClient } from "./internal/signerHttpClient";
 import { SigningKeyVault } from "./internal/signingKeyVault";
@@ -258,44 +259,6 @@ logArkadeSignTrace("module_loaded", {
   expected_next: "send_flow_calls_identity",
 });
 
-// Module-level "armed" pre-obtained passkey for the receive-claim path. The
-// PaymentReceivedModal "Passkey Unlock" button runs the WebView ceremony itself
-// (one tap), pre-fetching the auth (prepareReceiveClaimPasskey) and arming the
-// result (armReceiveClaimPasskeyResult). The claim-approve branch then uses both
-// instead of prompting again. Module-level because the claim may run on a
-// different ArkadeRemoteIdentity instance than the one the modal prepared.
-type ArmedReceiveClaimResult = {
-  prfB64: string;
-  credIdB64u: string;
-  clientDataB64u: string;
-  authDataB64u: string;
-  sigB64u: string;
-};
-let armedReceiveClaimAuth: ArkadeAuthResponse | null = null;
-let armedReceiveClaimResult: ArmedReceiveClaimResult | null = null;
-
-export function armReceiveClaimPasskeyResult(result: ArmedReceiveClaimResult): void {
-  armedReceiveClaimResult = result;
-}
-
-export function clearArmedReceiveClaimPasskey(): void {
-  armedReceiveClaimAuth = null;
-  armedReceiveClaimResult = null;
-}
-
-function takeArmedReceiveClaimPasskey(): {
-  auth: ArkadeAuthResponse;
-  result: ArmedReceiveClaimResult;
-} | null {
-  if (armedReceiveClaimAuth && armedReceiveClaimResult) {
-    const out = { auth: armedReceiveClaimAuth, result: armedReceiveClaimResult };
-    armedReceiveClaimAuth = null;
-    armedReceiveClaimResult = null;
-    return out;
-  }
-  return null;
-}
-
 // Pre-fetched auth for the username (lnurl-register) claim. The onboarding
 // Continue button runs the WebView ceremony itself; its assertion is cached
 // (with this auth's token) so the existing claimArkadeLnurlUsername — which reads
@@ -453,27 +416,27 @@ export class ArkadeRemoteIdentity implements Identity {
   }
 
   // Pre-fetch the combined-assertion auth so PaymentReceivedModal can run the
-  // WebView passkey ceremony on its own button tap (challenge ready up front),
-  // then arm the result via armReceiveClaimPasskeyResult. Returns the WebView
-  // inputs, or null if unavailable (modal then falls back to the prompt path).
-  async prepareReceiveClaimPasskey(): Promise<{
-    rpId: string;
-    challengeB64u: string;
-    credIdB64u: string;
-  } | null> {
+  // passkey ceremony on its own button tap (challenge ready up front), then arm
+  // the result with this same auth (internal/armedUnlockPasskey). Returns null
+  // if unavailable (the modal then falls back to the prompt path).
+  async prepareUnlockPasskey(): Promise<PreparedUnlockPasskey | null> {
     try {
       const meta = this.getCredentialMeta();
       const pubCtx = await this.getPublicContext();
       const auth = await this.assertionCache.beginCombinedAssertionAuth(
         meta,
         pubCtx,
-        "receive_claim_prefetch",
+        "unlock_prefetch",
         "miss",
       );
-      armedReceiveClaimAuth = auth;
-      return { rpId: auth.rp_id, challengeB64u: auth.challenge, credIdB64u: meta.credIdB64u };
+      return {
+        rpId: auth.rp_id,
+        challengeB64u: auth.challenge,
+        credIdB64u: meta.credIdB64u,
+        auth,
+        preparedAtMs: Date.now(),
+      };
     } catch {
-      armedReceiveClaimAuth = null;
       return null;
     }
   }
@@ -1507,18 +1470,26 @@ export class ArkadeRemoteIdentity implements Identity {
         requests: requests.length,
         expected_next: "native_passkey_prf_assertion",
       });
-      const cacheState = await this.assertionCache.getCombinedAssertionAuthState(meta);
-      combinedAssertionAuth = await this.assertionCache.beginCombinedAssertionAuth(
-        meta,
-        pubCtx,
-        "boarding_sweep_approval",
-        cacheState,
-      );
+      // The Payment Received button may already have run the ceremony on its
+      // tap (one tap, no confirm screen): use that auth + result, else prompt.
+      const armedPasskey = takeArmedUnlockPasskey("boarding_sweep");
+      if (armedPasskey) {
+        combinedAssertionAuth = armedPasskey.auth;
+      } else {
+        const cacheState = await this.assertionCache.getCombinedAssertionAuthState(meta);
+        combinedAssertionAuth = await this.assertionCache.beginCombinedAssertionAuth(
+          meta,
+          pubCtx,
+          "boarding_sweep_approval",
+          cacheState,
+        );
+      }
       this.signingKeyVault.clearSigningKeyCache("boarding_sweep_requires_fresh_native_result");
       await this.signingKeyVault.getSigningKey(
         pubCtx.clientPk33,
         "boarding_sweep_approval",
         combinedAssertionAuth,
+        armedPasskey?.result ?? null,
       );
       const cachedAssertion = await this.assertionCache.getCachedAssertion(meta);
       if (
@@ -1698,7 +1669,7 @@ export class ArkadeRemoteIdentity implements Identity {
       // If the PaymentReceivedModal "Passkey Unlock" button already ran the
       // WebView ceremony (one tap), use that pre-fetched auth + result instead
       // of prompting again. Otherwise fetch auth and prompt as usual.
-      const armedPasskey = takeArmedReceiveClaimPasskey();
+      const armedPasskey = takeArmedUnlockPasskey("ln_receive_claim");
       if (armedPasskey) {
         combinedAssertionAuth = armedPasskey.auth;
       } else {

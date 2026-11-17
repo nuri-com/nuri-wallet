@@ -18,6 +18,8 @@ export type ActivityDetailInput = {
   incoming?: boolean;
   saveOffer?: { destination: Destination; name?: string } | null;
   counterpartyAddress?: string;
+  /** Arkade: the other side's addresses; the details show one when it is the only one. */
+  counterpartyAddresses?: string[];
   /** The row's own figure, signed ("-EUR 5.00"). */
   amount?: string;
   /** Set on a swap leg: the swap's two sides stand in for any address. */
@@ -32,9 +34,9 @@ export type ActivityDetail = {
   /** "@username" under the title, when the title is a contact's own name. */
   handle: string | null;
   /**
-   * The other side's address or IBAN, and which way the money went. Only for
-   * a side known by nothing else: a contact, a Nuri user, a named bank
-   * account or a swap reads by its name, not by an address.
+   * The other side's address or IBAN, and which way the money went, also when
+   * the title already names them (#1955): a name says who, the address is
+   * what the money was sent to. A swap has none: its two sides stand in.
    */
   counterparty: { direction: "to" | "from"; value: string } | null;
   status: "pending" | "failed" | "completed";
@@ -64,16 +66,16 @@ export function activityDetail(
   item: ActivityDetailInput,
   person: ActivityPerson | null,
 ): ActivityDetail {
+  const only = item.counterpartyAddresses?.length === 1 ? item.counterpartyAddresses[0] : "";
   const value = item.saveOffer
     ? destinationText(item.saveOffer.destination)
-    : (item.counterpartyAddress ?? "");
+    : (item.counterpartyAddress ?? only);
   const handle = person?.username ? `@${person.username}` : null;
-  const named = Boolean(person || item.swap || item.saveOffer?.name?.trim());
   return {
     title: person?.name ?? item.label,
     handle: handle && handle !== person?.name ? handle : null,
     counterparty:
-      !named && value.trim() && item.incoming !== undefined
+      !item.swap && value.trim() && item.incoming !== undefined
         ? { direction: item.incoming ? "from" : "to", value: value.trim() }
         : null,
     swap: swapSides(item),

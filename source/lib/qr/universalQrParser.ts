@@ -209,7 +209,14 @@ function parseBitcoinUri(input: string): QrParseResult {
     };
 
     if (queryString) {
-      const params = new URLSearchParams(queryString);
+      // QR codes are often all capitals (BITCOIN:BC1Q...?AMOUNT=...&LIGHTNING=LNBC...),
+      // so the parameter names are read in any case. Missing `lightning` turned
+      // a payable invoice into a send to the onchain address.
+      const params = new Map<string, string>();
+      for (const [key, value] of new URLSearchParams(queryString)) {
+        const name = key.toLowerCase();
+        if (!params.has(name)) params.set(name, value);
+      }
 
       const amountStr = params.get("amount");
       if (amountStr != null) {
@@ -229,7 +236,8 @@ function parseBitcoinUri(input: string): QrParseResult {
       if (lightning) result.lightning = lightning;
 
       const ark = params.get("ark");
-      if (ark) result.ark = ark;
+      // An all-capitals QR carries the Ark address in capitals too.
+      if (ark) result.ark = ark === ark.toUpperCase() ? ark.toLowerCase() : ark;
     }
 
     return result;

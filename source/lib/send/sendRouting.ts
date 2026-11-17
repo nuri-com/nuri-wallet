@@ -295,6 +295,21 @@ export function defaultSendBalance(args: {
   const route = (balance: SendBalance) => recipientRoute(balance, recipient);
   const fromStart = started.find((balance) => funded(balance) && route(balance) !== null);
   if (fromStart) return fromStart;
+  // A plain Bitcoin address that Lightning would also pay goes from Lightning
+  // through the Lightning to Bitcoin swap and its minimum, from Onchain as a
+  // plain transaction. So Onchain pays it when it holds the amount.
+  const onchainRoute = route("onchain");
+  const arkadeRoute = route("arkade");
+  const wanted = Number(recipient.amountSats ?? 0);
+  if (
+    order.includes("onchain") &&
+    onchainRoute?.kind === "bitcoin-direct" &&
+    (arkadeRoute === null ||
+      (arkadeRoute.kind === "bitcoin-direct" && arkadeRoute.target === onchainRoute.target)) &&
+    (held.onchain ?? 0) >= Math.max(1, Number.isFinite(wanted) ? wanted : 0)
+  ) {
+    return "onchain";
+  }
   const direct = order.find(
     (balance) =>
       funded(balance) && route(balance) !== null && !isSwapRoute(route(balance) as SendRoute),
