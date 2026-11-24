@@ -613,6 +613,15 @@ export async function executeV2ArkadeIntentsFund(
   // A resumed send must still be payable. Reconciliation of an already-started
   // action is allowed after expiry: it reports the existing spend, never pays again.
   const stored = SwapKitV2OrderStore.get(ctx.orderId);
+  // The user cancelled the passkey prompt for this funding (#1780). An
+  // automatic wake must not ask again: refuse before any prompt, which sends
+  // nothing, so the tracker can retire the order if the server confirms it is
+  // unfunded. Only an explicit Continue (which clears the mark) funds it. An
+  // already-started funding still reconciles below, so money that may have
+  // moved is always reported.
+  if (!ctx.previouslyStarted && stored?.fundingDeclinedAt !== undefined) {
+    throw new SwapKitV2Error("You stopped this payment. Tap Continue to try again.");
+  }
   if (!ctx.previouslyStarted) {
     // EVERY fresh funding attempt is held to the user's consent, whatever the
     // destination. The cap used to apply only to BTC_LN orders, so an

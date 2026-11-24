@@ -922,11 +922,26 @@ class WirexService {
   // A read-session gated write: same token and the same re-mint-once retry as
   // the gated GET. A session rejection happens before the server does anything,
   // so the retry cannot repeat the write.
-  private async postAuthorized<T>(path: string, body: unknown): Promise<T> {
+  //
+  // `expectedWallet` / `abortIf`: a write decided for one account must not go
+  // out under the next one. Minting awaits a signature, so both are re-checked
+  // after the token resolves and immediately before the request is sent.
+  private async postAuthorized<T>(
+    path: string,
+    body: unknown,
+    opts: { expectedWallet?: string; abortIf?: () => boolean } = {},
+  ): Promise<T> {
     const label = `POST ${path}`;
+    const expected = opts.expectedWallet?.toLowerCase();
     const send = async (): Promise<RestEnvelope<T>> => {
+      if (opts.abortIf?.()) throw new Error(WIREX_REQUEST_ABANDONED_ERROR);
       const token = await this.getReadSessionToken();
       if (!token) throw new Error(WIREX_NO_READ_SESSION_ERROR);
+      if (opts.abortIf?.()) throw new Error(WIREX_REQUEST_ABANDONED_ERROR);
+      if (expected) {
+        const sessionWallet = this.readSession?.token === token ? this.readSession.wallet : null;
+        if (sessionWallet !== expected) throw new Error(WIREX_REQUEST_ABANDONED_ERROR);
+      }
       return this.parseEnvelope<T>(
         await fetch(`${this.restBaseUrl}${path}`, {
           method: "POST",
@@ -2603,10 +2618,16 @@ class WirexService {
   // Opening the account and the payee list are read-session gated; the quote
   // too. The transfer itself is money-out and carries the owner's signature
   // over the server's quote. SECURITY: never log account numbers or amounts.
-  async openUkAccount(): Promise<UkAccountState | null> {
+  // Opened for the wallet whose status asked for it, and only while that
+  // account is still the signed-in one.
+  async openUkAccount(params: {
+    wallet: string;
+    abortIf: () => boolean;
+  }): Promise<UkAccountState | null> {
     const data = await this.postAuthorized<{ uk_account?: unknown }>(
       wirexConfig.routes.ukAccountOpen,
       {},
+      { expectedWallet: params.wallet, abortIf: params.abortIf },
     );
     return parseUkAccountState(data.uk_account);
   }

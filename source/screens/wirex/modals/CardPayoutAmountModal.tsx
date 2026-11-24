@@ -104,6 +104,9 @@ const CardPayoutAmountModal: React.FC<Props> = ({
       // The first token whose quote fits pays: the debit includes the fee and
       // is stated in that token, so it is compared with that token's balance.
       let quote: Awaited<ReturnType<typeof wirexService.cardTransferEstimate>> | null = null;
+      // The card-currency token's fee-inclusive debit, kept to name the
+      // largest amount that fits when no token covers this one (#1709).
+      let ownDebit: number | null = null;
       for (const token of payable) {
         const estimate = await wirexService.cardTransferEstimate({
           recipientId: card.recipientId,
@@ -112,13 +115,22 @@ const CardPayoutAmountModal: React.FC<Props> = ({
           tokenAddress: token.tokenAddress,
         });
         if (!current()) return;
+        if (token === own && estimate.debitAmount != null) ownDebit = estimate.debitAmount;
         if (estimate.debitAmount == null || estimate.debitAmount <= token.balance) {
           quote = estimate;
           break;
         }
       }
       if (!quote) {
-        setSendError(t("screen.CardPayout.feeHint"));
+        // The fee is debit - amount, in the card's own currency: the most that
+        // fits is that token's balance less it.
+        const max =
+          own && ownDebit != null ? Math.floor((own.balance - (ownDebit - value)) * 100) / 100 : 0;
+        setSendError(
+          max > 0
+            ? t("screen.CardPayout.feeHintWithMax", { amount: max.toFixed(2), currency })
+            : t("screen.CardPayout.feeHint"),
+        );
         return;
       }
       // Closed or reopened while quoting: nothing is signed for it.
@@ -145,7 +157,7 @@ const CardPayoutAmountModal: React.FC<Props> = ({
     } finally {
       if (current()) setSubmitting(false);
     }
-  }, [disabled, card, payable, typed, currency, value, onSuccess]);
+  }, [disabled, card, payable, own, typed, currency, value, onSuccess]);
 
   const hint =
     tokens != null && tokens.length === 0

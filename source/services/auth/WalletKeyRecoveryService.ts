@@ -2,7 +2,12 @@ import { PRF_SALT } from "../../config/constants";
 import { WALLET_RP_ID } from "../../config/passkey";
 import { normalizePrfOutput, zeroize } from "../../lib/crypto";
 import { logWithId } from "../../lib/OperationLogUtils";
-import { adoptRecoveredWalletKeys, getEthereumAddress } from "../../lib/secureKeyStorage";
+import {
+  adoptRecoveredWalletKeys,
+  getEthereumAddress,
+  isBiometricPromptDismissal,
+} from "../../lib/secureKeyStorage";
+import { isUserCancelledAuth } from "../../lib/support/isUserCancelledAuth";
 import { authStateManager } from "./AuthStateService";
 import { useExistingWalletPasskey } from "./PasskeyNativeModuleService";
 import {
@@ -14,10 +19,23 @@ import {
 /**
  * "recovered" — the unlock entry was rebuilt and the session is open.
  * "wrong_wallet" — the ceremony produced a different wallet; nothing was written.
+ * "cancelled" — the user dismissed the passkey prompt (or the platform refused it
+ * as a not-allowed / cancelled ceremony). Nothing broke and nothing was written;
+ * the same tap can simply be offered again.
  * "unavailable" — no passkey, no identity to verify against, or the ceremony or
  * the write failed. Nothing was written either way.
  */
-export type WalletKeyRecoveryOutcome = "recovered" | "wrong_wallet" | "unavailable";
+export type WalletKeyRecoveryOutcome = "recovered" | "wrong_wallet" | "cancelled" | "unavailable";
+
+/**
+ * A declined passkey ceremony is not a recovery failure. Production reports
+ * showed Android "authentication cancelled" (code 10) and web NotAllowedError
+ * ending as "passkey recovery unavailable" plus a support dump, which told a
+ * user who only closed the sheet that their wallet could not be recovered.
+ */
+function isCeremonyCancelled(error: unknown): boolean {
+  return isUserCancelledAuth(error) || isBiometricPromptDismissal(error);
+}
 
 /**
  * Rebuild the combined unlock entry from the passkey PRF.
@@ -72,6 +90,12 @@ export async function recoverWalletKeysFromPasskey(): Promise<WalletKeyRecoveryO
     logWithId("🔐 KeyRecovery", "unlock entry rebuilt from passkey");
     return "recovered";
   } catch (error: unknown) {
+    // Only a ceremony that never produced a PRF can be a cancel: once `prf` is
+    // set the failure is in derivation or the write, which is a real failure.
+    if (!prf && isCeremonyCancelled(error)) {
+      logWithId("🔐 KeyRecovery", "passkey ceremony cancelled");
+      return "cancelled";
+    }
     logWithId("🔐 KeyRecovery", "passkey recovery failed", {
       err: error instanceof Error ? error.message : String(error),
     });

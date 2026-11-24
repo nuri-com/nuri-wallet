@@ -66,6 +66,11 @@ export type ArkadeRecoveryStatus = {
   backup_updated_at_ms: number;
   created_at_ms: number;
   updated_at_ms: number;
+  /**
+   * Whether the record is bound to exactly the supplied client signer key
+   * (server #173). Older servers omit it; the restore gate fails closed then.
+   */
+  client_match?: "match" | "mismatch" | "unregistered" | "unknown";
 };
 
 export type ArkadeEncryptedRecoveryBackup = {

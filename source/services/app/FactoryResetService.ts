@@ -35,7 +35,7 @@ import {
 
 import { resetAddressBook } from "../addressBook/AddressBookService";
 import { resetEsims } from "../esim/EsimService";
-import { resetPayWallet } from "../../lib/pay/payWallet";
+import { resetPayWallet } from "../../lib/pay/payWalletSessions";
 
 type Options = {
   onClose?: () => void;

@@ -97,19 +97,24 @@ function priceRenewal(
   return { inputs, amountSats: net, inputSats };
 }
 
+/** What a renewal tap returns when the fresh read finds no coin due (#1977). */
+export const ARKADE_VTXO_RENEWAL_NOTHING_DUE = "nothing_due" as const;
+
 /**
  * Everything checked before the passkey is asked for: the due coins, the
  * destination's three decay leaves, and the priced amount. Throws rather than
  * returning a plan that would renew into the wrong script or below dust.
+ * Returns null when no coin is due any more: the summary that offered the
+ * renewal was stale, which is not a failure (#1977).
  */
-export async function planArkadeVtxoRenewal(wallet: RenewalWallet): Promise<ArkadeVtxoRenewalPlan> {
+export async function planArkadeVtxoRenewal(
+  wallet: RenewalWallet,
+): Promise<ArkadeVtxoRenewalPlan | null> {
   // Same read the SDK's renewVtxos uses: skips intent-locked, gated and
   // deprecated-signer coins that a raw getVtxos would offer.
   const vtxos = await wallet.getSpendableVtxos({ withRecoverable: false });
   const { candidates } = selectArkadeVtxoRenewalCandidates(vtxos, ARKADE_VTXO_RENEWAL_THRESHOLD_MS);
-  if (candidates.length === 0) {
-    throw new Error("vtxo renewal: no vtxos due");
-  }
+  if (candidates.length === 0) return null;
   // Renewal keeps the same script: the settle pays the wallet's current Ark
   // address, so that address must still be exactly the decay-policy script.
   const address = await wallet.getAddress();
@@ -147,8 +152,15 @@ export async function planArkadeVtxoRenewal(wallet: RenewalWallet): Promise<Arka
   };
 }
 
-/** Unlock-modal step: one passkey touch, one settle into a fresh batch. */
-export async function renewArkadeExpiringVtxosManual(): Promise<ArkadeWalletSummary> {
+/**
+ * Unlock-modal step: one passkey touch, one settle into a fresh batch. When
+ * the fresh read finds nothing due it asks for no passkey, starts no settle and
+ * returns ARKADE_VTXO_RENEWAL_NOTHING_DUE, so the caller can drop the stale
+ * item instead of reporting a failed payment (#1977).
+ */
+export async function renewArkadeExpiringVtxosManual(): Promise<
+  ArkadeWalletSummary | typeof ARKADE_VTXO_RENEWAL_NOTHING_DUE
+> {
   const startedAtMs = Date.now();
   const wallet = (await getOrCreateWallet()) as unknown as RenewalWallet;
   await assertArkadeRecoveryCsvCompatible(
@@ -156,6 +168,14 @@ export async function renewArkadeExpiringVtxosManual(): Promise<ArkadeWalletSumm
     "vtxo_renewal",
   );
   const plan = await planArkadeVtxoRenewal(wallet);
+  if (!plan) {
+    logArkadeWalletSignTrace("vtxo_renewal_plan", {
+      status: "nothing_due",
+      threshold_ms: ARKADE_VTXO_RENEWAL_THRESHOLD_MS,
+      expected_next: "refresh_state",
+    });
+    return ARKADE_VTXO_RENEWAL_NOTHING_DUE;
+  }
   const amountSats = Number(plan.amountSats);
   logArkadeWalletSignTrace("vtxo_renewal_plan", {
     status: "approval_required",

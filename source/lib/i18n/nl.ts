@@ -31,6 +31,7 @@ export const nl = {
     },
     PayLink: {
       notFound: "@%{username} kan via deze link niet worden betaald.",
+      expired: "Dit betaalverzoek is verlopen.",
       chooseAsset: "Betalen met",
       from: "Van",
       to: "Aan",
@@ -109,6 +110,8 @@ export const nl = {
       passkeyError: "Je passkey is niet geopend. Tik opnieuw om het nog eens te proberen.",
       restoreBlockedSupportMessage:
         "Hoi, ik probeerde in te loggen met een passkey uit de vorige versie van de app. Het lijkt erop dat deze wallet hier niet kan worden hersteld. Kunnen jullie me helpen?",
+      restoreKeyMismatchSupportMessage:
+        "Hoi, ik probeerde in te loggen met mijn passkey, maar de app kon niet bevestigen dat die bij mijn wallet hoort en is gestopt voordat die werd geopend. Kunnen jullie me helpen?",
     },
     PasskeyContinueOrSwitchModal: {
       title: "Kies een wallet",
@@ -137,6 +140,8 @@ export const nl = {
       errorSendFailed: "Er ging iets mis. Probeer het opnieuw.",
       errorSendPartnerFull:
         "De verzendpartner is tijdelijk overbelast. Je bitcoins zijn veilig. Probeer het later opnieuw.",
+      lightningAlreadyPaid: "Deze factuur is al betaald.",
+      lightningAlreadyPaying: "Deze factuur wordt al betaald. Je ziet hem in je geschiedenis.",
       errorLightningLockupUnavailable: "Lightning niet beschikbaar. Er is niets verstuurd.",
       errorOnchainTooFreshHours: "Beschikbaar over ongeveer %{hours} u.",
       errorOnchainTooFreshMinutes: "Beschikbaar over ongeveer %{minutes} min.",
@@ -197,6 +202,20 @@ export const nl = {
       stepDone: "Klaar",
       stepRunning: "Bezig…",
       stepWaiting: "Wachten",
+      stepFailed: "Mislukt",
+      stepRefunded: "Terugbetaald",
+      stepStopped: "Gestopt",
+      reason: {
+        providerRejected: "De wisselaanbieder heeft deze swap geweigerd.",
+        providerUnreachable: "De wisselaanbieder was niet bereikbaar.",
+        actionExpired: "Een stap is niet op tijd afgerond.",
+        depositMismatch: "De storting kwam niet overeen met wat de swap verwachtte.",
+        settlementTimeout: "De wisselaanbieder was niet op tijd klaar.",
+        transactionRefused: "Een transactie van deze swap is geweigerd.",
+        refundFailed: "De terugbetaling kon niet worden afgerond.",
+        expired: "Deze swap is verlopen voordat er iets is verzonden.",
+        unknown: "Er is geen reden opgegeven. Neem contact op met support, dan kijken we ernaar.",
+      },
       autoNote: "Deze wissel loopt vanzelf, je hoeft niets te doen en de app niet open te houden.",
       statusLoadFailed: "De actuele status kon niet worden geladen. Probeer het zo opnieuw.",
       contactSupport: "Contact met support",
@@ -481,6 +500,8 @@ export const nl = {
     SepaRecipientModal: {
       headerTitle: "Bankoverschrijving",
       newRecipient: "Nieuwe ontvanger",
+      savedSyncing: "Opgeslagen ontvangers laden…",
+      savedOffline: "Adresboek niet bereikbaar. Alleen opgeslagen ontvangers van dit apparaat.",
       continueLabel: "Doorgaan",
       tabPersonal: "Persoonlijk",
       tabCompany: "Bedrijf",
@@ -511,6 +532,8 @@ export const nl = {
       saveLabel: "Kaart opslaan",
       addFailed: "Deze kaart kon niet worden opgeslagen. Controleer het nummer en de naam.",
       notActive: "Naar kaarten sturen is voor je account nog niet beschikbaar.",
+      savedMatch: "Je hebt al een kaart eindigend op %{last4} op deze naam opgeslagen.",
+      useSaved: "Opgeslagen kaart gebruiken",
       loadFailed: "Je kaarten konden niet worden geladen. Probeer het zo opnieuw.",
       cardRow: "Kaart •••• %{last4}",
       amountTitle: "Naar kaart sturen",
@@ -518,6 +541,8 @@ export const nl = {
       sendCtaLabel: "Stuur %{currency} %{amount} naar •••• %{last4}",
       sendCtaLabelNoAmount: "Stuur naar •••• %{last4}",
       feeHint: "Niet genoeg voor de kosten. Probeer een kleiner bedrag.",
+      feeHintWithMax:
+        "Niet genoeg voor de kosten. Je kunt maximaal %{amount} %{currency} versturen.",
       sendFailedHint:
         "De overboeking is niet gelukt. Bekijk je activiteit voordat je het opnieuw probeert.",
       activityLabel: "Kaartoverboeking",
@@ -616,7 +641,6 @@ export const nl = {
       addFromBalances: "Wisselen uit mijn saldi",
       addByBankTransfer: "Bankoverschrijving",
       addReceive: "Ontvangen",
-      addFromWallet: "Uit een andere wallet",
       sendToBalances: "Wisselen naar mijn saldi",
       sendToSomeone: "Naar iemand",
       sendToBank: "Naar bank",
@@ -744,10 +768,6 @@ export const nl = {
       notify_bitcoin: "Bitcoinbetalingen",
       notify_banking: "Kaarten en bank",
       settings: "Instellingen",
-      cryptoWallet: "Cryptowallet",
-      connectWalletHint: "Koppel er een om geld toe te voegen",
-      walletFallback: "Wallet",
-      walletDisconnect: "Ontkoppelen",
       language: "Taal",
       currency: "Valuta",
       currencySubtitle: "Totalen en omgerekende bedragen worden in deze valuta getoond.",
@@ -873,6 +893,12 @@ export const nl = {
       request: "Verzoek",
       switchAddressType: "Ander adrestype",
     },
+    ActivitySheet: {
+      searchLabel: "Activiteit doorzoeken",
+      searchPlaceholder: "Zoeken",
+      clearSearch: "Zoekopdracht wissen",
+      noMatches: "Geen overeenkomende activiteit",
+    },
     CountryPicker: {
       searchLabel: "Landen zoeken",
       searchPlaceholder: "Zoeken",
@@ -890,6 +916,8 @@ export const nl = {
       fieldCardNumber: "Debetkaartnummer",
       fieldBank: "Bank",
       fieldNetwork: "Mobiel-geldnetwerk",
+      sepaBank: "Eurobankrekening (SEPA)",
+      ukBank: "Britse bankrekening",
     },
   },
   common: {
@@ -922,10 +950,6 @@ export const nl = {
     },
     status: {
       exchanging: "Wisselen… dit kan een minuut duren",
-    },
-    fail: {
-      title: "Dat lukte niet,\nopnieuw proberen?",
-      retry: "Opnieuw proberen",
     },
     processing: {
       routeTitle: "Beste wissel zoeken…",

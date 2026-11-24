@@ -1,6 +1,14 @@
 import { SwapKitV2OrderStore } from "../../services/swapkit/SwapKitV2OrderStore";
 import { statusSheetAmountLine, storedOrderIdFor } from "./swapStatusAmount";
+import {
+  failureExplanation,
+  legOutcome,
+  legOutcomeLabel,
+  type SwapStatusLeg,
+  swapSupportContext,
+} from "./swapStatusOutcome";
 import { errMsg } from "../../lib/errorMessage";
+import { reportErrorToSupport } from "../../lib/support/reportErrorToSupport";
 import type { FC } from "react";
 import { Fragment, useEffect, useState } from "react";
 
@@ -54,7 +62,7 @@ const assetLabel = (asset: string): string => {
 const providerLabel = (provider: unknown): string =>
   formatSwapProviders([provider == null ? null : String(provider)]) ?? "";
 
-type V2Leg = { leg?: string; provider?: string; terminal?: boolean };
+type V2Leg = SwapStatusLeg;
 
 /** What the wallet recorded when the user accepted, for an order the server
  * has not described yet: the route and its provider, still running. */
@@ -64,7 +72,10 @@ function v2Legs(view: SwapKitV2OrderView | null, local: LocalOrder): V2Leg[] {
   if (Array.isArray(view?.legs)) return view.legs as V2Leg[];
   const accepted = view?.accepted as { provider?: string } | undefined;
   if (accepted?.provider && view) {
-    return [{ provider: accepted.provider, terminal: isSwapKitV2Terminal(view) }];
+    // The one leg is the order: it ended the way the order did.
+    return [
+      { provider: accepted.provider, terminal: isSwapKitV2Terminal(view), status: view.status },
+    ];
   }
   const provider = local?.optionId?.split(":")[0];
   return !view && local?.from && local.to ? [{ provider, terminal: false }] : [];
@@ -134,18 +145,23 @@ const SwapStatusDetailSheet: FC<Props> = ({ visible, onClose, orderId }) => {
   const amountLine = statusSheetAmountLine(orderId, status, (id) => SwapKitV2OrderStore.get(id));
   const terminal = status ? isSwapKitV2Terminal(status) : false;
   // Only human-facing failure text; raw provider states stay in the support report.
-  const explanation = error ?? status?.failure?.message ?? null;
+  // A failed order always says why, or that the reason is not known (#1706).
+  const explanation = error ?? failureExplanation(status);
 
   const contactSupport = () => {
-    EventBus.emit("support:report", {
-      message: [
-        "Swap support request",
-        `Order: ${orderId}`,
-        `Status: ${status?.status ?? "unknown"}`,
-        `Route: ${path.join(" -> ") || "unknown"}`,
-        ...(explanation ? [`Explanation: ${explanation}`] : []),
-        ...(status?.rawProviderState ? [`Provider state: ${status.rawProviderState}`] : []),
-      ].join("\n"),
+    // The existing failure-reporting path: the chat opens with the whole
+    // context as before, and the same context goes in the silent diagnostic
+    // report, so support has it even when the chat message is not sent.
+    const context = swapSupportContext(orderId, status, path, legs);
+    EventBus.emit("support:report", { message: `Swap support request\n${context}` });
+    void reportErrorToSupport({
+      error: new Error(context),
+      userMessage: "Swap support request",
+      openChat: false,
+    }).catch((reportError: unknown) => {
+      console.warn("[SwapStatusDetailSheet] support report failed", {
+        error: errMsg(reportError),
+      });
     });
     onClose();
   };
@@ -190,7 +206,7 @@ const SwapStatusDetailSheet: FC<Props> = ({ visible, onClose, orderId }) => {
           {legs.length > 0 ? (
             <List>
               {legs.map((leg, index) => {
-                const done = leg.terminal === true;
+                const outcome = legOutcome(leg, status?.status, index === activeIndex);
                 const label =
                   path.length > index + 1
                     ? `${assetLabel(path[index])} → ${assetLabel(path[index + 1])}`
@@ -201,18 +217,18 @@ const SwapStatusDetailSheet: FC<Props> = ({ visible, onClose, orderId }) => {
                     {index > 0 ? <ListSeparator /> : null}
                     <ListAction accessibilityLabel={label}>
                       <ListActionLeadingAvatar
-                        name={done ? "check-circle" : "transfer-horizontal"}
+                        name={
+                          outcome === "done"
+                            ? "check-circle"
+                            : outcome === "failed" || outcome === "stopped"
+                              ? "warning-circle"
+                              : "transfer-horizontal"
+                        }
                         variant="outline"
                       />
                       <ListActionText>{label}</ListActionText>
                       {provider ? <ListActionTextMuted>{provider}</ListActionTextMuted> : null}
-                      <ListActionTrailingText>
-                        {done
-                          ? t("screen.SwapStatusSheet.stepDone")
-                          : index === activeIndex
-                            ? t("screen.SwapStatusSheet.stepRunning")
-                            : t("screen.SwapStatusSheet.stepWaiting")}
-                      </ListActionTrailingText>
+                      <ListActionTrailingText>{legOutcomeLabel(outcome)}</ListActionTrailingText>
                     </ListAction>
                   </Fragment>
                 );

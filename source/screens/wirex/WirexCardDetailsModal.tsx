@@ -36,7 +36,6 @@ import {
 import DsSheetHost from "../../components/DsSheetHost";
 import { useReveal } from "../../components/sensitiveReveal";
 import Spinner from "../../components/Spinner";
-import { SwapTryAgainView } from "../../components/SwapProcessingView";
 import { t } from "../../lib/i18n";
 import { detailsSheetPage, mayRevealCardSecrets } from "../../lib/wirex/accountBlocked";
 import { cardTabHolderName, cardTabOffersIssueOnly } from "../../lib/wirex/cardState";
@@ -54,7 +53,6 @@ type Props = {
   onClose: () => void;
   initialTab?: WirexDetailsTab;
   loading?: boolean;
-  error?: string | null;
   cardNumber: string | null;
   // The KYC'd name on the card / IBAN. Shown unmasked: it is not a secret, and
   // not knowing the exact spelling is what makes online checkouts fail.
@@ -123,7 +121,6 @@ const WirexCardDetailsModal: React.FC<Props> = ({
   onClose,
   initialTab,
   loading,
-  error,
   cardNumber,
   holderName,
   expiry,
@@ -513,14 +510,6 @@ const WirexCardDetailsModal: React.FC<Props> = ({
                   <Text size="md" muted align="center">
                     {t("screen.WirexCard.frozenRevealHint")}
                   </Text>
-                </View>
-              ) : null}
-              {error && activeTab === "card" && !hasCardSecrets ? (
-                // Reveal failed (Wirex rejected or the poll errored): the shared
-                // try-again state instead of the secrets rows. Freeze/limit rows
-                // below stay reachable; retry re-runs the signed reveal.
-                <View paddingX="lg">
-                  <SwapTryAgainView inline onRetry={() => onRequestReveal?.()} />
                 </View>
               ) : null}
               {items.length ? renderRows(items) : null}

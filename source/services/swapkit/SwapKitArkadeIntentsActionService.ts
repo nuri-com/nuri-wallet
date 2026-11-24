@@ -40,6 +40,11 @@ import {
   registerLockupContract,
 } from "@arkade-os/swap/protocol";
 import { getOrCreateWallet } from "../arkade/internal/walletCache";
+import {
+  ARKADE_INTENTS_KEY_REF_PREFIX,
+  arkadeIntentsKeyRef,
+  isArkadeIntentsRefundKeyRef,
+} from "./arkadeIntentsKeyRef";
 
 const SOURCE = "services/swapkit/SwapKitArkadeIntentsActionService.ts";
 
@@ -224,18 +229,14 @@ export async function deriveArkadeIntentsRefundMaterial(
   return {
     // provisionRefundKey already returns the x-only (32-byte) pubkey.
     senderPublicKey: bytesToHex(refundKey.pubkey),
-    walletKeyRef: `${ARKADE_INTENTS_KEY_REF_PREFIX}:${scope || "refund"}`,
+    walletKeyRef: arkadeIntentsKeyRef(scope),
   };
 }
 
-/** The opaque wallet-owned ref prefix for Arkade Intents refund material. The
- * refund executor accepts only refs this wallet minted (provenance gate); the
- * actual signer is always re-derived from the wallet, never from the ref. */
-export const ARKADE_INTENTS_KEY_REF_PREFIX = "nuri-arkade-intents-v1";
-
-export function isArkadeIntentsRefundKeyRef(raw: string): boolean {
-  return String(raw || "").startsWith(`${ARKADE_INTENTS_KEY_REF_PREFIX}:`);
-}
+/** The opaque wallet-owned ref for Arkade Intents refund material. The refund
+ * executor accepts only refs this wallet minted (provenance gate); the actual
+ * signer is always re-derived from the wallet, never from the ref. */
+export { ARKADE_INTENTS_KEY_REF_PREFIX, isArkadeIntentsRefundKeyRef };
 
 /**
  * Rebuild the funded-send record from wallet-owned material when the local

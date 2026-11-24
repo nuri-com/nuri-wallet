@@ -48,6 +48,7 @@ import { t } from "../../lib/i18n";
 import {
   claimPendingEsims,
   esimClaimFailingSince,
+  esimClaimUnsettledSince,
   reopenEsimPayment,
   createEsimOrder,
   createEsimTopup,
@@ -349,10 +350,17 @@ const EsimScreen: React.FC<Props> = ({ visible, onClose, onPayInvoice }) => {
     .map((order) => order.paymentHash)
     .join(",");
 
-  // A paid order turns slow after a long wait, or as soon as asking nadanada
-  // for it keeps failing: the row then offers support instead of spinning.
+  // A paid order turns slow after a long wait, as soon as asking nadanada for
+  // it keeps failing, or once nadanada keeps saying the payment has not
+  // settled: the row then offers support instead of spinning.
   const deliveryOf = (order: EsimPendingOrder) =>
-    orderDelivery(order, now, SLOW_DELIVERY_MS, esimClaimFailingSince(order.paymentHash));
+    orderDelivery(
+      order,
+      now,
+      SLOW_DELIVERY_MS,
+      esimClaimFailingSince(order.paymentHash),
+      esimClaimUnsettledSince(order.paymentHash),
+    );
 
   // Orders with money on them (a send started or a payment made) are not rows
   // to act on: they say what is happening, above the list.

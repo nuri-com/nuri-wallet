@@ -294,6 +294,9 @@ async function sendTextEncrypted(
 
 export async function sendSupportDump(opts: {
   supportPubkey: string;
+  /** The report id a chat message already named (reportErrorToSupport), so
+   * support finds the dump from the message. A fresh one otherwise. */
+  dumpId?: string;
   note?: string;
   // When true, skip deriving uncached pubkeys (avoids the biometric prompt). Sending still works via ephemeral key.
   skipBiometricUnlock?: boolean;
@@ -312,7 +315,7 @@ export async function sendSupportDump(opts: {
     throw new Error("Support pubkey invalid");
   }
 
-  const dumpId = newDumpId();
+  const dumpId = opts.dumpId?.trim() || newDumpId();
   const createdAtIso = new Date().toISOString();
 
   try {

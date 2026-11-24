@@ -113,6 +113,8 @@ export type QrScannerProps = {
   title?: string;
   pasteLabel?: string;
   /** When set, an empty/unusable clipboard on the paste button falls back to
-   *  this (open manual recipient entry) instead of showing an error message. */
-  onManualEntry?: () => void;
+   *  this (open manual recipient entry) instead of showing an error message.
+   *  `prefill` is the pasted text the scanner could not route itself (e.g. a
+   *  Nuri username): the recipient field starts with it, for review (#1705). */
+  onManualEntry?: (prefill?: string) => void;
 };

@@ -30,6 +30,7 @@ export const uk = {
     },
     PayLink: {
       notFound: "@%{username} не може отримати оплату за цим посиланням.",
+      expired: "Термін дії цього запиту на оплату минув.",
       chooseAsset: "Оплатити через",
       from: "Звідки",
       to: "Куди",
@@ -107,6 +108,8 @@ export const uk = {
       passkeyError: "Ваш passkey не відкрився. Торкніться ще раз, щоб повторити.",
       restoreBlockedSupportMessage:
         "Привіт, у мене не виходить увійти з passkey з попередньої версії застосунку. Схоже, цей гаманець не можна тут відновити. Можете допомогти?",
+      restoreKeyMismatchSupportMessage:
+        "Привіт, я намагався увійти за допомогою passkey, але застосунок не зміг підтвердити, що він належить моєму гаманцю, і зупинився до його відкриття. Можете допомогти?",
     },
     PasskeyContinueOrSwitchModal: {
       title: "Обери гаманець",
@@ -135,6 +138,8 @@ export const uk = {
       errorSendFailed: "Щось пішло не так. Спробуй ще раз.",
       errorSendPartnerFull:
         "Партнер із відправлення тимчасово перевантажений. Ваші біткоїни в безпеці. Будь ласка, спробуйте пізніше.",
+      lightningAlreadyPaid: "Цей рахунок уже оплачено.",
+      lightningAlreadyPaying: "Цей рахунок уже оплачується. Він є у твоїй історії.",
       errorLightningLockupUnavailable: "Lightning недоступний. Нічого не надіслано.",
       errorOnchainTooFreshHours: "Буде доступно приблизно через %{hours} год.",
       errorOnchainTooFreshMinutes: "Буде доступно приблизно через %{minutes} хв.",
@@ -194,6 +199,20 @@ export const uk = {
       stepDone: "Готово",
       stepRunning: "Виконується…",
       stepWaiting: "Очікування",
+      stepFailed: "Не вдалося",
+      stepRefunded: "Повернено",
+      stepStopped: "Зупинено",
+      reason: {
+        providerRejected: "Провайдер обміну відхилив цей обмін.",
+        providerUnreachable: "Не вдалося зв'язатися з провайдером обміну.",
+        actionExpired: "Один із кроків не завершено вчасно.",
+        depositMismatch: "Депозит не відповідав тому, що очікував обмін.",
+        settlementTimeout: "Провайдер обміну не завершив вчасно.",
+        transactionRefused: "Транзакцію цього обміну відхилено.",
+        refundFailed: "Не вдалося завершити повернення коштів.",
+        expired: "Цей обмін завершився до того, як щось було надіслано.",
+        unknown: "Причину не вказано. Звернися до підтримки, і ми перевіримо.",
+      },
       autoNote:
         "Цей обмін виконується сам. Тобі не потрібно нічого робити чи тримати застосунок відкритим.",
       statusLoadFailed: "Не вдалося завантажити поточний статус. Спробуйте ще раз за мить.",
@@ -476,6 +495,8 @@ export const uk = {
     SepaRecipientModal: {
       headerTitle: "Банківський переказ",
       newRecipient: "Новий отримувач",
+      savedSyncing: "Завантаження збережених отримувачів…",
+      savedOffline: "Не вдалося отримати адресну книгу. Лише отримувачі з цього пристрою.",
       continueLabel: "Продовжити",
       tabPersonal: "Особистий",
       tabCompany: "Компанія",
@@ -506,6 +527,8 @@ export const uk = {
       saveLabel: "Зберегти картку",
       addFailed: "Не вдалося зберегти цю картку. Перевір номер та ім'я.",
       notActive: "Надсилання на картки поки недоступне для твого рахунку.",
+      savedMatch: "Ти вже зберіг картку, що закінчується на %{last4}, на це ім’я.",
+      useSaved: "Використати збережену картку",
       loadFailed: "Не вдалося завантажити твої картки. Спробуй ще раз за мить.",
       cardRow: "Картка •••• %{last4}",
       amountTitle: "Надіслати на картку",
@@ -513,6 +536,7 @@ export const uk = {
       sendCtaLabel: "Надіслати %{currency} %{amount} на •••• %{last4}",
       sendCtaLabelNoAmount: "Надіслати на •••• %{last4}",
       feeHint: "Недостатньо для покриття комісії. Спробуй меншу суму.",
+      feeHintWithMax: "Недостатньо для покриття комісії. Можна надіслати до %{amount} %{currency}.",
       sendFailedHint: "Переказ не пройшов. Перевір операції, перш ніж пробувати знову.",
       activityLabel: "Переказ на картку",
     },
@@ -607,7 +631,6 @@ export const uk = {
       addFromBalances: "Обміняти з моїх балансів",
       addByBankTransfer: "Банківський переказ",
       addReceive: "Отримати",
-      addFromWallet: "З іншого гаманця",
       sendToBalances: "Обміняти на мої баланси",
       sendToSomeone: "Комусь",
       sendToBank: "На банк",
@@ -735,10 +758,6 @@ export const uk = {
       notify_bitcoin: "Bitcoin-платежі",
       notify_banking: "Картки та банк",
       settings: "Налаштування",
-      cryptoWallet: "Криптогаманець",
-      connectWalletHint: "Під'єднай гаманець, щоб поповнювати",
-      walletFallback: "Гаманець",
-      walletDisconnect: "Від'єднати",
       language: "Мова",
       currency: "Валюта",
       currencySubtitle: "Підсумки та конвертовані суми показуються в цій валюті.",
@@ -863,6 +882,12 @@ export const uk = {
       request: "Запросити",
       switchAddressType: "Змінити тип адреси",
     },
+    ActivitySheet: {
+      searchLabel: "Пошук в активності",
+      searchPlaceholder: "Пошук",
+      clearSearch: "Очистити пошук",
+      noMatches: "Немає відповідних операцій",
+    },
     CountryPicker: {
       searchLabel: "Шукати країни",
       searchPlaceholder: "Пошук",
@@ -880,6 +905,8 @@ export const uk = {
       fieldCardNumber: "Номер дебетової картки",
       fieldBank: "Банк",
       fieldNetwork: "Мережа мобільних грошей",
+      sepaBank: "Банківський рахунок у євро (SEPA)",
+      ukBank: "Банківський рахунок у Великій Британії",
     },
   },
   common: {
@@ -912,10 +939,6 @@ export const uk = {
     },
     status: {
       exchanging: "Обмінюємо… це може зайняти хвилину",
-    },
-    fail: {
-      title: "Не вийшло,\nспробувати ще раз?",
-      retry: "Спробувати ще раз",
     },
     processing: {
       routeTitle: "Шукаємо найкращий обмін…",

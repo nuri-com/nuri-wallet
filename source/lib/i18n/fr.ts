@@ -31,6 +31,7 @@ export const fr = {
     },
     PayLink: {
       notFound: "@%{username} ne peut pas être payé via ce lien.",
+      expired: "Cette demande de paiement a expiré.",
       chooseAsset: "Payer avec",
       from: "De",
       to: "À",
@@ -110,6 +111,8 @@ export const fr = {
       passkeyError: "Votre passkey ne s'est pas ouvert. Touchez à nouveau pour réessayer.",
       restoreBlockedSupportMessage:
         "Bonjour, j'ai essayé de me connecter avec une passkey de l'ancienne version de l'app. On dirait que ce portefeuille ne peut pas être restauré ici. Pouvez-vous m'aider ?",
+      restoreKeyMismatchSupportMessage:
+        "Bonjour, j'ai essayé de me connecter avec ma passkey, mais l'app n'a pas pu confirmer qu'elle appartient à mon wallet et s'est arrêtée avant de l'ouvrir. Pouvez-vous m'aider ?",
     },
     PasskeyContinueOrSwitchModal: {
       title: "Choisis un portefeuille",
@@ -139,6 +142,9 @@ export const fr = {
       errorSendFailed: "Un problème est survenu. Réessaie.",
       errorSendPartnerFull:
         "Notre partenaire d'envoi est temporairement saturé. Tes bitcoins sont en sécurité. Réessaie plus tard.",
+      lightningAlreadyPaid: "Cette facture est déjà payée.",
+      lightningAlreadyPaying:
+        "Cette facture est déjà en cours de paiement. Elle apparaît dans ton historique.",
       errorLightningLockupUnavailable: "Lightning indisponible. Rien n'a été envoyé.",
       errorOnchainTooFreshHours: "Disponible dans environ %{hours} h.",
       errorOnchainTooFreshMinutes: "Disponible dans environ %{minutes} min.",
@@ -199,6 +205,20 @@ export const fr = {
       stepDone: "Terminé",
       stepRunning: "En cours…",
       stepWaiting: "En attente",
+      stepFailed: "Échoué",
+      stepRefunded: "Remboursé",
+      stepStopped: "Arrêté",
+      reason: {
+        providerRejected: "Le fournisseur d'échange a refusé cet échange.",
+        providerUnreachable: "Le fournisseur d'échange n'a pas pu être joint.",
+        actionExpired: "Une étape n'a pas été terminée à temps.",
+        depositMismatch: "Le dépôt ne correspondait pas à ce que l'échange attendait.",
+        settlementTimeout: "Le fournisseur d'échange n'a pas terminé à temps.",
+        transactionRefused: "Une transaction de cet échange a été refusée.",
+        refundFailed: "Le remboursement n'a pas pu être finalisé.",
+        expired: "Cet échange a expiré avant tout envoi.",
+        unknown: "Aucune raison n'a été donnée. Contacte le support et nous regarderons.",
+      },
       autoNote:
         "Cet échange se fait tout seul, tu n'as rien à faire et l'app n'a pas besoin de rester ouverte.",
       statusLoadFailed: "Impossible de charger le statut actuel. Réessaie dans un instant.",
@@ -484,6 +504,9 @@ export const fr = {
     SepaRecipientModal: {
       headerTitle: "Virement bancaire",
       newRecipient: "Nouveau bénéficiaire",
+      savedSyncing: "Chargement des bénéficiaires enregistrés…",
+      savedOffline:
+        "Carnet d'adresses injoignable. Seuls les bénéficiaires de cet appareil sont affichés.",
       continueLabel: "Continuer",
       tabPersonal: "Particulier",
       tabCompany: "Entreprise",
@@ -514,6 +537,8 @@ export const fr = {
       saveLabel: "Enregistrer la carte",
       addFailed: "Impossible d'enregistrer cette carte. Vérifie le numéro et le nom.",
       notActive: "L'envoi vers des cartes n'est pas encore disponible sur ton compte.",
+      savedMatch: "Tu as déjà enregistré une carte se terminant par %{last4} à ce nom.",
+      useSaved: "Utiliser la carte enregistrée",
       loadFailed: "Impossible de charger tes cartes. Réessaie dans un instant.",
       cardRow: "Carte •••• %{last4}",
       amountTitle: "Envoyer vers la carte",
@@ -521,6 +546,8 @@ export const fr = {
       sendCtaLabel: "Envoyer %{currency} %{amount} à •••• %{last4}",
       sendCtaLabelNoAmount: "Envoyer à •••• %{last4}",
       feeHint: "Pas assez pour couvrir les frais. Essaie un montant plus petit.",
+      feeHintWithMax:
+        "Pas assez pour couvrir les frais. Tu peux envoyer jusqu'à %{amount} %{currency}.",
       sendFailedHint: "Le transfert n'a pas abouti. Vérifie ton activité avant de réessayer.",
       activityLabel: "Transfert vers carte",
     },
@@ -615,7 +642,6 @@ export const fr = {
       addFromBalances: "Échanger depuis mes soldes",
       addByBankTransfer: "Virement bancaire",
       addReceive: "Recevoir",
-      addFromWallet: "Depuis un autre portefeuille",
       sendToBalances: "Échanger vers mes soldes",
       sendToSomeone: "À quelqu'un",
       sendToBank: "Vers la banque",
@@ -747,10 +773,6 @@ export const fr = {
       notify_bitcoin: "Paiements Bitcoin",
       notify_banking: "Cartes et banque",
       settings: "Réglages",
-      cryptoWallet: "Portefeuille crypto",
-      connectWalletHint: "Connecte-en un pour ajouter des fonds",
-      walletFallback: "Portefeuille",
-      walletDisconnect: "Déconnecter",
       language: "Langue",
       currency: "Devise",
       currencySubtitle: "Les totaux et montants convertis sont affichés dans cette devise.",
@@ -876,6 +898,12 @@ export const fr = {
       request: "Demander",
       switchAddressType: "Changer de type d'adresse",
     },
+    ActivitySheet: {
+      searchLabel: "Rechercher dans l’activité",
+      searchPlaceholder: "Rechercher",
+      clearSearch: "Effacer la recherche",
+      noMatches: "Aucune activité correspondante",
+    },
     CountryPicker: {
       searchLabel: "Chercher un pays",
       searchPlaceholder: "Rechercher",
@@ -893,6 +921,8 @@ export const fr = {
       fieldCardNumber: "Numéro de carte de débit",
       fieldBank: "Banque",
       fieldNetwork: "Réseau de mobile money",
+      sepaBank: "Compte bancaire en euros (SEPA)",
+      ukBank: "Compte bancaire au Royaume-Uni",
     },
   },
   common: {
@@ -925,10 +955,6 @@ export const fr = {
     },
     status: {
       exchanging: "Échange en cours… cela peut prendre une minute",
-    },
-    fail: {
-      title: "Ça n'a pas marché,\non réessaie ?",
-      retry: "Réessayer",
     },
     processing: {
       routeTitle: "Recherche du meilleur échange…",

@@ -62,6 +62,12 @@ export type SwapKitV2StoredOrder = {
    * sats for a Bitcoin leg). Persisted so the Bitcoin-rail pending row, which
    * has no store of its own, comes back after the app restarts. */
   moveAmounts?: { sendAmount?: number; receiveAmount?: number };
+  /** When the user cancelled the passkey prompt for this order's funding
+   * (#1780). While set, no automatic wake (foreground, restart, wallet
+   * summary) may start a FRESH funding for it, so the user is not prompted
+   * again; reconciling an already-started funding is unaffected. Only an
+   * explicit Continue clears it. */
+  fundingDeclinedAt?: number;
   createdAt: number;
   updatedAt: number;
 };
@@ -170,6 +176,26 @@ export const SwapKitV2OrderStore = {
     const row = memory.find((order) => order.orderId === orderId);
     if (!row) return;
     row.status = status;
+    row.updatedAt = Date.now();
+    await persist();
+  },
+
+  /** Record that the user cancelled this order's funding prompt (#1780). */
+  async markFundingDeclined(orderId: string): Promise<void> {
+    await this.hydrate();
+    const row = memory.find((order) => order.orderId === orderId);
+    if (!row) return;
+    row.fundingDeclinedAt = Date.now();
+    row.updatedAt = Date.now();
+    await persist();
+  },
+
+  /** An explicit Continue: the user asked for the funding again. */
+  async clearFundingDeclined(orderId: string): Promise<void> {
+    await this.hydrate();
+    const row = memory.find((order) => order.orderId === orderId);
+    if (!row || row.fundingDeclinedAt === undefined) return;
+    row.fundingDeclinedAt = undefined;
     row.updatedAt = Date.now();
     await persist();
   },

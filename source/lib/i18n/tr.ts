@@ -30,6 +30,7 @@ export const tr = {
     },
     PayLink: {
       notFound: "@%{username} bu bağlantıyla ödeme alamaz.",
+      expired: "Bu ödeme isteğinin süresi doldu.",
       chooseAsset: "Şununla öde",
       from: "Kimden",
       to: "Kime",
@@ -108,6 +109,8 @@ export const tr = {
       passkeyError: "Passkey'iniz açılmadı. Tekrar denemek için yeniden dokunun.",
       restoreBlockedSupportMessage:
         "Merhaba, uygulamanın önceki sürümünden bir passkey ile giriş yapmayı denedim. Bu cüzdan burada geri yüklenemiyor gibi görünüyor. Yardımcı olabilir misiniz?",
+      restoreKeyMismatchSupportMessage:
+        "Merhaba, passkey'imle giriş yapmayı denedim ama uygulama bunun cüzdanıma ait olduğunu doğrulayamadı ve açmadan önce durdu. Yardımcı olabilir misiniz?",
     },
     PasskeyContinueOrSwitchModal: {
       title: "Bir cüzdan seç",
@@ -136,6 +139,8 @@ export const tr = {
       errorSendFailed: "Bir şeyler ters gitti. Lütfen tekrar dene.",
       errorSendPartnerFull:
         "Gönderim ortağı geçici olarak dolu. Bitcoinleriniz güvende. Lütfen daha sonra tekrar deneyin.",
+      lightningAlreadyPaid: "Bu fatura zaten ödendi.",
+      lightningAlreadyPaying: "Bu fatura zaten ödeniyor. Geçmişinde görünüyor.",
       errorLightningLockupUnavailable: "Lightning kullanılamıyor. Hiçbir şey gönderilmedi.",
       errorOnchainTooFreshHours: "Yaklaşık %{hours} saat içinde kullanılabilir.",
       errorOnchainTooFreshMinutes: "Yaklaşık %{minutes} dk içinde kullanılabilir.",
@@ -194,6 +199,20 @@ export const tr = {
       stepDone: "Tamamlandı",
       stepRunning: "Sürüyor…",
       stepWaiting: "Bekliyor",
+      stepFailed: "Başarısız",
+      stepRefunded: "İade edildi",
+      stepStopped: "Durduruldu",
+      reason: {
+        providerRejected: "Takas sağlayıcısı bu takası reddetti.",
+        providerUnreachable: "Takas sağlayıcısına ulaşılamadı.",
+        actionExpired: "Bir adım zamanında tamamlanmadı.",
+        depositMismatch: "Yatırılan tutar takasın beklediğiyle eşleşmedi.",
+        settlementTimeout: "Takas sağlayıcısı zamanında bitirmedi.",
+        transactionRefused: "Bu takasın bir işlemi reddedildi.",
+        refundFailed: "İade tamamlanamadı.",
+        expired: "Bu takas, hiçbir şey gönderilmeden süresi doldu.",
+        unknown: "Bunun için bir neden belirtilmedi. Desteğe yaz, inceleyelim.",
+      },
       autoNote:
         "Bu takas kendiliğinden ilerler. Bir şey yapmana veya uygulamayı açık tutmana gerek yok.",
       statusLoadFailed: "Güncel durum yüklenemedi. Birazdan tekrar dene.",
@@ -472,6 +491,8 @@ export const tr = {
     SepaRecipientModal: {
       headerTitle: "Banka havalesi",
       newRecipient: "Yeni alıcı",
+      savedSyncing: "Kayıtlı alıcılar yükleniyor…",
+      savedOffline: "Adres defterine ulaşılamadı. Yalnızca bu cihazdaki kayıtlı alıcılar.",
       continueLabel: "Devam et",
       tabPersonal: "Bireysel",
       tabCompany: "Şirket",
@@ -502,6 +523,8 @@ export const tr = {
       saveLabel: "Kartı kaydet",
       addFailed: "Bu kart kaydedilemedi. Numarayı ve adı kontrol et.",
       notActive: "Kartlara gönderim hesabında henüz kullanılamıyor.",
+      savedMatch: "Bu isimle %{last4} ile biten bir kartı zaten kaydettin.",
+      useSaved: "Kayıtlı kartı kullan",
       loadFailed: "Kartların yüklenemedi. Birazdan tekrar dene.",
       cardRow: "Kart •••• %{last4}",
       amountTitle: "Karta gönder",
@@ -509,6 +532,8 @@ export const tr = {
       sendCtaLabel: "•••• %{last4} kartına %{currency} %{amount} gönder",
       sendCtaLabelNoAmount: "•••• %{last4} kartına gönder",
       feeHint: "Ücreti karşılamaya yetmiyor. Daha küçük bir tutar dene.",
+      feeHintWithMax:
+        "Ücreti karşılamaya yetmiyor. En fazla %{amount} %{currency} gönderebilirsin.",
       sendFailedHint: "Transfer gerçekleşmedi. Tekrar denemeden önce hareketlerini kontrol et.",
       activityLabel: "Kart transferi",
     },
@@ -603,7 +628,6 @@ export const tr = {
       addFromBalances: "Bakiyelerimden takas et",
       addByBankTransfer: "Banka havalesi",
       addReceive: "Al",
-      addFromWallet: "Başka bir cüzdandan",
       sendToBalances: "Bakiyelerime takas et",
       sendToSomeone: "Birine",
       sendToBank: "Bankaya",
@@ -731,10 +755,6 @@ export const tr = {
       notify_bitcoin: "Bitcoin ödemeleri",
       notify_banking: "Kartlar ve banka",
       settings: "Ayarlar",
-      cryptoWallet: "Kripto cüzdanı",
-      connectWalletHint: "Para eklemek için bir cüzdan bağla",
-      walletFallback: "Cüzdan",
-      walletDisconnect: "Bağlantıyı kes",
       language: "Dil",
       currency: "Para birimi",
       currencySubtitle: "Toplamlar ve çevrilmiş tutarlar bu para biriminde gösterilir.",
@@ -859,6 +879,12 @@ export const tr = {
       request: "İste",
       switchAddressType: "Adres türünü değiştir",
     },
+    ActivitySheet: {
+      searchLabel: "Hareketlerde ara",
+      searchPlaceholder: "Ara",
+      clearSearch: "Aramayı temizle",
+      noMatches: "Eşleşen hareket yok",
+    },
     CountryPicker: {
       searchLabel: "Ülke ara",
       searchPlaceholder: "Ara",
@@ -876,6 +902,8 @@ export const tr = {
       fieldCardNumber: "Banka kartı numarası",
       fieldBank: "Banka",
       fieldNetwork: "Mobil para ağı",
+      sepaBank: "Euro banka hesabı (SEPA)",
+      ukBank: "Birleşik Krallık banka hesabı",
     },
   },
   common: {
@@ -908,10 +936,6 @@ export const tr = {
     },
     status: {
       exchanging: "Çevriliyor… bu bir dakika sürebilir",
-    },
-    fail: {
-      title: "Olmadı,\ntekrar denensin mi?",
-      retry: "Tekrar dene",
     },
     processing: {
       routeTitle: "En iyi takas aranıyor…",

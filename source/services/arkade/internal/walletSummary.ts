@@ -50,6 +50,7 @@ import type { ArkadeDebugBalance, ArkadeRecoveryCsvStatus } from "./types";
 import { isZeroArkadeWalletSummary, truncateForLog, withTimeout } from "./utils";
 import { formatVtxoDebugLine } from "./vtxoFormat";
 import { selectArkadeVtxoRenewalCandidates } from "./vtxoRenewalPolicy";
+import { readArkadeRenewalEligibleVtxos } from "./vtxoRenewalEligibility";
 import { dropUnconfirmedVtxos, type VtxoConfirmingIndexer } from "./vtxoReconciliation";
 import { getCurrentArkadeWalletCacheKey, getOrCreateWallet } from "./walletCache";
 import { readBoardingUtxosShared, resetBoardingUtxoCache } from "./boardingUtxoCache";
@@ -987,7 +988,28 @@ export async function loadArkadeWalletSummary(
       };
     });
 
-  const renewalDue = selectArkadeVtxoRenewalCandidates(Array.isArray(vtxos) ? vtxos : []);
+  // Count only coins the renewal itself would settle (#1977): see
+  // vtxoRenewalEligibility. The extra read runs only when something looks due.
+  const summaryVtxos = Array.isArray(vtxos) ? vtxos : [];
+  let renewalDue = selectArkadeVtxoRenewalCandidates(summaryVtxos);
+  if (renewalDue.count > 0) {
+    const renewalEligible = await readArkadeRenewalEligibleVtxos(
+      wallet as unknown as Parameters<typeof readArkadeRenewalEligibleVtxos>[0],
+      summaryVtxos,
+      (work) =>
+        withTimeout<unknown[]>(
+          "wallet_summary_renewal_spendable",
+          ARKADE_NODE_INFO_TIMEOUT_MS,
+          work,
+        ),
+    );
+    renewalDue = selectArkadeVtxoRenewalCandidates(renewalEligible.vtxos);
+    if (renewalEligible.source === "summary_fallback") {
+      logWalletSummaryStep("renewal_spendable_read_failed", {
+        expected_next: "renewal_tap_rechecks_spendable",
+      });
+    }
+  }
   const out: ArkadeWalletSummary = {
     arkAddress: String(arkAddress || ""),
     boardingAddress: String(boardingAddress || ""),

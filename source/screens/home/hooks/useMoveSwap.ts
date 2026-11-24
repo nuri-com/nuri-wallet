@@ -24,6 +24,7 @@ import {
 import { noteV2MoveBaseline } from "../../../services/swapkit/SwapKitV2MoveAccounting";
 import { noteV2MoveCommitted } from "../../../services/swapkit/SwapKitV2MoveStatus";
 import { spendsArkadeBalance } from "../moveBookkeeping";
+import { moveFailureContext } from "../moveFailureContext";
 
 export type MoveSwapRequest = {
   from: SwapAssetId;
@@ -77,42 +78,34 @@ export function isPriceMovedRefusal(error: unknown): boolean {
 
 export function useMoveSwap(options: {
   onExecuted: (result: MoveSwapExecuted) => void;
-  /** Fires when a swap fails BEFORE any order exists (nothing moved) and the
-   * sheet has already closed for snappiness — the parent re-opens so the user
-   * can retry. Not called once an order is handed off: the pill owns it then. */
-  onPreHandoffFailure?: () => void;
   /** Fires when the accepted price moved before the commit: nothing was
    * created, and fresh prices for the same move are being requested. The
    * sheet restores the move so the user can accept the new price. */
   onRequote?: (request: MoveSwapRequest) => void;
 }) {
-  const { onExecuted, onPreHandoffFailure, onRequote } = options;
+  const { onExecuted, onRequote } = options;
   const [quotes, setQuotes] = useState<SwapQuote[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState<MoveSwapBusy | null>(null);
-  const [failed, setFailed] = useState(false);
   // The pair was priced and nothing runnable came back. Carried on the button,
   // never as an error line.
   const [noRoute, setNoRoute] = useState(false);
   // The actionable version of `noRoute`, when the contract named a bound the
   // user can meet. Null means the generic "no route right now".
   const [noRouteReason, setNoRouteReason] = useState<string | null>(null);
-  // What the last prices were for, so a retry can ask again for the same move
-  // without the sheet having to hand it over a second time.
+  // What the last prices were for, so a moved price can be asked again for
+  // the same move without the sheet having to hand it over a second time.
   const lastRequestRef = useRef<MoveSwapRequest | null>(null);
   const failedQuoteIdRef = useRef<string | null>(null);
 
   const reset = useCallback(() => {
     setQuotes(null);
     setSelectedId(null);
-    setFailed(false);
     setNoRoute(false);
   }, []);
 
   const requestQuotes = useCallback(async (request: MoveSwapRequest) => {
     lastRequestRef.current = request;
-    // `failed` is deliberately left alone: a retry re-prices from the try-again
-    // screen, and that screen must stay up until fresh prices are in.
     setNoRoute(false);
     setNoRouteReason(null);
     setBusy("quoting");
@@ -276,41 +269,32 @@ export function useMoveSwap(options: {
         void requestQuotes(request);
         return;
       }
+      // Kept so the next pricing of this move prefers another route.
       failedQuoteIdRef.current = accepted.id;
-      setFailed(true);
-      // The sheet may already be closed (snappy accept); the parent re-opens it
-      // so this failure is not swallowed. In-sheet `failed` still renders if it
-      // is still mounted — both paths are safe because nothing moved.
-      onPreHandoffFailure?.();
-      void reportErrorToSupport({ error, userMessage: "Move swap failed" }).catch(() => {});
-    }
-  }, [quotes, selectedId, reset, onExecuted, onPreHandoffFailure, onRequote, requestQuotes]);
-
-  // Recovery is a solution, not a message: ask for prices again and put the
-  // user back on a list with an alternative to the one that just failed
-  // preselected. Staying on this screen until they are in — flipping back to
-  // the wait screen mid-recovery reads as a second failure.
-  const retry = useCallback(() => {
-    const request = lastRequestRef.current;
-    if (!request) {
       reset();
-      return;
+      // No failure screen (#2008): nothing moved, and the support chat opens
+      // with a plain report of this attempt, its context in the silent dump.
+      const detail = moveFailureContext(accepted, error);
+      console.warn(`[MoveSwap] pre-handoff failure ${detail}`);
+      void reportErrorToSupport({
+        error,
+        userMessage:
+          "I tried to exchange money between my accounts and it did not start. Nothing was sent.",
+        detail,
+      }).catch(() => {});
     }
-    void requestQuotes(request).finally(() => setFailed(false));
-  }, [requestQuotes, reset]);
+  }, [quotes, selectedId, reset, onExecuted, onRequote, requestQuotes]);
 
   return {
     quotes,
     selectedQuote: quotes?.find((quote) => quote.id === selectedId) ?? null,
     selectedId,
     busy,
-    failed,
     noRoute,
     noRouteReason,
     requestQuotes,
     selectQuote,
     confirm,
-    retry,
     reset,
   };
 }

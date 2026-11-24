@@ -26,6 +26,7 @@ export const en = {
     },
     PayLink: {
       notFound: "@%{username} cannot be paid from this link.",
+      expired: "This payment request expired.",
       chooseAsset: "Pay with",
       from: "From",
       to: "To",
@@ -103,6 +104,8 @@ export const en = {
       passkeyError: "Your passkey didn't open. Tap again to try.",
       restoreBlockedSupportMessage:
         "Hi, I tried to sign in with a passkey from the previous version of the app. It looks like this wallet can't be restored here. Can you help me?",
+      restoreKeyMismatchSupportMessage:
+        "Hi, I tried to sign in with my passkey, but the app could not confirm it belongs to my wallet, so it stopped before opening it. Can you help me?",
     },
     PasskeyContinueOrSwitchModal: {
       title: "Choose a wallet",
@@ -131,6 +134,8 @@ export const en = {
       errorSendFailed: "Something went wrong. Please try again.",
       errorSendPartnerFull:
         "Send partner is temporarily full. Your bitcoin is safe. Please try again later.",
+      lightningAlreadyPaid: "This invoice is already paid.",
+      lightningAlreadyPaying: "This invoice is already being paid. It shows in your history.",
       errorLightningLockupUnavailable: "Lightning unavailable. Nothing was sent.",
       errorOnchainTooFreshHours: "Available in about %{hours}h.",
       errorOnchainTooFreshMinutes: "Available in about %{minutes} min.",
@@ -193,6 +198,20 @@ export const en = {
       stepDone: "Done",
       stepRunning: "Running…",
       stepWaiting: "Waiting",
+      stepFailed: "Failed",
+      stepRefunded: "Refunded",
+      stepStopped: "Stopped",
+      reason: {
+        providerRejected: "The exchange provider refused this swap.",
+        providerUnreachable: "The exchange provider couldn't be reached.",
+        actionExpired: "A step wasn't completed in time.",
+        depositMismatch: "The deposit didn't match what the swap expected.",
+        settlementTimeout: "The exchange provider didn't finish in time.",
+        transactionRefused: "A transaction of this swap was refused.",
+        refundFailed: "The refund couldn't be completed.",
+        expired: "This swap expired before anything was sent.",
+        unknown: "No reason was given for this. Contact support and we'll look into it.",
+      },
       autoNote: "This swap runs by itself — you don't need to do anything or keep the app open.",
       statusLoadFailed: "Couldn't load the latest status. Try again in a moment.",
       contactSupport: "Contact support",
@@ -474,6 +493,8 @@ export const en = {
     SepaRecipientModal: {
       headerTitle: "Bank Transfer",
       newRecipient: "New recipient",
+      savedSyncing: "Loading saved recipients…",
+      savedOffline: "Couldn't reach your address book. Saved recipients from this device only.",
       continueLabel: "Continue",
       tabPersonal: "Personal",
       tabCompany: "Company",
@@ -504,6 +525,8 @@ export const en = {
       saveLabel: "Save card",
       addFailed: "This card could not be saved. Check the number and the name.",
       notActive: "Sending to cards is not available on your account yet.",
+      savedMatch: "You already saved a card ending %{last4} for this name.",
+      useSaved: "Use saved card",
       loadFailed: "Your cards could not be loaded. Try again in a moment.",
       cardRow: "Card \u2022\u2022\u2022\u2022 %{last4}",
       amountTitle: "Send to card",
@@ -511,6 +534,7 @@ export const en = {
       sendCtaLabel: "Send %{currency} %{amount} to \u2022\u2022\u2022\u2022 %{last4}",
       sendCtaLabelNoAmount: "Send to \u2022\u2022\u2022\u2022 %{last4}",
       feeHint: "Not enough to cover the fee. Try a smaller amount.",
+      feeHintWithMax: "Not enough to cover the fee. You can send up to %{amount} %{currency}.",
       sendFailedHint: "The transfer did not go through. Check your activity before trying again.",
       activityLabel: "Card transfer",
     },
@@ -606,7 +630,6 @@ export const en = {
       addFromBalances: "Swap from my balances",
       addByBankTransfer: "Bank transfer",
       addReceive: "Receive",
-      addFromWallet: "From another wallet",
       sendToBalances: "Swap to my balances",
       sendToSomeone: "To someone",
       sendToBank: "To bank",
@@ -733,10 +756,6 @@ export const en = {
       notify_bitcoin: "Bitcoin payments",
       notify_banking: "Cards and bank",
       settings: "Settings",
-      cryptoWallet: "Crypto wallet",
-      connectWalletHint: "Connect one to add funds",
-      walletFallback: "Wallet",
-      walletDisconnect: "Disconnect",
       language: "Language",
       currency: "Currency",
       currencySubtitle: "Totals and converted amounts are shown in this currency.",
@@ -861,6 +880,12 @@ export const en = {
       request: "Request",
       switchAddressType: "Switch address type",
     },
+    ActivitySheet: {
+      searchLabel: "Search activity",
+      searchPlaceholder: "Search",
+      clearSearch: "Clear search",
+      noMatches: "No matching activity",
+    },
     CountryPicker: {
       searchLabel: "Search countries",
       searchPlaceholder: "Search",
@@ -878,6 +903,8 @@ export const en = {
       fieldCardNumber: "Debit card number",
       fieldBank: "Bank",
       fieldNetwork: "Mobile money network",
+      sepaBank: "Euro bank account (SEPA)",
+      ukBank: "UK bank account",
     },
   },
   common: {
@@ -910,10 +937,6 @@ export const en = {
     },
     status: {
       exchanging: "Exchanging… this can take a minute",
-    },
-    fail: {
-      title: "Did not work,\ntry again?",
-      retry: "Try again",
     },
     processing: {
       routeTitle: "Finding the best swap…",

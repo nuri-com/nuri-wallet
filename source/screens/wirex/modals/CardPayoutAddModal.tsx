@@ -2,9 +2,14 @@
 // Add a Visa or Mastercard to send money to. The name comes first and offers
 // saved cards from the address book; a picked one fills the number. The number
 // goes to the server once, which has Wirex tokenize it; only the last four come
-// back. A newly typed card is saved to the address book.
+// back. A newly typed card is saved to the address book. A card that matches
+// one already saved with Wirex (same name and last four) is offered instead,
+// so the same card is not saved and listed twice (#1753).
 import React, { useEffect, useState, useRef } from "react";
 import {
+  Alert,
+  AlertButton,
+  AlertIcon,
   Button,
   ButtonText,
   Header,
@@ -25,7 +30,11 @@ import DsSheetHost from "../../../components/DsSheetHost";
 import { saveCardToOriginBook } from "../../../lib/addressBook/cardContact";
 import type { DestinationSuggestion } from "../../../lib/addressBook/contact";
 import { t } from "../../../lib/i18n";
-import { formatCardNumberInput, isPlausibleCardNumber } from "../../../lib/wirex/cardPayout";
+import {
+  formatCardNumberInput,
+  isPlausibleCardNumber,
+  savedPayoutCardMatches,
+} from "../../../lib/wirex/cardPayout";
 import { getAddressBook } from "../../../services/addressBook/AddressBookService";
 import { EventBus } from "../../../services/events/AppEventBusService";
 import { wirexService, type WirexPayoutCard } from "../../../services/wirex/WirexService";
@@ -40,9 +49,19 @@ type Props = {
   onAdded: (card: WirexPayoutCard) => void;
   /** A card picked in the address book: name and number already filled. */
   prefill?: CardPayoutPrefill | null;
+  /** Cards already saved with Wirex: one matching the typed card is offered instead (#1753). */
+  savedCards?: readonly WirexPayoutCard[];
 };
 
-const CardPayoutAddModal: React.FC<Props> = ({ visible, onClose, onAdded, prefill }) => {
+const NO_SAVED_CARDS: readonly WirexPayoutCard[] = [];
+
+const CardPayoutAddModal: React.FC<Props> = ({
+  visible,
+  onClose,
+  onAdded,
+  prefill,
+  savedCards = NO_SAVED_CARDS,
+}) => {
   const [name, setName] = useState("");
   const [number, setNumber] = useState("");
   const [saving, setSaving] = useState(false);
@@ -67,6 +86,17 @@ const CardPayoutAddModal: React.FC<Props> = ({ visible, onClose, onAdded, prefil
 
   const nameParts = name.trim().split(/\s+/).filter(Boolean);
   const canSave = !saving && isPlausibleCardNumber(number) && nameParts.length >= 2;
+  // The same card saved already (same name and last four): saving it again
+  // makes Wirex list it twice. Offered, never forced: two cards of one person
+  // can end alike, so "Save card" stays.
+  const savedMatch = isPlausibleCardNumber(number)
+    ? (savedPayoutCardMatches(savedCards, name, number)[0] ?? null)
+    : null;
+
+  const pickSavedCard = () => {
+    if (!savedMatch || saving) return;
+    onAdded(savedMatch);
+  };
 
   const pickSaved = ({ contact, destination }: DestinationSuggestion) => {
     if (destination.type !== "card") return;
@@ -154,6 +184,19 @@ const CardPayoutAddModal: React.FC<Props> = ({ visible, onClose, onAdded, prefil
           >
             <TextFieldLabel>{t("screen.CardPayout.numberLabel")}</TextFieldLabel>
           </TextField>
+          {savedMatch ? (
+            <Alert variant="soft" accent="neutral">
+              <AlertIcon name="card" />
+              {t("screen.CardPayout.savedMatch", { last4: savedMatch.last4 })}
+              <AlertButton
+                accessibilityLabel={t("screen.CardPayout.useSaved")}
+                disabled={saving}
+                onPress={pickSavedCard}
+              >
+                {t("screen.CardPayout.useSaved")}
+              </AlertButton>
+            </Alert>
+          ) : null}
           {error ? (
             <Text size="sm" muted>
               {error}

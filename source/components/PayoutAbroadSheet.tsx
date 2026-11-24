@@ -6,6 +6,10 @@
  * that ask for the sender's own identity are not offered. The sheet only
  * collects the destination: pricing, the quote and the payment stay on the
  * send screen that opened it.
+ *
+ * Above the countries it can list the bank payouts the opening screen runs
+ * itself (euro SEPA, UK). Picking one only hands back to that screen, whose
+ * own flow takes the recipient, checks the balance, prices and confirms.
  */
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
@@ -37,6 +41,7 @@ import DsSheetHost from "./DsSheetHost";
 import { flagForIso2 } from "../lib/countryFlags";
 import { groupCount } from "../lib/formatting";
 import { t } from "../lib/i18n";
+import { type BankPayoutRail, bankPayoutRails } from "../lib/remit/bankPayoutRails";
 import {
   buildZapRemitRecipient,
   isZapRemitFormComplete,
@@ -70,6 +75,9 @@ type Props = {
   payWith: "bitcoin" | "USDC" | "EURC";
   onClose: () => void;
   onDone: (destination: ZapRemitDestination) => void;
+  /** Bank rails the opening screen can run right now; unavailable ones are not shown. */
+  bankRails?: { sepa: boolean; uk: boolean };
+  onBankRail?: (rail: BankPayoutRail) => void;
 };
 
 function methodsFor(country: string, payWith: Props["payWith"]): ZapRemitMethod[] | null {
@@ -106,7 +114,18 @@ function inputModeFor(field: ZapRemitField): "tel" | "numeric" | "text" {
   return "text";
 }
 
-export default function PayoutAbroadSheet({ visible, payWith, onClose, onDone }: Props) {
+export default function PayoutAbroadSheet({
+  visible,
+  payWith,
+  onClose,
+  onDone,
+  bankRails,
+  onBankRail,
+}: Props) {
+  const rails =
+    bankRails && onBankRail
+      ? bankPayoutRails({ sepaReady: bankRails.sepa, ukSend: bankRails.uk })
+      : [];
   const [countries, setCountries] = useState<ZapRemitCountry[] | null>(null);
   const [country, setCountry] = useState<ZapRemitCountry | null>(null);
   const [methods, setMethods] = useState<ZapRemitMethod[] | null>(null);
@@ -278,6 +297,29 @@ export default function PayoutAbroadSheet({ visible, payWith, onClose, onDone }:
 
       <Scroll safeAreaBottom={!method || !!picking}>
         <View direction="column" align="stretch" gap="lg" paddingY="md">
+          {/* The bank payouts, first step only, shown even while the countries load. */}
+          {!country && rails.length > 0 ? (
+            <List>
+              {rails.map((rail, index) => (
+                <Fragment key={rail}>
+                  {index > 0 ? <ListSeparator /> : null}
+                  <ListAction
+                    accessibilityLabel={t(`${K}.${rail}Bank`)}
+                    onPress={() => onBankRail?.(rail)}
+                  >
+                    {rail === "uk" ? (
+                      <ListActionLeadingAvatar source={flagForIso2("GB")} />
+                    ) : (
+                      <ListActionLeadingAvatar name="bank" variant="soft" accent="lilac" />
+                    )}
+                    <ListActionText>{t(`${K}.${rail}Bank`)}</ListActionText>
+                    <ListActionTextMuted>{rail === "uk" ? "GBP" : "EUR"}</ListActionTextMuted>
+                    <ListActionTrailIcon name="chevron-right" />
+                  </ListAction>
+                </Fragment>
+              ))}
+            </List>
+          ) : null}
           {failed ? (
             <View direction="column" align="stretch" gap="md" paddingX="lg">
               <Text size="md" muted>

@@ -9,12 +9,11 @@ export const MERCURYO_BUY_URL = "https://buybitcoin.nuri.com/buy";
 // recovery runs here; the app has no v1 client left.
 export const SWAPKIT_V2_MCP_URL = "https://swapkit.nuri.com/v2/mcp";
 
-// ── WalletConnect (Reown) ────────────────────────────────────────────
-// Project id for the pay page's wallet picker (RainbowKit). Public by design:
-// it ships in the web bundle and only identifies the app to the WalletConnect
-// relay; the allowed origins are set on the Reown project. Empty = the pay
-// page shows no connect-wallet option.
-export const WALLETCONNECT_PROJECT_ID = "904c290f5462772351a15b83ad086d88";
+// ── Nuri Connect ────────────────────────────────────────────────────
+// connect.nuri.com owns every ceremony that needs the passkey outside the app
+// (Privy key backup, desktop approvals). The app only sends public data there
+// and verifies the public result.
+export const CONNECT_BASE_URL = "https://connect.nuri.com";
 
 // ── Bitcoin / Mempool ────────────────────────────────────────────────
 export const MEMPOOL_BASE_URL = "https://mempool.space";
@@ -52,9 +51,9 @@ export const basescanTokenUrl = (token: string, account: string) =>
 export const UPDATE_BASE_URL = "https://update.nuri.com";
 
 // ── Public payment link ──────────────────────────────────────────────
-// Where `/pay/@username` is served. On the web the page is shared from the
-// host the app is running on; a native build has no host of its own.
-export const PAY_LINK_ORIGIN = IS_MAINNET ? "https://app.nuri.com" : "https://app-sandbox.nuri.com";
+// Where `/pay/@username` is served: the pay page's own origin (pay-page/), so
+// the wallet connection packages it loads never share storage with a wallet.
+export const PAY_LINK_ORIGIN = IS_MAINNET ? "https://pay.nuri.com" : "https://pay-sandbox.nuri.com";
 
 // Base RPC/chain selection lives in config/network.ts (APP_NETWORK switch).
 

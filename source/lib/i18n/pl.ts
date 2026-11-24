@@ -31,6 +31,7 @@ export const pl = {
     },
     PayLink: {
       notFound: "Nie można zapłacić @%{username} przez ten link.",
+      expired: "Ta prośba o płatność wygasła.",
       chooseAsset: "Zapłać za pomocą",
       from: "Od",
       to: "Do",
@@ -110,6 +111,8 @@ export const pl = {
       passkeyError: "Twój passkey się nie otworzył. Dotknij ponownie, aby spróbować jeszcze raz.",
       restoreBlockedSupportMessage:
         "Cześć, próbowałem zalogować się passkey z poprzedniej wersji aplikacji. Wygląda na to, że tego portfela nie da się tu przywrócić. Możecie mi pomóc?",
+      restoreKeyMismatchSupportMessage:
+        "Cześć, próbowałem zalogować się passkeyem, ale aplikacja nie mogła potwierdzić, że należy do mojego portfela, więc zatrzymała się przed jego otwarciem. Możecie mi pomóc?",
     },
     PasskeyContinueOrSwitchModal: {
       title: "Wybierz portfel",
@@ -138,6 +141,8 @@ export const pl = {
       errorSendFailed: "Coś poszło nie tak. Spróbuj ponownie.",
       errorSendPartnerFull:
         "Partner wysyłający jest chwilowo przeciążony. Twoje bitcoiny są bezpieczne. Spróbuj ponownie później.",
+      lightningAlreadyPaid: "Ta faktura jest już opłacona.",
+      lightningAlreadyPaying: "Ta faktura jest już opłacana. Widzisz ją w swojej historii.",
       errorLightningLockupUnavailable: "Lightning jest niedostępny. Nic nie zostało wysłane.",
       errorOnchainTooFreshHours: "Dostępne za około %{hours} godz.",
       errorOnchainTooFreshMinutes: "Dostępne za około %{minutes} min.",
@@ -198,6 +203,20 @@ export const pl = {
       stepDone: "Gotowe",
       stepRunning: "W toku…",
       stepWaiting: "Oczekuje",
+      stepFailed: "Nieudane",
+      stepRefunded: "Zwrócone",
+      stepStopped: "Zatrzymane",
+      reason: {
+        providerRejected: "Dostawca wymiany odrzucił tę wymianę.",
+        providerUnreachable: "Nie udało się połączyć z dostawcą wymiany.",
+        actionExpired: "Jeden z kroków nie został ukończony na czas.",
+        depositMismatch: "Wpłata nie zgadzała się z tym, czego oczekiwała wymiana.",
+        settlementTimeout: "Dostawca wymiany nie zakończył na czas.",
+        transactionRefused: "Transakcja tej wymiany została odrzucona.",
+        refundFailed: "Nie udało się dokończyć zwrotu.",
+        expired: "Ta wymiana wygasła, zanim cokolwiek wysłano.",
+        unknown: "Nie podano powodu. Skontaktuj się z pomocą, a sprawdzimy to.",
+      },
       autoNote: "Ta wymiana przebiega sama, nie musisz nic robić ani trzymać aplikacji otwartej.",
       statusLoadFailed: "Nie udało się wczytać aktualnego statusu. Spróbuj ponownie za chwilę.",
       contactSupport: "Skontaktuj się z pomocą",
@@ -482,6 +501,8 @@ export const pl = {
     SepaRecipientModal: {
       headerTitle: "Przelew bankowy",
       newRecipient: "Nowy odbiorca",
+      savedSyncing: "Wczytywanie zapisanych odbiorców…",
+      savedOffline: "Brak dostępu do książki adresowej. Tylko odbiorcy zapisani na tym urządzeniu.",
       continueLabel: "Dalej",
       tabPersonal: "Osoba prywatna",
       tabCompany: "Firma",
@@ -512,6 +533,8 @@ export const pl = {
       saveLabel: "Zapisz kartę",
       addFailed: "Nie udało się zapisać tej karty. Sprawdź numer i imię i nazwisko.",
       notActive: "Wysyłanie na karty nie jest jeszcze dostępne na twoim koncie.",
+      savedMatch: "Masz już zapisaną kartę kończącą się na %{last4} na to imię i nazwisko.",
+      useSaved: "Użyj zapisanej karty",
       loadFailed: "Nie udało się wczytać twoich kart. Spróbuj ponownie za chwilę.",
       cardRow: "Karta •••• %{last4}",
       amountTitle: "Wyślij na kartę",
@@ -519,6 +542,7 @@ export const pl = {
       sendCtaLabel: "Wyślij %{currency} %{amount} na •••• %{last4}",
       sendCtaLabelNoAmount: "Wyślij na •••• %{last4}",
       feeHint: "Za mało na pokrycie opłaty. Spróbuj mniejszej kwoty.",
+      feeHintWithMax: "Za mało na pokrycie opłaty. Możesz wysłać do %{amount} %{currency}.",
       sendFailedHint:
         "Przelew nie doszedł do skutku. Sprawdź aktywność, zanim spróbujesz ponownie.",
       activityLabel: "Przelew na kartę",
@@ -616,7 +640,6 @@ export const pl = {
       addFromBalances: "Wymień z moich sald",
       addByBankTransfer: "Przelew bankowy",
       addReceive: "Odbierz",
-      addFromWallet: "Z innego portfela",
       sendToBalances: "Wymień na moje salda",
       sendToSomeone: "Do kogoś",
       sendToBank: "Do banku",
@@ -745,10 +768,6 @@ export const pl = {
       notify_bitcoin: "Płatności w Bitcoinie",
       notify_banking: "Karty i bank",
       settings: "Ustawienia",
-      cryptoWallet: "Portfel krypto",
-      connectWalletHint: "Połącz portfel, aby dodać środki",
-      walletFallback: "Portfel",
-      walletDisconnect: "Rozłącz",
       language: "Język",
       currency: "Waluta",
       currencySubtitle: "Sumy i przeliczone kwoty są pokazywane w tej walucie.",
@@ -873,6 +892,12 @@ export const pl = {
       request: "Poproś",
       switchAddressType: "Zmień typ adresu",
     },
+    ActivitySheet: {
+      searchLabel: "Szukaj w aktywności",
+      searchPlaceholder: "Szukaj",
+      clearSearch: "Wyczyść wyszukiwanie",
+      noMatches: "Brak pasującej aktywności",
+    },
     CountryPicker: {
       searchLabel: "Szukaj krajów",
       searchPlaceholder: "Szukaj",
@@ -890,6 +915,8 @@ export const pl = {
       fieldCardNumber: "Numer karty debetowej",
       fieldBank: "Bank",
       fieldNetwork: "Sieć pieniądza mobilnego",
+      sepaBank: "Konto bankowe w euro (SEPA)",
+      ukBank: "Konto bankowe w Wielkiej Brytanii",
     },
   },
   common: {
@@ -922,10 +949,6 @@ export const pl = {
     },
     status: {
       exchanging: "Wymiana… to może potrwać minutę",
-    },
-    fail: {
-      title: "Nie udało się,\nspróbować ponownie?",
-      retry: "Spróbuj ponownie",
     },
     processing: {
       routeTitle: "Szukamy najlepszej wymiany…",

@@ -32,18 +32,9 @@
       that name." The gateway's answer is never trusted on its own: the
       resolver verifies its signature onchain.
       `frame-ancestors` is set at the nginx layer (meta ignores it) — see
-      docs/server-infrastructure.md. `frame-src` allows the app's own scheme
-      (`nuri:`), which is how the pay page hands a payable link to the native
-      app through a hidden frame (lib/pay/payAppHandoff.ts): without it the
-      frame navigation is refused before the OS sees it. No other scheme is
-      opened, and the wallet never renders third-party frames.
-      WalletConnect (pay page wallet picker, lib/pay/payWallet.web.tsx): relay,
-      RPC, pulse, verify and the wallet-list API. RainbowKit ships its wallet
-      icons as data: URIs. The pay page's token picker shows LI.FI token logos
-      from exactly three public CDNs (static.debank.com,
-      raw.githubusercontent.com, assets.coingecko.com — no attacker-readable
-      access logs); services/pay/PayWalletBalanceService.ts refuses any other
-      host, and img-src is otherwise still closed.
+      docs/server-infrastructure.md. The wallet never renders third-party
+      frames. The public pay page and its wallet picker (WalletConnect) live on
+      their own origin (pay-page/), so none of their hosts are allowed here.
       NOTE: connect-src must be shaken out in Report-Only on the nginx side
       before trusting it — a missing host here silently breaks that flow.
     -->
@@ -56,17 +47,17 @@
         form-action 'self';
         script-src 'self';
         style-src 'self' 'unsafe-inline';
-        img-src 'self' data: blob: https://static.debank.com https://raw.githubusercontent.com https://assets.coingecko.com;
+        img-src 'self' data: blob:;
         font-src 'self' data:;
         manifest-src 'self';
         worker-src 'self' blob:;
-        frame-src 'self' https: nuri:;
+        frame-src 'self' https:;
         connect-src 'self'
           https://nuri.com
           https://swapkit.nuri.com https://banking.nuri.com https://wirex.nuri.com
           https://arkade.nuri.com https://arkade.computer
           https://buybitcoin.nuri.com https://update.nuri.com
-          https://notifications.nuri.com
+          https://notifications.nuri.com https://connect.nuri.com
           https://remit.nuri.com
           https://*.g.alchemy.com
           https://ccip-v3.ens.xyz
@@ -84,10 +75,6 @@
           https://api.coingecko.com https://api.frankfurter.dev
           https://api.kraken.com https://www.bitstamp.net https://api64.ipify.org
           https://mercuryo.io
-          wss://relay.walletconnect.org wss://relay.walletconnect.com
-          https://rpc.walletconnect.org https://pulse.walletconnect.org
-          https://verify.walletconnect.org https://verify.walletconnect.com
-          https://api.web3modal.org
           wss://relay.nuri.com wss://relay.damus.io wss://relay.primal.net wss://nos.lol
           wss://relay.snort.social wss://nostr.mom wss://relay.nostr.net;
       "
@@ -171,17 +158,6 @@
         margin-inline: auto;
       }
 
-      /* The pay page's wallet provider (RainbowKit) wraps the app in a block
-       * <div data-rk>. A block box sizes to its content, so the screen below it
-       * grew past the viewport, the keypad never compacted and the CTA sat
-       * under the bottom edge. Keep it in the flex chain. Its modals portal to
-       * <body>, outside #root, so they are untouched. */
-      #root [data-rk] {
-        display: flex;
-        flex: 1 1 0%;
-        min-height: 0;
-      }
-
       /* Installed PWA (standalone): no browser chrome, so fill the entire screen
        * height. On iOS the small/dynamic viewport units stop ~47px short of the
        * screen and leave a dead canvas strip at the bottom; `vh`/`lvh` span the
@@ -206,15 +182,6 @@
       @media (hover: hover) and (pointer: fine) {
         #root {
           max-width: none;
-        }
-        /* EXCEPT the public pay route, which has no gate: a stranger on a laptop
-         * pays there, and an uncapped column turns the phone layout into a
-         * 1400px card with 460px keypad keys. App.tsx sets this attribute while
-         * PayLinkApp is mounted (lib/web/payLinkFrame.ts). The selector matches
-         * the attribute by name, not by value. */
-        body[data-nuri-pay-link] #root {
-          max-width: 480px;
-          margin-inline: auto;
         }
       }
 
@@ -265,11 +232,11 @@
         outline: none !important;
       }
     </style>
-  <link rel="preload" href="/_expo/static/css/index-b5281e9626ff986c13391ab6b4960c22.css" as="style"><link rel="stylesheet" href="/_expo/static/css/index-b5281e9626ff986c13391ab6b4960c22.css"></head>
+  </head>
 
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
-  <script src="/_expo/static/js/web/index-53180f043fd01d925f560849874ab1f3.js" defer></script>
+  <script src="/_expo/static/js/web/index-5ea47538c46001e9a5c7b37d459f3347.js" defer></script>
 </body>
 </html>

@@ -204,9 +204,10 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
       setTzBound({ stable: stableCode, offer });
     } catch (err) {
       setSendFailed(true);
-      void reportErrorToSupport({ error: err, userMessage: "Tanzania payout order failed" }).catch(
-        () => {},
-      );
+      void reportErrorToSupport({
+        error: err,
+        userMessage: "I tried to start a payout to Tanzania and it did not start.",
+      }).catch(() => {});
     } finally {
       setIsRequesting(false);
     }
@@ -355,7 +356,9 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
       setSendFailed(true);
       void reportErrorToSupport({
         error: err,
-        userMessage: toCard ? "Card top-up transfer failed" : "EUR transfer failed",
+        userMessage: toCard
+          ? "I tried to add money to my card and the transfer did not work."
+          : "I tried to send a transfer and it did not work.",
       }).catch(() => {});
     } finally {
       setIsRequesting(false);

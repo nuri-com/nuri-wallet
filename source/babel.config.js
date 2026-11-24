@@ -7,7 +7,7 @@ module.exports = (api) => {
       [
         "babel-preset-expo",
         {
-          // The wallet pickers (RainbowKit on web, Reown AppKit on native) pull
+          // The pay page's wallet picker (RainbowKit, pay-page/) pulls
           // in zustand/valtio ESM builds that read `import.meta.env`, which
           // neither a classic web script nor Hermes can parse.
           unstable_transformImportMeta: true,

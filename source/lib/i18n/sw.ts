@@ -26,6 +26,7 @@ export const sw = {
     },
     PayLink: {
       notFound: "@%{username} hawezi kulipwa kupitia kiungo hiki.",
+      expired: "Ombi hili la malipo limeisha muda wake.",
       chooseAsset: "Lipa kwa",
       from: "Kutoka",
       to: "Kwa",
@@ -104,6 +105,8 @@ export const sw = {
       passkeyError: "Passkey yako haikufunguka. Gusa tena kujaribu.",
       restoreBlockedSupportMessage:
         "Habari, nilijaribu kuingia kwa passkey kutoka toleo la awali la programu. Inaonekana pochi hii haiwezi kurejeshwa hapa. Unaweza kunisaidia?",
+      restoreKeyMismatchSupportMessage:
+        "Habari, nilijaribu kuingia kwa passkey yangu, lakini programu haikuweza kuthibitisha kuwa ni ya wallet yangu, kwa hiyo ilisimama kabla ya kuifungua. Mnaweza kunisaidia?",
     },
     PasskeyContinueOrSwitchModal: {
       title: "Chagua pochi",
@@ -132,6 +135,8 @@ export const sw = {
       errorSendFailed: "Kuna hitilafu. Tafadhali jaribu tena.",
       errorSendPartnerFull:
         "Mshirika wa kutuma amejaa kwa sasa. Bitcoin zako ziko salama. Tafadhali jaribu tena baadaye.",
+      lightningAlreadyPaid: "Ankara hii tayari imelipwa.",
+      lightningAlreadyPaying: "Ankara hii tayari inalipwa. Inaonekana kwenye historia yako.",
       errorLightningLockupUnavailable: "Lightning haipatikani. Hakuna kilichotumwa.",
       errorOnchainTooFreshHours: "Itapatikana baada ya takriban saa %{hours}.",
       errorOnchainTooFreshMinutes: "Itapatikana baada ya takriban dakika %{minutes}.",
@@ -196,6 +201,20 @@ export const sw = {
       stepDone: "Imekamilika",
       stepRunning: "Inaendelea…",
       stepWaiting: "Inasubiri",
+      stepFailed: "Imeshindwa",
+      stepRefunded: "Imerejeshwa",
+      stepStopped: "Imesimama",
+      reason: {
+        providerRejected: "Mtoa huduma wa kubadilisha amekataa ubadilishaji huu.",
+        providerUnreachable: "Mtoa huduma wa kubadilisha hakupatikana.",
+        actionExpired: "Hatua moja haikukamilika kwa wakati.",
+        depositMismatch: "Amana haikulingana na kile ubadilishaji ulichotarajia.",
+        settlementTimeout: "Mtoa huduma wa kubadilisha hakumaliza kwa wakati.",
+        transactionRefused: "Muamala mmoja wa ubadilishaji huu ulikataliwa.",
+        refundFailed: "Urejeshaji haukuweza kukamilika.",
+        expired: "Ubadilishaji huu uliisha muda kabla chochote hakijatumwa.",
+        unknown: "Hakuna sababu iliyotolewa. Wasiliana na msaada nasi tutaangalia.",
+      },
       autoNote:
         "Ubadilishaji huu unajiendesha wenyewe — huhitaji kufanya chochote wala kuacha programu wazi.",
       statusLoadFailed: "Hali ya sasa haikuweza kupakiwa. Jaribu tena baada ya muda mfupi.",
@@ -478,6 +497,8 @@ export const sw = {
     SepaRecipientModal: {
       headerTitle: "Uhamisho wa Benki",
       newRecipient: "Mpokeaji mpya",
+      savedSyncing: "Inapakia wapokeaji waliohifadhiwa…",
+      savedOffline: "Imeshindwa kufikia kitabu cha anwani. Wapokeaji wa kifaa hiki pekee.",
       continueLabel: "Endelea",
       tabPersonal: "Binafsi",
       tabCompany: "Kampuni",
@@ -508,6 +529,8 @@ export const sw = {
       saveLabel: "Hifadhi kadi",
       addFailed: "Kadi hii haikuweza kuhifadhiwa. Angalia namba na jina.",
       notActive: "Kutuma kwenda kadi bado hakupatikani kwenye akaunti yako.",
+      savedMatch: "Tayari umehifadhi kadi inayoishia %{last4} kwa jina hili.",
+      useSaved: "Tumia kadi iliyohifadhiwa",
       loadFailed: "Kadi zako hazikuweza kupakiwa. Jaribu tena baada ya muda mfupi.",
       cardRow: "Kadi •••• %{last4}",
       amountTitle: "Tuma kwenda kadi",
@@ -515,6 +538,7 @@ export const sw = {
       sendCtaLabel: "Tuma %{currency} %{amount} kwenda •••• %{last4}",
       sendCtaLabelNoAmount: "Tuma kwenda •••• %{last4}",
       feeHint: "Haitoshi kulipia ada. Jaribu kiasi kidogo zaidi.",
+      feeHintWithMax: "Haitoshi kulipa ada. Unaweza kutuma hadi %{amount} %{currency}.",
       sendFailedHint: "Uhamisho haukufanikiwa. Angalia shughuli zako kabla ya kujaribu tena.",
       activityLabel: "Uhamisho wa kadi",
     },
@@ -610,7 +634,6 @@ export const sw = {
       addFromBalances: "Badilisha kutoka salio langu",
       addByBankTransfer: "Uhamisho wa benki",
       addReceive: "Pokea",
-      addFromWallet: "Kutoka pochi nyingine",
       sendToBalances: "Badilisha kwenda salio langu",
       sendToSomeone: "Kwa mtu",
       sendToBank: "Kwenda benki",
@@ -739,10 +762,6 @@ export const sw = {
       notify_bitcoin: "Malipo ya Bitcoin",
       notify_banking: "Kadi na benki",
       settings: "Mipangilio",
-      cryptoWallet: "Pochi ya crypto",
-      connectWalletHint: "Unganisha moja ili kuongeza pesa",
-      walletFallback: "Pochi",
-      walletDisconnect: "Tenganisha",
       language: "Lugha",
       currency: "Sarafu ya kuonyesha",
       currencySubtitle: "Jumla na viasi vilivyobadilishwa vinaonyeshwa kwa sarafu hii.",
@@ -867,6 +886,12 @@ export const sw = {
       request: "Omba",
       switchAddressType: "Badilisha aina ya anwani",
     },
+    ActivitySheet: {
+      searchLabel: "Tafuta shughuli",
+      searchPlaceholder: "Tafuta",
+      clearSearch: "Futa utafutaji",
+      noMatches: "Hakuna shughuli inayolingana",
+    },
     CountryPicker: {
       searchLabel: "Tafuta nchi",
       searchPlaceholder: "Tafuta",
@@ -884,6 +909,8 @@ export const sw = {
       fieldCardNumber: "Namba ya kadi ya benki",
       fieldBank: "Benki",
       fieldNetwork: "Mtandao wa pesa za simu",
+      sepaBank: "Akaunti ya benki ya Euro (SEPA)",
+      ukBank: "Akaunti ya benki ya Uingereza",
     },
   },
   common: {
@@ -916,10 +943,6 @@ export const sw = {
     },
     status: {
       exchanging: "Inabadilisha… hii inaweza kuchukua dakika moja",
-    },
-    fail: {
-      title: "Haikufanikiwa,\njaribu tena?",
-      retry: "Jaribu tena",
     },
     processing: {
       routeTitle: "Inatafuta ubadilishaji bora…",

@@ -29,6 +29,8 @@ import {
   prefetchArkadeIntentsLightningQuote,
 } from "../swapkit/SwapKitArkadeLightningSendService";
 import { asSwapKitV2OrderId } from "../swapkit/SwapKitV2Service";
+import { SwapKitV2OrderStore } from "../swapkit/SwapKitV2OrderStore";
+import { isUserCancelledAuth } from "../../lib/support/isUserCancelledAuth";
 import { executeAndSubmitV2Action } from "../swapkit/SwapKitV2ActionService";
 import { startSwapKitV2Tracking } from "../swapkit/SwapKitV2PendingTracker";
 import { fundArkadeIntentsOutpoint, planArkadeSendChange } from "./ArkadeSendService";
@@ -45,6 +47,7 @@ import {
 import {
   type ArkadeLightningSendRecord,
   getArkadeLightningSendOwnerKey,
+  markArkadeLightningSendDeclined,
   recordArkadeLightningSendFunding,
   saveArkadeLightningSend,
 } from "./internal/lightningSendStore";
@@ -391,6 +394,9 @@ export async function payArkadeLightningInvoice(_params: {
       refundAddress,
     });
     activeOrderId = payment.txId;
+    // A send the user pressed is their explicit retry: an earlier cancelled
+    // prompt for the same invoice (same order) no longer holds it (#1780).
+    await SwapKitV2OrderStore.clearFundingDeclined(payment.txId).catch(() => {});
     const swapId = payment.rfqId;
     fundingAddress = payment.lockupAddress;
     // Exact figure from the route, never the rounded BTC one: the lockup must
@@ -622,7 +628,22 @@ export async function payArkadeLightningInvoice(_params: {
     } catch (error) {
       // A failed evidence report after broadcast is pending, never a failed
       // payment. The journal and persisted funding txid resume without sending.
-      if (!fundingTxid) throw error;
+      if (!fundingTxid) {
+        // The user cancelled the passkey prompt and nothing was sent (#1780).
+        // The order and its send record stay, so a wake still finds it, but
+        // no automatic wake may prompt for it again: the next tracker pass
+        // refuses the funding before any prompt and retires the order once
+        // the server confirms it is unfunded. Continue funds it on purpose.
+        if (isUserCancelledAuth(error)) {
+          await SwapKitV2OrderStore.markFundingDeclined(payment.txId).catch(() => {});
+          // The send record was written before the prompt; mark it as proven
+          // never-sent so it does not later count as "this wallet paid the
+          // invoice" and block the user's own retry. A save on retry replaces
+          // the record and drops the mark.
+          await markArkadeLightningSendDeclined(sendOwnerKey, payment.txId).catch(() => {});
+        }
+        throw error;
+      }
     }
     emitTrace({
       atMs: Date.now(),

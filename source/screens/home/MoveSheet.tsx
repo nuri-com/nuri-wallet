@@ -59,19 +59,24 @@ import {
 } from "@ds";
 import AmountKeypad from "../../components/AmountKeypad";
 import { paymentTimingStart } from "../../lib/paymentTiming";
-import SwapProcessingView, { SwapTryAgainView } from "../../components/SwapProcessingView";
+import SwapProcessingView from "../../components/SwapProcessingView";
 import SwapRouteChoices from "../../components/SwapRouteChoices";
 import { carriedAmountText } from "../../lib/amounts";
 import { swapRouteCardDetail } from "../../lib/formatting";
 import { t } from "../../lib/i18n";
-import { reportErrorToSupport, wasReportedToSupport } from "../../lib/support/reportErrorToSupport";
+import { reportErrorToSupport } from "../../lib/support/reportErrorToSupport";
 import { isUserCancelledAuth } from "../../lib/support/isUserCancelledAuth";
 import { isUnresolvedCommitOutcome } from "../../services/swapkit/SwapKitV2CommitFlow";
 import ChoiceSheet from "../../components/ChoiceSheet";
 import DsSheetHost from "../../components/DsSheetHost";
 import { useFiatAmountInput } from "../../lib/useFiatAmountInput";
 import type { SwapAssetId } from "../../services/swapkit/SwapContract";
-import { moveSourceAmount, moveSpendAmount, moveTransferBounds } from "./moveSpend";
+import {
+  moveSourceAmount,
+  moveSourceCeiling,
+  moveSpendAmount,
+  moveTransferBounds,
+} from "./moveSpend";
 import { moveRailPairOpen, moveRailPickOpen } from "./movePairs";
 import { type MoveSwapExecuted, useMoveSwap } from "./hooks/useMoveSwap";
 import { useMoveSwapBounds } from "./hooks/useMoveSwapBounds";
@@ -146,7 +151,8 @@ export type MoveOutcome =
 type Props = {
   visible: boolean;
   onClose: () => void;
-  /** Re-open this sheet after a pre-commit swap failure that closed it. */
+  /** Re-open this sheet after the snappy close when the move has to be shown
+   * again: a moved price to accept, or a pair with nothing to run. */
   onReopenOnFailure?: () => void;
   rails: SwapRail[];
   /**
@@ -261,14 +267,6 @@ const MoveSheet: React.FC<Props> = ({
   const [keypadHeight, setKeypadHeight] = useState(0);
   // Which side's picker the bottom sheet is choosing for; null = closed.
   const [picking, setPicking] = useState<Side | null>(null);
-  // A transfer runs HERE, not behind a closed sheet: it is money leaving, and a
-  // failure the user never sees is a failure they retry blind. "unresolved" is
-  // the withdrawal whose outcome is unknown after the funds may have moved —
-  // that one is never offered a retry, because a second attempt could pay twice.
-  const [transfer, setTransfer] = useState<"idle" | "failed" | "unresolved">("idle");
-  // The accepted amount of a FAILED transfer, kept because closing the sheet
-  // clears the input. Try again replays this figure, never a cleared 0.
-  const [failedTransferAmount, setFailedTransferAmount] = useState<number | null>(null);
   const { amount, setAmount, handleChangeText, parsedAmount } = useFiatAmountInput();
   const swap = useMoveSwap({
     onExecuted: (result) => {
@@ -278,9 +276,6 @@ const MoveSheet: React.FC<Props> = ({
       onExecuted?.(result);
       onClose();
     },
-    // A pre-commit failure (nothing moved) arrives after the snappy accept has
-    // already closed the sheet — reopen so it is never swallowed.
-    onPreHandoffFailure: onReopenOnFailure,
     // The price moved before the commit: closing cleared the amount, so put the
     // same move back and reopen on its fresh price for the user to accept.
     onRequote: (request) => {
@@ -314,9 +309,6 @@ const MoveSheet: React.FC<Props> = ({
       setAmount("");
       setFocus("from");
       setPicking(null);
-      // A failed/unresolved transfer is deliberately left alone: it resolves
-      // after the snappy close and reopens the sheet to state itself, exactly
-      // as swap.failed survives resetSwap. Starting a new move clears it.
       resetSwap();
     }
   }, [visible, setAmount, resetSwap]);
@@ -337,16 +329,10 @@ const MoveSheet: React.FC<Props> = ({
   const changeAmount = (text: string) => {
     // A payment request's amount is the request's, not the user's to change.
     if (exactReceive !== undefined) return;
-    setTransfer("idle");
-    // Editing the move retires the failed one: its retained amount must not
-    // outlive it and be replayed into a different transfer.
-    setFailedTransferAmount(null);
     resetSwap();
     handleChangeText(text);
   };
   const pickRail = (side: Side, key: string) => {
-    setTransfer("idle");
-    setFailedTransferAmount(null);
     resetSwap();
     if (side === "from") onPickFrom(key);
     else onPickTo(key);
@@ -402,9 +388,17 @@ const MoveSheet: React.FC<Props> = ({
   // dust, and no "1 > 0.995018" refusal of the figure the sheet itself showed.
   const typedSourceAmount =
     focus === "from" ? parsedAmount : (counterValue(parsedAmount, focus) ?? 0);
+  // The most the source can be typed for. arkade -> on-chain carries the
+  // corridor's spread and the lockup fee on top, so it states that figure and
+  // not the balance it spends from (#1709).
+  const sourceCeiling = moveSourceCeiling({
+    available: from?.available,
+    fromKey: from?.key,
+    toKey: to?.key,
+  });
   const sourceAmount =
     focus === "from" && from
-      ? moveSourceAmount({ typed: typedSourceAmount, available: from.available, whole: from.whole })
+      ? moveSourceAmount({ typed: typedSourceAmount, available: sourceCeiling, whole: from.whole })
       : typedSourceAmount;
   const hasAmount = sourceAmount > 0;
   // The Lightning corridor's floor follows the BTC price: re-read on each open.
@@ -494,19 +488,15 @@ const MoveSheet: React.FC<Props> = ({
   }));
 
   // Snappy accept: confirming closes the sheet the same frame, and the transfer
-  // runs detached — the same hand-off a priced swap gets, never a held busy
+  // runs detached, the same hand-off a priced swap gets, never a held busy
   // screen. A transfer is money leaving, so a failure is not swallowed: it
-  // reopens the sheet and states it, the same pre-handoff-failure recovery the
-  // swap path uses. "unhandled" (nothing ran) reopens without an error.
-  const runTransfer = (retryAmount?: number) => {
-    // The amount is captured BEFORE the sheet closes. `visible=false` clears
-    // `amount`, so the re-rendered closure the try-again button calls would
-    // otherwise read `sourceAmount === 0` and retry a zero transfer. Try again
-    // replays the amount the user actually accepted.
-    const amountToSend = retryAmount ?? sourceAmount;
+  // opens the support chat with a plain report of this attempt (#2008), the
+  // same as a failed swap. "unhandled" (nothing ran) reopens without an error.
+  const runTransfer = () => {
+    // The amount is captured BEFORE the sheet closes: `visible=false` clears it.
+    const amountToSend = sourceAmount;
     if (!(amountToSend > 0)) return;
     paymentTimingStart("move", { amount: amountToSend });
-    setTransfer("idle");
     onClose();
     Promise.resolve(onConfirm(amountToSend))
       .then((outcome) => {
@@ -514,28 +504,19 @@ const MoveSheet: React.FC<Props> = ({
       })
       .catch((error: unknown) => {
         // Cancelling the passkey prompt is a deliberate choice, not a failure:
-        // nothing was sent, so return to the amount the user was editing rather
-        // than showing an error screen for their own Cancel.
-        if (isUserCancelledAuth(error)) {
-          setTransfer("idle");
-          return;
-        }
-        const unresolved = isUnresolvedCommitOutcome(error);
-        // Retained so the try-again button has the accepted figure to replay.
-        setFailedTransferAmount(unresolved ? null : amountToSend);
-        setTransfer(unresolved ? "unresolved" : "failed");
-        // Never a raw error to the user: the failure view falls back to its own
-        // human "Did not work, try again?" title. The technical detail goes to
-        // support silently — the app's standard error-to-support pattern. A
-        // caller that already reported this failure with its own, more
-        // specific line is not reported twice.
-        if (!wasReportedToSupport(error)) {
-          void reportErrorToSupport({ error, userMessage: "Move transfer failed" }).catch(() => {});
-        }
-        // An unresolved outcome must not reopen a sheet whose only control is a
-        // try-again: the money may already be committed. The overlay above owns
-        // it and offers nothing to press.
-        if (!unresolved) onReopenOnFailure?.();
+        // nothing was sent and nothing is reported.
+        if (isUserCancelledAuth(error)) return;
+        // Never a raw error to the user: the chat gets a plain report, the
+        // technical detail goes into its silent dump. A caller that already
+        // reported this failure with its own, more specific line (a card
+        // withdrawal, also when it is unconfirmed) is not reported twice. An
+        // unconfirmed outcome is never called failed and never retried here.
+        void reportErrorToSupport({
+          error,
+          userMessage: isUnresolvedCommitOutcome(error)
+            ? "I moved money between my accounts and the app could not confirm it."
+            : "I tried to move money between my accounts and it did not go through.",
+        }).catch(() => {});
       });
   };
 
@@ -597,9 +578,11 @@ const MoveSheet: React.FC<Props> = ({
           ? t(boundBlock.kind === "min" ? "swap.cta.minimum" : "swap.cta.maximum", {
               value: railAmount(boundBlock.value, from.key),
             })
-          : overBalance
-            ? t("screen.SepaAmountConfirmationModal.insufficientHint")
-            : t("screen.MoveSheet.next");
+          : overBalance && from && sourceCeiling != null && sourceCeiling > 0
+            ? t("swap.cta.maximum", { value: railAmount(sourceCeiling, from.key) })
+            : overBalance
+              ? t("screen.SepaAmountConfirmationModal.insufficientHint")
+              : t("screen.MoveSheet.next");
   const ctaDisabled =
     !pairChosen ||
     !hasAmount ||
@@ -611,25 +594,10 @@ const MoveSheet: React.FC<Props> = ({
     swap.noRoute ||
     (quoting && !swap.selectedQuote?.executable);
 
-  // The wait and the failure are the app's own swap screens, so a move looks
-  // like every other swap while it runs. The failure wins over the wait: a
-  // retry re-prices behind this screen and must not flash the wait back up.
-  const overlay =
-    transfer === "failed" || transfer === "unresolved" ? (
-      // An unresolved withdrawal keeps the screen but never the button: the
-      // funds may already have moved, so there is nothing safe to press.
-      <SwapTryAgainView
-        onRetry={() => runTransfer(failedTransferAmount ?? undefined)}
-        retrying={transfer === "unresolved"}
-        {...(transfer === "unresolved"
-          ? { title: t("screen.WirexSendChoice.withdrawUnconfirmed") }
-          : {})}
-      />
-    ) : swap.failed ? (
-      <SwapTryAgainView onRetry={swap.retry} retrying={swap.busy !== null} />
-    ) : swap.busy ? (
-      <SwapProcessingView phase="route" />
-    ) : null;
+  // The wait is the app's own swap screen, so a move looks like every other
+  // swap while it runs. A failure has no screen here: it opens the support
+  // chat with a plain report (#2008).
+  const overlay = swap.busy ? <SwapProcessingView phase="route" /> : null;
 
   // A half is its own CARD, and the whole card is ONE press area: tapping
   // anywhere in it starts expressing the move in that side's currency. Only the
@@ -639,8 +607,8 @@ const MoveSheet: React.FC<Props> = ({
     const rail = side === "from" ? from : to;
     const focused = focus === side;
     const availableAmount =
-      side === "from" && rail?.available != null
-        ? railAmount(rail.available, rail.key).replace(/^\S+\s+/, "")
+      side === "from" && rail && sourceCeiling != null
+        ? railAmount(sourceCeiling, rail.key).replace(/^\S+\s+/, "")
         : undefined;
     // A fixed end is stated, not offered: the same line the pay page shows
     // for its recipient.
@@ -840,7 +808,7 @@ const MoveSheet: React.FC<Props> = ({
                   // THIS frame so the tap feels instant; confirm() runs detached
                   // — the commit and the global move pill own everything after
                   // the handoff, and a pre-commit failure (nothing moved)
-                  // reopens the sheet via onReopenOnFailure.
+                  // opens the support chat with a plain report.
                   void swap.confirm();
                   onClose();
                 }}

@@ -20,6 +20,7 @@
 // asserts these still match, so the copies cannot drift unnoticed. The floor is
 // read live from its dependency-free store, because it moves with the BTC price.
 
+import { maxAmountForSpend } from "../../lib/bitcoin/maxAmountForSpend";
 import { getArkadeLightningLimits } from "../../services/arkade/internal/lightningLimitsStore";
 import { getLightningToBitcoinMinSats } from "../../services/swapkit/LightningToBitcoinLimits";
 import type { SwapAmountBounds } from "../../services/swapkit/SwapAmountBounds";
@@ -80,6 +81,77 @@ export function moveTransferBounds(
 ): SwapAmountBounds | null {
   if (fromKey !== "arkade" || toKey !== "onchain") return null;
   return { min: corridorMinSats, max: lightningMaxSats };
+}
+
+/**
+ * Whether the Move sheet must state the on-chain source net of the miner fee.
+ * Every move out of the MuSig2 on-chain wallet is a PSBT that pays the deposit
+ * (or the boarding output) AND the miner fee on top, whatever the destination:
+ * arkade, the card, a stablecoin. Stating the raw balance as available let Max
+ * (or any amount near it) pass the sheet and fail at the PSBT build with
+ * "insufficient funds for fee" (#1341). The shared builder stays the authority;
+ * this only keeps the sheet from offering an amount it cannot fund.
+ */
+export function moveReservesOnchainFee(fromKey?: string | null, toKey?: string | null): boolean {
+  return fromKey === "onchain" && toKey != null && toKey !== "onchain";
+}
+
+/**
+ * Whether the Move sheet must state the Arkade source less the node's VTXO
+ * floor. Every move out of Arkade is an offchain send (the swap's deposit, or
+ * the corridor's lockup) whose change has to stay at or above that floor, so
+ * the whole balance minus less than the floor cannot go out. Stating the raw
+ * balance let a move pass the sheet and be refused with "Max N available"
+ * after the order was open (#1709). Same figure the send screen states.
+ */
+export function moveReservesArkadeChange(fromKey?: string | null, toKey?: string | null): boolean {
+  return fromKey === "arkade" && toKey != null && toKey !== "arkade";
+}
+
+/**
+ * Read the Ark node's VTXO floor for one opening of a move out of Arkade.
+ * Every opening and route starts from unknown (`null`, which states the raw
+ * balance): a floor read on an earlier opening is not proof of the current one,
+ * and keeping it after a failed read made it a hard cap nothing re-checked.
+ * An unreadable floor stays unknown, and an answer for a closed or changed
+ * opening is dropped. Returns the effect cleanup.
+ */
+export function startMoveArkFloorRead(input: {
+  active: boolean;
+  read: () => Promise<number | null>;
+  set: (floor: number | null) => void;
+}): () => void {
+  input.set(null);
+  if (!input.active) return () => {};
+  let cancelled = false;
+  void input
+    .read()
+    .then((floor) => {
+      if (!cancelled) input.set(floor);
+    })
+    .catch(() => {});
+  return () => {
+    cancelled = true;
+  };
+}
+
+/**
+ * The largest amount the source can be TYPED for, given what it may spend.
+ * arkade -> on-chain spends the corridor's spread plus the lockup fee on top
+ * of the typed figure, so the most that can be typed is below the balance;
+ * every other move spends what was typed (or what its quote states).
+ */
+export function moveSourceCeiling(input: {
+  available: number | null | undefined;
+  fromKey?: string | null;
+  toKey?: string | null;
+}): number | null {
+  const { available, fromKey, toKey } = input;
+  if (available == null) return null;
+  if (fromKey !== "arkade" || toKey !== "onchain") return available;
+  return maxAmountForSpend(available, (sats) =>
+    withIntentsFee(Math.ceil(sats * MOVE_CORRIDOR_SPREAD_MULTIPLIER)),
+  );
 }
 
 /**

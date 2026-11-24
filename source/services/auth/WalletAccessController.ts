@@ -59,6 +59,13 @@ export type WalletAccessResult =
  */
 export const WALLET_ACCESS_TIMEOUT_MS = 30_000;
 
+/**
+ * The passkey recovery that ends as a cancel for the MAX_CANCELLED_RECOVERIES-th
+ * time in a row is treated as a failure and reaches support. On web a closed
+ * sheet and a missing passkey both arrive as NotAllowedError.
+ */
+export const MAX_CANCELLED_RECOVERIES = 3;
+
 export type WalletAccessDeps = {
   unlockWalletKeys: () => Promise<unknown>;
   recoverWalletKeysFromPasskey: () => Promise<WalletKeyRecoveryOutcome>;
@@ -122,6 +129,9 @@ export class WalletAccessController {
   // the duplicate this screen must not produce. The error is kept with it
   // because it is what a support report is about.
   private recoveryRequired: { reason: unknown } | null = null;
+  // Consecutive passkey recoveries that ended as a cancel. Reset by any other
+  // recovery outcome and by every unlock.
+  private cancelledRecoveries = 0;
 
   constructor(deps: Partial<WalletAccessDeps> = {}) {
     this.deps = { ...defaultDeps, ...deps };
@@ -171,6 +181,7 @@ export class WalletAccessController {
       if (read === TIMED_OUT) return this.onTimeout("combined_read");
       if (read) {
         this.recoveryRequired = null;
+        this.cancelledRecoveries = 0;
         this.deps.log("wallet access succeeded", { source, phase: "combined_read" });
         return { status: "unlocked" };
       }
@@ -215,9 +226,28 @@ export class WalletAccessController {
     // which dismisses this screen.
     if (recovery === "recovered") {
       this.recoveryRequired = null;
+      this.cancelledRecoveries = 0;
       this.deps.log("wallet access succeeded", { source, phase: "passkey_recovery" });
       return { status: "unlocked" };
     }
+    if (recovery === "cancelled") {
+      this.cancelledRecoveries += 1;
+    } else {
+      this.cancelledRecoveries = 0;
+    }
+    if (recovery === "cancelled" && this.cancelledRecoveries < MAX_CANCELLED_RECOVERIES) {
+      // The user closed the passkey sheet. That is a retryable no-authorisation
+      // outcome, exactly like a dismissed biometric prompt: no support dump, and
+      // the next tap goes straight back to the passkey instead of repeating the
+      // read that already failed.
+      if (readError !== undefined) this.recoveryRequired = { reason: readError };
+      this.deps.log("wallet access dismissed", { source, phase: "passkey_recovery" });
+      return { status: "cancelled" };
+    }
+    // A cancel that keeps repeating is not taken on trust: a browser answers
+    // NotAllowedError both for a closed sheet and for "no passkey for this
+    // site here", and the second must still reach support.
+    this.cancelledRecoveries = 0;
     this.deps.log("passkey recovery did not restore access", {
       source,
       phase: "passkey_recovery",
@@ -231,8 +261,8 @@ export class WalletAccessController {
         error: readError,
         userMessage:
           recovery === "wrong_wallet"
-            ? "Wallet unlock failed — the passkey belongs to a different wallet"
-            : "Wallet unlock failed — passkey recovery unavailable",
+            ? "I tried to unlock my wallet and the passkey belongs to a different wallet."
+            : "I tried to unlock my wallet and passkey recovery was not available.",
       })
       .catch(() => {});
     return recovery === "wrong_wallet" ? { status: "wrong_wallet" } : { status: "failed" };

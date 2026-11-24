@@ -16,7 +16,12 @@ import { syncInviteContacts } from "../referral/inviteContactSync";
 import { getBitcoinAddress, getEthereumAddress } from "../../lib/secureKeyStorage";
 import { authStateManager } from "../auth/AuthStateService";
 import { EventBus } from "../events/AppEventBusService";
-import { arkadeLnurlRegister, arkadeLnurlSetProfile, arkadeLnurlStatus } from "./ArkadeApiService";
+import {
+  arkadeInfo,
+  arkadeLnurlRegister,
+  arkadeLnurlSetProfile,
+  arkadeLnurlStatus,
+} from "./ArkadeApiService";
 import {
   getArkadeWalletSummarySnapshot,
   getLastGoodArkadeWalletSummarySnapshot,
@@ -115,6 +120,63 @@ function persistVerifiedWalletUsername(status: ArkadeLnurlStatus | null | undefi
   // delayed or absent; losing that cache must NEVER erase the user's identity or
   // make Home degrade to "Welcome there!" again.
   void authStateManager.setWalletUsername(username).catch(() => {});
+}
+
+/**
+ * The username the server holds for this wallet now, adopted when it differs
+ * from the stored one (a server-side rename). The stored name and the cached
+ * receive status are otherwise only written at signup or on a live status read,
+ * so a renamed user would keep showing and sharing the old name. Asks the
+ * public owner lookup (credential + signer key), never a passkey. Returns the
+ * adopted username, or null when nothing changed or the lookup failed.
+ */
+export async function refreshWalletUsernameFromServer(): Promise<string | null> {
+  try {
+    const state = authStateManager.getState();
+    const keys = state.walletPublicKeys;
+    const credId = keys?.walletPasskeyCredIdB64u?.trim() || "";
+    const clientPk33 = keys?.userExternal?.trim() || "";
+    if (!credId || !clientPk33) return null;
+    const info = await arkadeInfo({
+      credIdB64u: credId,
+      credPubkeyB64u: keys?.walletPasskeyCredPubkeyB64u,
+      clientSignerPubkeyHex: clientPk33,
+    });
+    const serverName = normalizeLnurlUsername(info?.username || "");
+    const stored = normalizeLnurlUsername(state.walletUsername || "");
+    const cached = getArkadeLnurlStatusSnapshot() || (await readCachedLnurlStatus());
+    const oldName = normalizeLnurlUsername(cached?.username || "");
+    if (!serverName || (serverName === stored && (!oldName || oldName === serverName))) return null;
+    // A logout or account switch meanwhile must not get this wallet's name.
+    if (authStateManager.getState().walletPublicKeys?.walletPasskeyCredIdB64u !== credId)
+      return null;
+    if (cached && oldName && oldName !== serverName) {
+      const swapName = (value: string | null, from: string, to: string): string | null =>
+        value ? value.split(from).join(to) : value;
+      const renamed: ArkadeLnurlStatus = {
+        ...cached,
+        username: serverName,
+        lightningAddress: swapName(cached.lightningAddress, `${oldName}@`, `${serverName}@`),
+        lnurlpUrl: swapName(cached.lnurlpUrl, `/${oldName}`, `/${serverName}`),
+        callbackUrl: swapName(cached.callbackUrl, `/${oldName}`, `/${serverName}`),
+      };
+      writeCachedLnurlStatus(renamed);
+      emitLnurlStatus(renamed);
+    }
+    if (serverName !== stored) {
+      const saved = await authStateManager.setWalletUsername(serverName, credId);
+      if (!saved) return null;
+    }
+    emitTrace({
+      atMs: Date.now(),
+      op: "lnurl_status",
+      status: "username_renamed",
+      detail: `from=${stored || "n/a"} to=${serverName}`,
+    });
+    return serverName;
+  } catch {
+    return null;
+  }
 }
 
 /**

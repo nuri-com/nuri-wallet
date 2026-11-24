@@ -78,7 +78,6 @@ import {
 } from "../../lib/currency/displayFiat";
 import { useHomeCurrency } from "../../lib/currency/useHomeCurrency";
 import { t } from "../../lib/i18n";
-import { toSatsFromBtcAmount } from "../../lib/amounts";
 import { BASE_CHAIN_ID, BASE_EURC, BASE_USDC } from "../../config/network";
 
 // Every rail is drawn with the mark the money is actually known by, not a
@@ -109,6 +108,8 @@ import {
   boardOnchainToArkade,
   getOnchainToArkadeTransferableSats,
 } from "../../services/bitcoin/BtcRailTransferService";
+import { getArkadeArkSendMinimumSats } from "../../services/arkade/ArkadeSendService";
+import { arkadeSendableSats } from "../../services/arkade/internal/sendMinimums";
 import { sendArkadeToBitcoinViaLightning } from "../../services/swapkit/SwapKitV2ArkadeToBtcService";
 import { hydrateMusig2Address } from "../../services/bitcoin/BitcoinBootstrapService";
 import { EventBus } from "../../services/events/AppEventBusService";
@@ -189,6 +190,11 @@ import { detailsSheetCardId } from "../../lib/wirex/cardState";
 import MoveSheet, { type MoveOutcome } from "./MoveSheet";
 import { cardCreditForMove, cardSettleWalletRail, cardSwapTargetFor } from "./moveBookkeeping";
 import { moveDestinationsFor as moveDestinationsForKey, moveSourcePick } from "./movePairs";
+import {
+  moveReservesArkadeChange,
+  moveReservesOnchainFee,
+  startMoveArkFloorRead,
+} from "./moveSpend";
 import { stableAmountText } from "../../lib/amounts";
 import {
   DIRECT_SWAP_SETTLED_EVENT,
@@ -207,15 +213,13 @@ import {
   type MoneyRail,
 } from "../../services/money/MoneyInFlightStore";
 import { inFlightAsWalletTransfers, inFlightRowsFor } from "../../services/money/inFlightRows";
-import WalletTopUp from "./WalletTopUp";
-import type { PayWalletSettle } from "../../services/pay/PayWalletSwapService";
 import {
   clearPendingHomeRail,
   HOME_OPEN_RAIL_EVENT,
   type RailKey,
   takePendingHomeRail,
 } from "./rails";
-import { homeCarouselEligibleKey, ungroupedCount } from "./homeCarousel";
+import { homeCarouselEligibleKey, sortByValueDescending, ungroupedCount } from "./homeCarousel";
 import { applyVerifiedHomeHandle } from "./homeIdentity";
 import SettingsScreen from "../settings/SettingsScreen";
 import AddressBookScreen from "../addressBook/AddressBookScreen";
@@ -256,6 +260,7 @@ import {
   takeEarlySettlement,
   takeOptimisticMove,
 } from "../../lib/balance/pendingOptimisticMoves";
+import { setPaymentJourneySource } from "../../lib/pay/paymentJourney";
 
 type Rail = {
   key: RailKey;
@@ -547,6 +552,12 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   // as long as one of its screens is open; the balances a Send started from
   // (its card) are preferred when they can pay.
   const [recipientSheetOpen, setRecipientSheetOpen] = useState(false);
+  // Text the scanner's Paste read but could not route (a Nuri username): the
+  // recipient field opens with it once, so one Paste is enough (#1705).
+  const [recipientPrefill, setRecipientPrefill] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!recipientSheetOpen) setRecipientPrefill(undefined);
+  }, [recipientSheetOpen]);
   const [scanFromSend, setScanFromSend] = useState(false);
   const [send, setSend] = useState<{ recipient: SendRecipient; balance: SendBalance } | null>(null);
   const sendStartRef = useRef<readonly SendBalance[]>([]);
@@ -559,31 +570,17 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   const [swapTo, setSwapTo] = useState<RailKey | null>(null);
   // Add money fixes the card's end as the destination, Send as the source.
   const [moveLock, setMoveLock] = useState<"to" | null>(null);
-  // The two buttons: which card's Add money or Send list is open, which list
-  // waits for a card to be picked (the total has none), and the user's own pay
-  // page shown for "From another wallet".
+  // The two buttons: which card's Add money or Send list is open, and which list
+  // waits for a card to be picked (the total has none).
   type HomeCard = "onchain" | "wallet" | "visa";
   const [cardSheet, setCardSheet] = useState<{ kind: "add" | "send"; card: HomeCard } | null>(null);
   const [cardPickFor, setCardPickFor] = useState<"add" | "send" | null>(null);
-  // `id`: each request starts a fresh flow, even while the last one is still
-  // waiting out a closed picker.
-  const [topUp, setTopUp] = useState<{
-    id: number;
-    settle: PayWalletSettle;
-    payoutAddress: string;
-    rail: Exclude<RailKey, "iban">;
-    label: string;
-    formatReceive: (amount: string) => string;
-  } | null>(null);
-  // Closes only the flow that asks: a top-up still paying after its sheet
-  // went must not close one started after it.
-  const closeTopUp = useCallback(
-    (id: number) => setTopUp((current) => (current?.id === id ? null : current)),
-    [],
-  );
   const [onchainToArkadeAvailableSats, setOnchainToArkadeAvailableSats] = useState<number | null>(
     null,
   );
+  // The Ark node's VTXO floor, read while a move out of Arkade is open: the
+  // change of that move's offchain send may not fall under it (#1709).
+  const [moveArkMinSats, setMoveArkMinSats] = useState<number | null>(null);
   // Which bitcoin wallet pays for a top-up. Named explicitly because the
   // service treats "unspecified" as arkade.
   // Which currency a bitcoin top-up settles into. The card holds both, and the
@@ -803,8 +800,10 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     0,
     Math.trunc(bitcoinSnapshot.bitcoinBalance.detail.onchain.spendable ?? onchainSats),
   );
+  // Any move out of the on-chain wallet pays the miner fee on top (#1341), so
+  // its source states the balance net of that fee, whatever the destination.
   useEffect(() => {
-    if (!swapVisible || swapFrom !== "onchain" || swapTo !== "arkade") {
+    if (!swapVisible || !moveReservesOnchainFee(swapFrom, swapTo)) {
       setOnchainToArkadeAvailableSats(null);
       return;
     }
@@ -817,6 +816,15 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       cancelled = true;
     };
   }, [swapVisible, swapFrom, swapTo, onchainSpendableSats]);
+  useEffect(
+    () =>
+      startMoveArkFloorRead({
+        active: swapVisible && moveReservesArkadeChange(swapFrom, swapTo),
+        read: getArkadeArkSendMinimumSats,
+        set: setMoveArkMinSats,
+      }),
+    [swapVisible, swapFrom, swapTo],
+  );
   const walletEur = walletBalance ?? 0;
   // The dollar rail's figure comes from the same headless driver every other
   // balance does — owning it in this screen meant only this screen could move it,
@@ -832,6 +840,18 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   useEffect(() => {
     scanSessionRef.current += 1;
   }, [scanVisible]);
+  // Scan, recipient step and every amount screen are one payment: while any is
+  // open, App holds a renewal-only lock screen back (#1978).
+  const paymentScreenOpen =
+    scanVisible ||
+    recipientSheetOpen ||
+    btcSendSource !== null ||
+    swapVisible ||
+    walletSend.isSendToWalletVisible;
+  useEffect(() => {
+    setPaymentJourneySource("home_send", paymentScreenOpen);
+  }, [paymentScreenOpen]);
+  useEffect(() => () => setPaymentJourneySource("home_send", false), []);
   const addressBookOpenRef = useRef(addressBookOpen);
   addressBookOpenRef.current = addressBookOpen;
 
@@ -1091,6 +1111,16 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     arkade: arkadeSats,
     onchain: onchainActive ? onchainSats : 0,
   };
+  // The same balances largest first, in the display currency (#1728): the
+  // pickers list them so, and with no card to start from a send opens on the
+  // largest that can pay. A balance with no rate yet keeps its place at the end.
+  const sendHome: Record<SendBalance, number | null> = {
+    wallet: toHome(sendHeld.wallet, "EUR"),
+    dollar: toHome(sendHeld.dollar, "USD"),
+    arkade: sendHeld.arkade === 0 ? 0 : satsToHome(sendHeld.arkade),
+    onchain: sendHeld.onchain === 0 ? 0 : satsToHome(sendHeld.onchain),
+  };
+  const sendBalancesByValue = sortByValueDescending(sendBalances, (balance) => sendHome[balance]);
   const sendBalanceLook: Record<
     SendBalance,
     { label: string; image: ImageSourcePropType; held: string }
@@ -1118,7 +1148,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
   };
   // Only the balances that can pay this recipient; the rest are not offered.
   const sendBalanceOptions = (recipient: SendRecipient): SendBalanceOption[] =>
-    sendBalances
+    sendBalancesByValue
       .filter((balance) => recipientRoute(balance, recipient) !== null)
       .map((balance) => ({
         key: balance,
@@ -1240,7 +1270,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     const recipient = nameSendRecipient(input);
     const balance = defaultSendBalance({
       recipient,
-      order: sendBalances,
+      order: sendBalancesByValue,
       held: sendHeld,
       started,
     });
@@ -1394,42 +1424,56 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     if (openRail === "onchain") {
       // The two bitcoin rows state their own balances only: the one history
       // below lists both rails together, so a row of its own is not a way in.
-      return [
-        {
-          key: "onchain",
-          label: t("screen.HomeScreen.rowOnchain"),
-          image: BTC_LOGO,
-          figure: listSatsStr(onchainSats),
-        },
-        {
-          key: "arkade",
-          label: t("screen.HomeScreen.rowLightning"),
-          image: LIGHTNING_LOGO,
-          figure: listSatsStr(arkadeSats),
-        },
-      ];
+      // Largest first (#1728); both are sats, so they compare as they are.
+      const bySats: Record<string, number> = { onchain: onchainSats, arkade: arkadeSats };
+      return sortByValueDescending<WealthBalanceRow>(
+        [
+          {
+            key: "onchain",
+            label: t("screen.HomeScreen.rowOnchain"),
+            image: BTC_LOGO,
+            figure: listSatsStr(onchainSats),
+          },
+          {
+            key: "arkade",
+            label: t("screen.HomeScreen.rowLightning"),
+            image: LIGHTNING_LOGO,
+            figure: listSatsStr(arkadeSats),
+          },
+        ],
+        (row) => bySats[row.key],
+      );
     }
     if (openRail === "wallet") {
-      return [
-        {
-          key: "wallet",
-          label: t("screen.HomeScreen.railEuro"),
-          image: EUR_FLAG,
-          figure: heldList(walletEur, "EUR"),
-          onPress: () => setHistoryRail("wallet"),
-        },
-        {
-          key: "dollar",
-          label: t("screen.HomeScreen.railDollar"),
-          image: USD_FLAG,
-          figure: heldList(usdcBalance ?? 0, "USD"),
-          onPress: () => setHistoryRail("dollar"),
-        },
-      ];
+      // Euro and dollar compare in the display currency; without a rate they
+      // keep their order (#1728).
+      const byHome: Record<string, number | null> = {
+        wallet: toHome(walletEur, "EUR"),
+        dollar: toHome(usdcBalance ?? 0, "USD"),
+      };
+      return sortByValueDescending<WealthBalanceRow>(
+        [
+          {
+            key: "wallet",
+            label: t("screen.HomeScreen.railEuro"),
+            image: EUR_FLAG,
+            figure: heldList(walletEur, "EUR"),
+            onPress: () => setHistoryRail("wallet"),
+          },
+          {
+            key: "dollar",
+            label: t("screen.HomeScreen.railDollar"),
+            image: USD_FLAG,
+            figure: heldList(usdcBalance ?? 0, "USD"),
+            onPress: () => setHistoryRail("dollar"),
+          },
+        ],
+        (row) => byHome[row.key],
+      );
     }
     // Visa & Banking states its balance on the card itself.
     return [];
-  }, [openRail, onchainSats, arkadeSats, walletEur, usdcBalance, listSatsStr, heldList]);
+  }, [openRail, onchainSats, arkadeSats, walletEur, usdcBalance, listSatsStr, heldList, toHome]);
 
   // Money on the card in the currency it does not settle in. It cannot be
   // spent through the card's one currency, so it is offered back as found
@@ -1480,7 +1524,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     const held = byFiat ? (byFiat[home] ?? 0) : null;
     const heldSats = held === null ? null : fiatToSats(held, home);
     return rails.flatMap((rail): Rail[] => {
-      if (rail.key === "onchain" && swapFrom === "onchain" && swapTo === "arkade") {
+      if (rail.key === "onchain" && moveReservesOnchainFee(swapFrom, swapTo)) {
         const available = onchainToArkadeAvailableSats;
         return [
           {
@@ -1488,6 +1532,23 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
             available,
             amount: available === null ? UNKNOWN_FIGURE : satsStr(available),
             converted: available === null ? UNKNOWN_FIGURE : homeStr(satsToHome(available)),
+          },
+        ];
+      }
+      if (
+        rail.key === "arkade" &&
+        moveReservesArkadeChange(swapFrom, swapTo) &&
+        moveArkMinSats !== null &&
+        rail.available != null
+      ) {
+        // Unknown floor: the raw balance, and the send re-reads it and refuses.
+        const available = arkadeSendableSats(rail.available, moveArkMinSats) ?? rail.available;
+        return [
+          {
+            ...rail,
+            available,
+            amount: satsStr(available),
+            converted: homeStr(satsToHome(available)),
           },
         ];
       }
@@ -1516,6 +1577,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
     swapFrom,
     swapTo,
     onchainToArkadeAvailableSats,
+    moveArkMinSats,
     cardActive,
     wirex.balancesByFiat,
     satsStr,
@@ -1751,7 +1813,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           setCardPickFor(null);
           setRecipientSheetOpen(false);
           setSend(null);
-          setTopUp(null);
           setBtcSendSource(null);
           setBtcSendPrefill(undefined);
           setBtcSendPayout(undefined);
@@ -2162,12 +2223,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           accent: "lilac" as const,
           label: t("screen.HomeScreen.addReceive"),
         },
-    {
-      key: "wallet",
-      icon: "wallet" as const,
-      accent: "lilac" as const,
-      label: t("screen.HomeScreen.addFromWallet"),
-    },
     ...(card === "onchain"
       ? [
           {
@@ -2192,58 +2247,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
       }
       case "receive":
         return handOff(() => setReceiveRail(card === "onchain" ? "arkade" : settleWallet));
-      case "wallet": {
-        // Any token the other wallet holds is swapped into what the balance
-        // takes and settles at its own address: the boarding address for
-        // Bitcoin, the EVM wallet for Cash, the deposit address for the card.
-        const stable = home === "USD" ? "USDC_BASE" : "EURC_BASE";
-        const payoutAddress = (
-          card === "onchain"
-            ? addressSnapshot.currentAddress
-            : card === "visa"
-              ? wirex.depositAddress
-              : evmAddress
-        )?.trim();
-        if (!payoutAddress) {
-          // The card has an address but it failed the local check (#1899): the
-          // tap must not just die, so it goes to support like any payment failure.
-          if (card === "visa" && wirex.smartAccountAddress) {
-            void reportErrorToSupport({
-              error: new Error("wirex_deposit_address_unverified"),
-              userMessage: "Card top-up is unavailable",
-            }).catch(() => {});
-          }
-          return;
-        }
-        const settle: PayWalletSettle = card === "onchain" ? "BTC" : stable;
-        // Named and written the way the home names and writes that balance.
-        const label = t(
-          card === "onchain"
-            ? "screen.HomeScreen.railBitcoin"
-            : card === "visa"
-              ? "screen.HomeScreen.railVisa"
-              : home === "USD"
-                ? "screen.HomeScreen.railDollar"
-                : "screen.HomeScreen.railEuro",
-        );
-        const formatReceive = (amount: string) =>
-          card === "onchain"
-            ? satsGlyph(toSatsFromBtcAmount(amount))
-            : heldGlyph(Number(amount), home);
-        // The balance that shows it as incoming: the boarding address is
-        // Lightning's, the card takes it in the pocket of its currency.
-        const rail: Exclude<RailKey, "iban"> =
-          card === "onchain"
-            ? "arkade"
-            : card === "visa"
-              ? home === "USD"
-                ? "visaUsd"
-                : "visa"
-              : settleWallet;
-        return handOff(() =>
-          setTopUp({ id: Date.now(), settle, payoutAddress, rail, label, formatReceive }),
-        );
-      }
       case "bank":
         return handOff(openBankDetails);
       case "buy":
@@ -2319,7 +2322,9 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         // unresolved withdrawal is the one a person cannot settle alone.
         void reportErrorToSupport({
           error,
-          userMessage: unresolved ? "Card withdrawal is unconfirmed" : "Card withdrawal failed",
+          userMessage: unresolved
+            ? "I withdrew money from my card and the app could not confirm it yet."
+            : "I tried to withdraw money from my card and it did not go through.",
         }).catch(() => {});
         if (unresolved) throw Object.assign(error, { unresolved: true });
         throw error;
@@ -2589,22 +2594,24 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                 />
               ) : (
                 <List>
-                  {overviewGroups.map((group, index) => (
-                    <React.Fragment key={group.key}>
-                      {index > 0 ? <ListSeparator /> : null}
-                      <ListAction
-                        accessibilityLabel={`${overviewLabels[group.key]}, ${overviewFigure(group.amountHome, home)}`}
-                        onPress={() => selectOverviewRail(group.rail)}
-                      >
-                        <ListActionLeadingAvatar source={overviewImages[group.key]} />
-                        <ListActionText>{overviewLabels[group.key]}</ListActionText>
-                        <ListActionTextMuted>
-                          {overviewFigure(group.amountHome, home)}
-                        </ListActionTextMuted>
-                        <ListActionTrailIcon name="chevron-right" />
-                      </ListAction>
-                    </React.Fragment>
-                  ))}
+                  {sortByValueDescending(overviewGroups, (group) => group.amountHome).map(
+                    (group, index) => (
+                      <React.Fragment key={group.key}>
+                        {index > 0 ? <ListSeparator /> : null}
+                        <ListAction
+                          accessibilityLabel={`${overviewLabels[group.key]}, ${overviewFigure(group.amountHome, home)}`}
+                          onPress={() => selectOverviewRail(group.rail)}
+                        >
+                          <ListActionLeadingAvatar source={overviewImages[group.key]} />
+                          <ListActionText>{overviewLabels[group.key]}</ListActionText>
+                          <ListActionTextMuted>
+                            {overviewFigure(group.amountHome, home)}
+                          </ListActionTextMuted>
+                          <ListActionTrailIcon name="chevron-right" />
+                        </ListAction>
+                      </React.Fragment>
+                    ),
+                  )}
                 </List>
               )}
             </View>
@@ -2742,7 +2749,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           sendSwap
             ? [
                 // The balances that can pay this recipient, and the recipient.
-                ...moveRails
+                ...sortByValueDescending(moveRails, (rail) => rail.homeValue)
                   .filter((rail) =>
                     sendBalanceOptions(sendSwap.recipient).some(
                       (option) => option.key === rail.key,
@@ -2778,7 +2785,9 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
                   settleKind: "external" as const,
                 },
               ]
-            : moveRails.map(toMoveRail)
+            : // The pickers list balances largest first (#1728); order only, the
+              // pair the sheet opens on is still set by whoever opened it.
+              sortByValueDescending(moveRails, (rail) => rail.homeValue).map(toMoveRail)
         }
         destinationsFor={(key: string) =>
           sendSwap ? [SEND_RECIPIENT_RAIL] : moveDestinationsForKey(key, home)
@@ -2918,6 +2927,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         onClose={cardPayout.closeAdd}
         onAdded={cardPayout.added}
         prefill={cardPayout.prefill}
+        savedCards={cardPayout.savedCards}
       />
       <CardPayoutAmountModal
         visible={cardPayout.card !== null}
@@ -3176,12 +3186,18 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         ]}
         title={t("screen.HomeScreen.scanTitle")}
         pasteLabel={t("screen.HomeScreen.scanPasteLabel")}
-        // Opened from the recipient step: no code in hand goes back to it.
+        // Opened from the recipient step: no code in hand goes back to it,
+        // with whatever the Paste read that the scanner could not route.
         onManualEntry={
           scanFromSend
-            ? () => {
+            ? (prefill) => {
                 closeScanner();
-                handOff(() => setRecipientSheetOpen(true));
+                // Set with the open itself: a hand-off cancelled by a lock or
+                // reset leaves no stale text for the next recipient step.
+                handOff(() => {
+                  setRecipientPrefill(prefill);
+                  setRecipientSheetOpen(true);
+                });
               }
             : undefined
         }
@@ -3189,6 +3205,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
 
       <SendRecipientSheet
         visible={recipientSheetOpen}
+        initialEntry={recipientPrefill}
         onClose={() => setRecipientSheetOpen(false)}
         // The amount screen opens over the recipient step, which then closes
         // underneath it: the home never shows in between.
@@ -3208,6 +3225,19 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           sendStartRef.current = [];
           openLockedMove(from, isBitcoinBalance(from) ? "wallet" : "arkade", null);
         }}
+        // The Visa & Banking transfers, with the same gates as its own Send
+        // sheet; picking one runs that flow, which asks for the recipient,
+        // prices and confirms (#1843).
+        bankRails={{
+          sepa: !wirexRailsNeedActivation && wirexBankReady,
+          uk: !wirexRailsNeedActivation && wirex.ukSend === true,
+        }}
+        onBankRail={(rail) => {
+          setRecipientSheetOpen(false);
+          sendStartRef.current = [];
+          if (rail === "uk") return void ukPayout.start();
+          handOff(wirexSend.startSepa);
+        }}
       />
 
       <LogoutConfirmSheet
@@ -3222,7 +3252,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         visible={cardPickFor !== null}
         onClose={() => setCardPickFor(null)}
         title={t(cardPickFor === "send" ? "actions.send" : "screen.HomeScreen.addMoney")}
-        items={overviewGroups.map((group) => ({
+        items={sortByValueDescending(overviewGroups, (group) => group.amountHome).map((group) => ({
           key: group.rail,
           image: overviewImages[group.key],
           label: overviewLabels[group.key],
@@ -3295,18 +3325,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           else onSend(key);
         }}
       />
-
-      {topUp ? (
-        <WalletTopUp
-          key={topUp.id}
-          onClose={() => closeTopUp(topUp.id)}
-          settle={topUp.settle}
-          payoutAddress={topUp.payoutAddress}
-          rail={topUp.rail}
-          label={topUp.label}
-          formatReceive={topUp.formatReceive}
-        />
-      ) : null}
 
       <BitcoinSendScreen
         visible={btcSendSource !== null}
@@ -3441,7 +3459,6 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         initialTab={reveal.initialTab}
         lockTab
         loading={reveal.revealing}
-        error={reveal.error}
         cardNumber={reveal.details?.cardNumber ?? null}
         holderName={wirex.holderName}
         expiry={reveal.details?.expiry ?? null}

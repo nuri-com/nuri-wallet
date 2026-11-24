@@ -121,6 +121,7 @@ const WirexCardTransactionsModal: React.FC<Props> = ({
         }}
         exportDisabled={exportingCsv || items.length === 0}
         error={error}
+        searchable
       />
       <SwapStatusDetailSheet
         visible={detailOrderId != null}

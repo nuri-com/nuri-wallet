@@ -74,6 +74,7 @@ import { clearPrefetchedArkadeIntentsLightningQuote } from "../../../services/sw
 import { reportErrorToSupport } from "../../../lib/support/reportErrorToSupport";
 import { isUserCancelledAuth } from "../../../lib/support/isUserCancelledAuth";
 import { isArkadeMaxSendAmountError } from "../../../services/arkade/internal/maxSendAmount";
+import { isLightningPaymentAlreadyStartedError } from "../../../services/swapkit/SwapKitArkadeLightningSendService";
 import { isArkadeVtxoTooFreshError } from "../../../services/arkade/internal/settlementExpiryGap";
 import { getArkadeWalletSummary } from "../../../services/arkade/ArkadeWalletService";
 import {
@@ -87,13 +88,14 @@ import {
   isBelowVtxoMinimum,
 } from "../../../services/arkade/internal/sendMinimums";
 import { t } from "../../../lib/i18n";
+import { maxAmountForSpend } from "../../../lib/bitcoin/maxAmountForSpend";
+import { sendSpendSats } from "../../../lib/send/sendSpend";
 import { useCurrencyToggle, useKeypadEntry } from "../../../lib/useCurrencyToggle";
 import { useLiveBtcPrice } from "../../../lib/bitcoin/useLiveBtcPrice";
 import { satsFromAmountEntry } from "../../../lib/bitcoin/convert";
 import { sanitizeDigits, sanitizeFiatDigits } from "../../../lib/sanitizeDigits";
 import { useHomeCurrency } from "../../../lib/currency/useHomeCurrency";
 import { decodeBolt11Facts, isBolt11Invoice } from "../../../lib/bitcoin/lightning";
-import { LIGHTNING_TO_BITCOIN_SPREAD_MULTIPLIER } from "../../../services/swapkit/LightningToBitcoinLimits";
 import { useLightningToBitcoinMinSats } from "../../home/hooks/useLightningToBitcoinMinSats";
 import {
   checkRemitInvoice,
@@ -859,14 +861,6 @@ export default function BitcoinSendScreen({
   // a given amount can actually do is decided from the coins below.
   const arkadeChangeReserveSats =
     effectiveSendSource !== "onchain" && arkMinSats !== null ? arkMinSats : 0;
-  const availableSatsDisplay = useMemo(() => {
-    if (maxSpendableSats === null) return null;
-    const sendable =
-      arkadeChangeReserveSats > 0 && !isRecipientBitcoinAddress
-        ? sendableFromArkadeBalance(maxSpendableSats, arkadeChangeReserveSats)
-        : maxSpendableSats;
-    return sendable === null ? null : Math.max(0, Math.floor(sendable));
-  }, [maxSpendableSats, arkadeChangeReserveSats, isRecipientBitcoinAddress]);
   // Current sats — derived from active input mode
   const currentSats = useMemo(() => {
     return satsFromAmountEntry(isSatsMode, satsDigits, fiatDigits, fiatPerBtc);
@@ -920,28 +914,37 @@ export default function BitcoinSendScreen({
   // gets is the entered figure, the provider's spread rides on top, and the
   // Intents lockup adds its fee again. Without this, Max passed the check and
   // then failed after confirmation.
-  const spendSats = useMemo(() => {
-    // A bank swap spends exactly the accepted option's sats, no Lightning reserve.
-    if (isSwapPayout) return currentSats;
-    if (isRecipientBolt11 || isRecipientLnurl || isRecipientRemitPhone) {
-      return maxFundAmountSats(currentSats);
-    }
-    if (isRecipientBitcoinAddress && sendsOverCorridor) {
-      // The provider's spread is not known until it quotes, so reserve the
-      // observed ~2.2% band. Over-reserving refuses a send the corridor might
-      // have taken; under-reserving accepts one it cannot.
-      return maxFundAmountSats(Math.ceil(currentSats * LIGHTNING_TO_BITCOIN_SPREAD_MULTIPLIER));
-    }
-    return currentSats;
-  }, [
-    currentSats,
-    isSwapPayout,
-    isRecipientBolt11,
-    isRecipientLnurl,
-    isRecipientRemitPhone,
-    isRecipientBitcoinAddress,
-    sendsOverCorridor,
-  ]);
+  // What leaves the wallet for an entered amount on this recipient's route.
+  const spendForAmount = useCallback(
+    (sats: number): number =>
+      sendSpendSats(sats, {
+        swapPayout: isSwapPayout,
+        lightning: isRecipientBolt11 || isRecipientLnurl || isRecipientRemitPhone,
+        arkadeToBitcoinAddress: isArkadeToBitcoinAddress,
+        corridorMinSats,
+      }),
+    [
+      isSwapPayout,
+      isRecipientBolt11,
+      isRecipientLnurl,
+      isRecipientRemitPhone,
+      isArkadeToBitcoinAddress,
+      corridorMinSats,
+    ],
+  );
+  const spendSats = useMemo(() => spendForAmount(currentSats), [spendForAmount, currentSats]);
+  // The figure the screen states as available is the largest amount that can
+  // be ENTERED: what leaves the wallet for it (spread and lockup fee on top)
+  // has to fit. Stating the balance itself let the user type the shown figure
+  // and be refused for it (#1709).
+  const availableSatsDisplay = useMemo(() => {
+    if (maxSpendableSats === null) return null;
+    const budget =
+      arkadeChangeReserveSats > 0
+        ? sendableFromArkadeBalance(maxSpendableSats, arkadeChangeReserveSats)
+        : maxSpendableSats;
+    return budget === null ? null : maxAmountForSpend(budget, spendForAmount);
+  }, [maxSpendableSats, arkadeChangeReserveSats, spendForAmount]);
   // The largest amount this wallet's own coins can send when `sats` would leave
   // change under the node's floor, or null when `sats` can go out. Planned
   // from the same coins and in the same order as the send itself, so an exact
@@ -966,6 +969,16 @@ export default function BitcoinSendScreen({
     if (maxSpendableSats == null) return false;
     return spendSats > maxSpendableSats;
   }, [spendSats, maxSpendableSats, changeRefusalMaxSats]);
+  // The amount an over-balance entry is told it may send: the stated figure,
+  // or the one the coins allow when the change would fall under the floor. A
+  // change refusal names what may LEAVE the wallet; the spread and lockup fee
+  // on top are taken off, or the named figure is refused in its turn.
+  const exceedsBalanceMaxSats = useMemo(() => {
+    if (changeRefusalMaxSats !== null) {
+      return maxAmountForSpend(changeRefusalMaxSats, spendForAmount);
+    }
+    return availableSatsDisplay;
+  }, [changeRefusalMaxSats, spendForAmount, availableSatsDisplay]);
   // A Bitcoin send BELOW the corridor floor runs on the offboard, which can
   // only spend settled vtxos. The cap above is the larger of the two rails, so
   // this case has to be named separately or the screen accepts an amount the
@@ -1201,18 +1214,11 @@ export default function BitcoinSendScreen({
       }
       if (exceedsBalance) {
         setErrorMessage(
-          changeRefusalMaxSats !== null
+          exceedsBalanceMaxSats !== null && exceedsBalanceMaxSats > 0
             ? t("screen.BitcoinSendScreen.maxAvailableLabel", {
-                amount: groupCount(changeRefusalMaxSats),
+                amount: groupCount(exceedsBalanceMaxSats),
               })
-            : isRecipientBitcoinAddress &&
-                balanceSats !== null &&
-                maxSpendableSats !== null &&
-                balanceSats > maxSpendableSats
-              ? t("screen.BitcoinSendScreen.maxAvailableLabel", {
-                  amount: groupCount(maxSpendableSats),
-                })
-              : t("screen.BitcoinSendScreen.errorExceedsBalance"),
+            : t("screen.BitcoinSendScreen.errorExceedsBalance"),
         );
         return;
       }
@@ -1746,6 +1752,18 @@ export default function BitcoinSendScreen({
           failSend(formatOnchainTooFreshMessage(Number(e.availableAtMs || 0)));
           return;
         }
+        // A second tap on an invoice an earlier tap already funded: that
+        // payment runs on, so this one is not a fault and opens no support chat.
+        if (isLightningPaymentAlreadyStartedError(e)) {
+          failSend(
+            t(
+              e.completed
+                ? "screen.BitcoinSendScreen.lightningAlreadyPaid"
+                : "screen.BitcoinSendScreen.lightningAlreadyPaying",
+            ),
+          );
+          return;
+        }
         // Diagnostic: dump the raw error in every shape we can extract so
         // we can identify which layer threw it (SDK, http, identity, etc.).
         try {
@@ -1791,7 +1809,7 @@ export default function BitcoinSendScreen({
         // chat with the diagnostic dump attached.
         void reportErrorToSupport({
           error: e,
-          userMessage: "Bitcoin send failed",
+          userMessage: "I tried to send bitcoin and it did not work.",
         }).catch(() => {});
         // Closed after submit: the modal is gone, so only the support chat remains.
         if (!closedAfterSubmitted) {
@@ -1820,7 +1838,7 @@ export default function BitcoinSendScreen({
     currentSats,
     estimatedFeeSats,
     exceedsBalance,
-    changeRefusalMaxSats,
+    exceedsBalanceMaxSats,
     changeRefusalMaxFor,
     maxSpendableSats,
     balanceSats,
@@ -2159,27 +2177,19 @@ export default function BitcoinSendScreen({
         amount: groupCount(Math.max(0, settleableSats - estimatedFeeSats)),
       });
     }
-    // The sats are there, but this amount would leave change the Ark server
-    // refuses: name the figure that can go out, not an insufficient balance.
-    if (changeRefusalMaxSats !== null) {
+    if (!exceedsBalance) return null;
+    // Name the figure that can go out, not an insufficient balance: the sats
+    // are there, but the fee on top or change under the Ark floor leaves less.
+    if (exceedsBalanceMaxSats !== null && exceedsBalanceMaxSats > 0) {
       return t("screen.BitcoinSendScreen.maxAvailableLabel", {
-        amount: groupCount(changeRefusalMaxSats),
-      });
-    }
-    if (!exceedsBalance || maxSpendableSats === null) return null;
-    if (isRecipientBitcoinAddress && balanceSats !== null && balanceSats > maxSpendableSats) {
-      return t("screen.BitcoinSendScreen.maxAvailableLabel", {
-        amount: groupCount(maxSpendableSats),
+        amount: groupCount(exceedsBalanceMaxSats),
       });
     }
     return t("screen.BitcoinSendScreen.errorExceedsBalance");
   }, [
     exceedsBalance,
     exceedsSettleableForOffboard,
-    changeRefusalMaxSats,
-    maxSpendableSats,
-    isRecipientBitcoinAddress,
-    balanceSats,
+    exceedsBalanceMaxSats,
     settleableSats,
     estimatedFeeSats,
   ]);

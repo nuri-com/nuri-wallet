@@ -1168,8 +1168,8 @@ class WirexAccountService {
     // them the way the IBAN is. Fire-and-forget: a later read shows it.
     if (shouldOpenUkAccount(status.ukAccount, ukAccountAsked.has(wallet))) {
       ukAccountAsked.add(wallet);
-      void wirexService.openUkAccount().catch(() => {
-        // Not opened this time; the next launch asks again.
+      void wirexService.openUkAccount({ wallet, abortIf: stale }).catch(() => {
+        // Not opened this time (or the account changed first); asked again later.
         ukAccountAsked.delete(wallet);
       });
     }

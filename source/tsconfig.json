@@ -18,6 +18,7 @@
     "dist/**",
     "tools/vendor/**",
     "lib/vendor/**/*.js",
-    "ds/nuri/**/test/**"
+    "ds/nuri/**/test/**",
+    "pay-page/**"
   ]
 }

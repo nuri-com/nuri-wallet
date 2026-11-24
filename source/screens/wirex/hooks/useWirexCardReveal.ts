@@ -10,7 +10,6 @@
 // cannot repopulate them afterwards, and a superseding reveal invalidates the
 // previous one the same way. Nothing here is ever logged.
 import { useCallback, useRef, useState } from "react";
-import { t } from "../../../lib/i18n";
 import { getEthereumAddress } from "../../../lib/secureKeyStorage";
 import { reportErrorToSupport } from "../../../lib/support/reportErrorToSupport";
 import { type WirexCardDetailsResult, wirexService } from "../../../services/wirex/WirexService";
@@ -24,7 +23,6 @@ export type WirexCardRevealState = {
   visible: boolean;
   initialTab: WirexDetailsTab;
   details: WirexCardDetailsResult | null;
-  error: string | null;
   revealing: boolean;
   /** Open on a tab WITHOUT fetching secrets (bank tab, or a frozen card whose
    *  reveal Wirex would 400 — the sheet shows its unfreeze hint instead). */
@@ -39,7 +37,6 @@ export function useWirexCardReveal(): WirexCardRevealState {
   const [visible, setVisible] = useState(false);
   const [initialTab, setInitialTab] = useState<WirexDetailsTab>("card");
   const [details, setDetails] = useState<WirexCardDetailsResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [revealing, setRevealing] = useState(false);
   // Generation counter: invalidates a slow/superseded reveal so its async
   // result can't repopulate state after close or a newer reveal.
@@ -55,43 +52,45 @@ export function useWirexCardReveal(): WirexCardRevealState {
     // repopulate what we clear below.
     generationRef.current += 1;
     setVisible(false);
-    setError(null);
     setDetails(null); // don't keep PAN/expiry/CVV in memory after close
     setRevealing(false);
   }, []);
 
-  const reveal = useCallback(async (target: WirexCardRevealTarget) => {
-    if (!target.id) return;
-    generationRef.current += 1;
-    const generation = generationRef.current;
-    setInitialTab("card");
-    setDetails(null);
-    setError(null);
-    setRevealing(true);
-    setVisible(true); // open immediately; the sheet shows its loading state
-    try {
-      const wallet = await getEthereumAddress();
-      if (!wallet) throw new Error("no_wallet");
-      const cardId = target.id;
-      const d = await wirexService.revealCardDetails({ wallet, cardId });
-      // Superseded by a close or a newer reveal while we awaited: never
-      // repopulate PAN/CVV.
-      if (generationRef.current !== generation) return;
-      setDetails(d);
-    } catch (revealError) {
-      // Never log the reveal payload or the error contents.
-      if (generationRef.current === generation) {
-        setDetails(null);
-        setError(t("screen.WirexCard.detailsError"));
-        void reportErrorToSupport({
-          error: revealError,
-          userMessage: "Card details reveal failed",
-        }).catch(() => {});
+  const reveal = useCallback(
+    async (target: WirexCardRevealTarget) => {
+      if (!target.id) return;
+      generationRef.current += 1;
+      const generation = generationRef.current;
+      setInitialTab("card");
+      setDetails(null);
+      setRevealing(true);
+      setVisible(true); // open immediately; the sheet shows its loading state
+      try {
+        const wallet = await getEthereumAddress();
+        if (!wallet) throw new Error("no_wallet");
+        const cardId = target.id;
+        const d = await wirexService.revealCardDetails({ wallet, cardId });
+        // Superseded by a close or a newer reveal while we awaited: never
+        // repopulate PAN/CVV.
+        if (generationRef.current !== generation) return;
+        setDetails(d);
+      } catch (revealError) {
+        // Never log the reveal payload or the error contents. No retry screen
+        // (#2008): the sheet closes and the support chat opens with a plain
+        // report, the error itself only in its silent dump.
+        if (generationRef.current === generation) {
+          close();
+          void reportErrorToSupport({
+            error: revealError,
+            userMessage: "I tried to show my card details and they did not load.",
+          }).catch(() => {});
+        }
+      } finally {
+        if (generationRef.current === generation) setRevealing(false);
       }
-    } finally {
-      if (generationRef.current === generation) setRevealing(false);
-    }
-  }, []);
+    },
+    [close],
+  );
 
-  return { visible, initialTab, details, error, revealing, open, reveal, close };
+  return { visible, initialTab, details, revealing, open, reveal, close };
 }

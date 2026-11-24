@@ -822,20 +822,51 @@ export async function fundArkadeIntentsOutpoint(params: {
     throw new Error("arkade_intents_fund cannot resolve its outpoint: indexer unavailable");
   }
   const lockupScriptHex = bytesToHex(ArkAddress.decode(lockupAddress).pkScript);
-  const res = await paymentTimed("arkade find funded output", () =>
-    indexer.getVtxos({ scripts: [lockupScriptHex] }),
-  );
-  const candidates = (res.vtxos ?? []).filter(
-    (v) => (!arkTxid || String(v.txid || "") === arkTxid) && Number(v.value) === amountSats,
-  );
-  const created = candidates.length === 1 ? candidates[0] : null;
-  if (!created || !Number.isSafeInteger(Number(created.vout))) {
-    throw new Error(
-      "arkade_intents_fund could not confirm the created outpoint at the lockup script",
-    );
+  // The indexer can lag the send that just returned: the transaction is
+  // accepted, but its output is not listed at the lockup script yet. One read
+  // straight after the broadcast then reported a funded send as failed
+  // (swapkit #418). So an output that is not visible yet is read again for a
+  // bounded time. Nothing here sends: the funding happened once, above, and
+  // every retry only reads the indexer. A read that finds MORE than one match
+  // is ambiguous and fails at once; waiting cannot make it unambiguous.
+  let lastSeen = 0;
+  for (let attempt = 0; ; attempt += 1) {
+    let vtxos: Array<{ txid?: string; vout?: number; value?: string | number }> | null = null;
+    try {
+      const res = await paymentTimed("arkade find funded output", () =>
+        indexer.getVtxos({ scripts: [lockupScriptHex] }),
+      );
+      vtxos = res.vtxos ?? [];
+    } catch (error) {
+      if (attempt >= FUND_OUTPOINT_READ_DELAYS_MS.length) throw error;
+    }
+    if (vtxos) {
+      lastSeen = vtxos.length;
+      const candidates = vtxos.filter(
+        (v) => (!arkTxid || String(v.txid || "") === arkTxid) && Number(v.value) === amountSats,
+      );
+      if (candidates.length > 1) {
+        throw new Error(
+          `arkade_intents_fund could not confirm the created outpoint at the lockup script: ${candidates.length} matching outputs`,
+        );
+      }
+      const created = candidates[0];
+      if (created && Number.isSafeInteger(Number(created.vout))) {
+        return {
+          arkTxid: String(created.txid),
+          outpoint: { txid: String(created.txid), vout: Number(created.vout) },
+        };
+      }
+    }
+    const delay = FUND_OUTPOINT_READ_DELAYS_MS[attempt];
+    if (delay === undefined) break;
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
-  return {
-    arkTxid: String(created.txid),
-    outpoint: { txid: String(created.txid), vout: Number(created.vout) },
-  };
+  throw new Error(
+    `arkade_intents_fund could not confirm the created outpoint at the lockup script: not listed after ${FUND_OUTPOINT_READ_DELAYS_MS.length + 1} reads (${lastSeen} outputs at the script${arkTxid ? ", funding sent" : ""})`,
+  );
 }
+
+/** Waits between indexer reads for a just-funded lockup output: about 14 s
+ *  in all, well inside the funding deadline the server gives the action. */
+export const FUND_OUTPOINT_READ_DELAYS_MS = [500, 1_000, 2_000, 4_000, 6_500] as const;

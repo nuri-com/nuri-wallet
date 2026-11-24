@@ -619,22 +619,34 @@ export type OrderDelivery = "sending" | "delivering";
 export const CLAIM_FAILING_SLOW_MS = 30 * 1000;
 
 /**
+ * How long nadanada may keep answering "not settled" for an order this wallet
+ * funded before the page offers support. A funded Lightning payment settles
+ * in seconds; minutes of "not settled" mean the payment or the shop is stuck,
+ * which the user cannot fix by waiting on a spinner.
+ */
+export const CLAIM_UNSETTLED_SLOW_MS = 2 * 60 * 1000;
+
+/**
  * Delivery state of an order money may be on, null for one it cannot be on:
  * a send this wallet started (the payment may still be in flight, until the
  * invoice expires) and a payment made, which nadanada delivers later. A paid
  * order is slow once it waited `slowAfterMs`, or sooner when asking nadanada
- * for it has only failed since `claimFailingSince`.
+ * for it has only failed since `claimFailingSince`, or nadanada has only
+ * answered "not settled" since `claimUnsettledSince`.
  */
 export function orderDelivery(
   order: EsimPendingOrder,
   now: number,
   slowAfterMs: number,
   claimFailingSince?: number,
+  claimUnsettledSince?: number,
 ): OrderDelivery | "slow" | null {
   if (order.paidAt !== undefined) {
     const failing =
       claimFailingSince !== undefined && now - claimFailingSince > CLAIM_FAILING_SLOW_MS;
-    return failing || now - order.paidAt > slowAfterMs ? "slow" : "delivering";
+    const unsettled =
+      claimUnsettledSince !== undefined && now - claimUnsettledSince > CLAIM_UNSETTLED_SLOW_MS;
+    return failing || unsettled || now - order.paidAt > slowAfterMs ? "slow" : "delivering";
   }
   if (order.sendStartedAt !== undefined && isInvoiceOpen(order, now)) return "sending";
   return null;

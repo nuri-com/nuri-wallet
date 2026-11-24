@@ -727,7 +727,9 @@ const AddressBookScreen: React.FC<Props> = ({
                   </View>
                 ) : null}
 
-                {contacts.length === 0 && status !== "loading" ? (
+                {/* "No contacts yet" only once a relay confirmed it (#1997): while
+                    the first sync runs or after it failed, the status line says so. */}
+                {contacts.length === 0 && (query ? status !== "loading" : status === "idle") ? (
                   <View paddingX="lg">
                     <Text size="sm" muted align="center">
                       {query ? t(`${K}.noMatches`) : t(`${K}.empty`)}

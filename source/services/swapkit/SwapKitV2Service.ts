@@ -233,15 +233,20 @@ export class SwapKitV2Error extends Error {
   readonly code: string | null;
   readonly httpStatus: number;
   readonly retryable: boolean;
+  /** The server tool call that failed (`swap.commit`, `swap_submit`, …), set
+   * by the transport so a support report can name the phase even when the
+   * server's own message is an opaque "internal error; reference = …". */
+  tool: string | null;
   constructor(
     message: string,
-    opts: { code?: string | null; httpStatus?: number; retryable?: boolean } = {},
+    opts: { code?: string | null; httpStatus?: number; retryable?: boolean; tool?: string } = {},
   ) {
     super(message);
     this.name = "SwapKitV2Error";
     this.code = opts.code ?? null;
     this.httpStatus = opts.httpStatus ?? 0;
     this.retryable = opts.retryable === true;
+    this.tool = opts.tool ?? null;
   }
 }
 
@@ -361,6 +366,9 @@ async function callSwapKitV2ToolOnce<T>(name: string, args: Record<string, unkno
     );
     return payload;
   } catch (error) {
+    if (error instanceof SwapKitV2Error && !error.tool) {
+      error.tool = typeof args.mode === "string" ? `${name}.${args.mode}` : name;
+    }
     errorWithId(
       `${LOG_EMOJI.network} SwapKitV2.api`,
       `${name} failed status=${status || "unknown"} dur=${Date.now() - started}ms`,

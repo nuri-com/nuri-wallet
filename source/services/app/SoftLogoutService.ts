@@ -25,7 +25,7 @@ import { MercuryoOrderStore } from "../mercuryo/MercuryoOrderStore";
 import { stopAllMercuryoTracking } from "../mercuryo/MercuryoPendingTracker";
 import { WIPE_EXTRA_STORAGE_KEYS } from "./wipeStorageKeys";
 import { resetEsims } from "../esim/EsimService";
-import { resetPayWallet } from "../../lib/pay/payWallet";
+import { resetPayWallet } from "../../lib/pay/payWalletSessions";
 import {
   clearPushNotificationStorage,
   unregisterPushDevice,

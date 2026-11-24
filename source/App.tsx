@@ -1,5 +1,5 @@
 // biome-ignore lint/correctness/noUnusedImports: React needed for JSX fragments
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
 import { View, StyleSheet, Platform, Linking, AppState } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-context";
@@ -26,7 +26,6 @@ import { observeAppViewportHeight } from "./lib/web/appViewportHeight";
 import { revealFocusedField } from "./lib/web/focusedFieldReveal";
 import { installDocumentPanGuard } from "./lib/web/documentPanGuard";
 import { useFinePointer } from "./lib/web/finePointer";
-import { PAY_LINK_BODY_ATTRIBUTE } from "./lib/web/payLinkFrame";
 import { parsePayIntent } from "./lib/pay/payIntent";
 import { queuePayIntent } from "./lib/pay/payIntentStore";
 import { payLinkBrowserUrl } from "./lib/pay/payAppHandoff";
@@ -55,6 +54,7 @@ import {
   storeBitcoinAddress,
   storeEthereumAddress,
   hasStoredKey,
+  hasNostrPrivateKey,
   hasCompletedWalletBootstrap,
   unlockWalletKeys,
   getAuthData,
@@ -78,14 +78,13 @@ import {
   getPendingReferrer,
   rememberReferrer,
 } from "./lib/referral/pendingReferrer";
-import PayLinkScreen from "./screens/pay/PayLinkScreen";
-import { PayWalletProvider } from "./lib/pay/payWallet";
 import { zeroize } from "./lib/crypto";
 import { authStateManager } from "./services/auth/AuthStateService";
 import { getWalletPasskeyAssertion } from "./services/auth/PasskeyNativeModuleService";
 import {
-  bootstrapWalletFromPrf,
+  deriveWalletRootsFromPrf,
   persistBootstrappedKeys,
+  persistSwapKitHtlcRootsFromPrf,
 } from "./services/auth/PasskeyPrfWalletBootstrapService";
 import { initializeNetworkLogging } from "./services/logging/NetworkLogger";
 import { startNetworkMonitor, stopNetworkMonitor } from "./services/app/NetworkStatusService";
@@ -122,6 +121,10 @@ import {
   bootstrapBitcoinOnLogin,
   hydrateBitcoinOnUnlock,
 } from "./services/bitcoin/BitcoinBootstrapService";
+import {
+  decideRestoreClientMatch,
+  restoreClientMatchDiagnostic,
+} from "./lib/auth/restoreClientMatch";
 import { arkadeRecoveryStatusForCredId } from "./services/arkade/ArkadeCredIdAccountService";
 import { arkadeBootstrapClaimRegister, arkadeInfo } from "./services/arkade/ArkadeApiService";
 import { ArkadeRemoteIdentity } from "./services/arkade/ArkadeRemoteIdentity";
@@ -142,6 +145,7 @@ import {
   claimArkadeLnurlUsername,
   getArkadeLnurlStatusPersisted,
   getArkadeLnurlStatusSnapshot,
+  refreshWalletUsernameFromServer,
 } from "./services/arkade/ArkadeLnurlService";
 import { WIREX_READ_SESSION_MINTED_EVENT, wirexService } from "./services/wirex/WirexService";
 import { wirexAccountService } from "./services/wirex/WirexAccountService";
@@ -176,6 +180,11 @@ import {
 import { SUPPORT_PUBKEY } from "./lib/nostr/unread";
 import { setPendingCardDetail } from "./lib/cardDetailIntent";
 import {
+  isPaymentJourneyActive,
+  mayAutoOpenUnlock,
+  subscribePaymentJourney,
+} from "./lib/pay/paymentJourney";
+import {
   NURI_INTERNAL_LINK_PATTERN,
   SHOW_CARD_NUMBER_SCREEN,
   SHOW_IBAN_SCREEN,
@@ -205,9 +214,10 @@ function initialPasskeyUsername(): string | null {
   return parsePasskeyUsernamePath(window.location.pathname);
 }
 
-// `/pay/@username` is a link handed to strangers, so it is read once at mount
-// and never cleared from the address bar: unlike a passkey claim there is
-// nothing session-bound about it, and a reload must land on the same page.
+// `/pay/@username` is a link handed to strangers. The page lives on its own
+// origin now (pay-page/, PAY_LINK_ORIGIN), so an old link that still reaches
+// the wallet is sent there, path and query unchanged. The edge worker already
+// redirects it; this covers a shell the browser had cached.
 function initialPayLinkUsername(): string | null {
   if (Platform.OS !== "web" || typeof window === "undefined") return null;
   return parsePayLinkPath(window.location.pathname);
@@ -244,8 +254,7 @@ function clearPasskeyUsernameLocation(): void {
   window.history?.replaceState?.(null, "", "/");
 }
 
-// The faces the DS is drawn in. Shared, because both roots below need them
-// loaded before anything renders and neither may wait on the other's state.
+// The faces the DS is drawn in, loaded before anything renders.
 const APP_FONTS = {
   Inter_400Regular,
   Inter_500Medium,
@@ -289,13 +298,12 @@ function redactDeepLinkForLog(url: string): Record<string, unknown> {
 
 // The app root, and the one decision taken before a wallet exists.
 //
-// `/pay/@username` is a public page a stranger opens, so it may not merely
-// replace what WalletApp renders — WalletApp must never mount. Its init effect
-// reads secureKeyStorage, unlocks keys, starts the signed-in services and, on a
-// browser that holds a pre-Wirex wallet, reaches performSoftLogoutForRelogin(),
-// which deletes local wallet state. Opening someone else's payment link must
-// cost a visitor nothing, so the split sits above the component owning those
-// effects rather than inside its render.
+// `/pay/@username` belongs to the pay page's own origin, so WalletApp must
+// never mount for it. Its init effect reads secureKeyStorage, unlocks keys,
+// starts the signed-in services and, on a browser that holds a pre-Wirex
+// wallet, reaches performSoftLogoutForRelogin(), which deletes local wallet
+// state. Opening someone else's payment link must cost a visitor nothing, so
+// the split sits above the component owning those effects.
 export default function App() {
   const [payLinkUsername] = useState(() => {
     const username = initialPayLinkUsername();
@@ -306,12 +314,8 @@ export default function App() {
     }
     return username;
   });
-  // The app's own frame on the web, installed HERE rather than in `WalletApp`:
-  // `#root` is one element shared by every route, so the height the browser is
-  // actually showing has to be written for the payment-link page too (a page for
-  // strangers on the same locked document, and one that fits a keypad and a
-  // footer into it). `#root` takes its height from this custom property
-  // (lib/web/appViewportHeight): Safari's toolbar moves the live layout viewport,
+  // The app's own frame on the web. `#root` takes its height from this custom
+  // property (lib/web/appViewportHeight): Safari's toolbar moves the live layout viewport,
   // and a screen sized for the wrong one hides its bottom rows under the browser
   // chrome with no gesture able to reach them (#1372). No-op on native.
   useEffect(
@@ -335,42 +339,12 @@ export default function App() {
       ),
     [],
   );
-  return payLinkUsername ? <PayLinkApp username={payLinkUsername} /> : <WalletApp />;
-}
-
-// The pay page's own root: fonts and the DS shell, nothing else. No auth, no
-// key storage, no balance drivers, no currency service — a page for strangers
-// touches none of them.
-function PayLinkApp({ username }: { username: string }) {
-  const [fontsLoaded] = useFonts(APP_FONTS);
-  // The document frame is shared by every route, and `public/index.html` drops
-  // the phone-width cap on a desktop browser for the DesktopGate. This route
-  // has no gate (a stranger on a laptop is a payer), so it marks the body to
-  // keep the centered column the app has at phone width.
   useEffect(() => {
-    if (typeof document === "undefined") return;
-    document.body.setAttribute(PAY_LINK_BODY_ATTRIBUTE, "");
-    return () => document.body.removeAttribute(PAY_LINK_BODY_ATTRIBUTE);
-  }, []);
-  if (!fontsLoaded) return null;
-  return (
-    <GestureHandlerRootView style={styles.gestureRoot}>
-      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-        <DsOverlayRoot>
-          <DsView chrome="canvas" direction="column" align="stretch" fill="grow-shrink">
-            <StatusBar style="dark" translucent backgroundColor="transparent" />
-            <DsView fill="grow-shrink">
-              {/* The wallet picker (RainbowKit + wagmi) exists on the pay
-                  page only; the signed-in wallet never mounts it. */}
-              <PayWalletProvider>
-                <PayLinkScreen username={username} />
-              </PayWalletProvider>
-            </DsView>
-          </DsView>
-        </DsOverlayRoot>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
-  );
+    if (!payLinkUsername) return;
+    const base = PAY_LINK_ORIGIN.replace(/\/+$/, "");
+    window.location.replace(`${base}${window.location.pathname}${window.location.search}`);
+  }, [payLinkUsername]);
+  return payLinkUsername ? null : <WalletApp />;
 }
 
 function WalletApp() {
@@ -602,16 +576,31 @@ function WalletApp() {
     isWaitingForNetwork,
   });
 
+  // A renewal-only offer shows the "Access wallet" lock screen; over a scanned
+  // payment that reads as the wallet asking for access again and races the
+  // payment's own approval. It waits until the payment screens close (#1978).
+  const paymentJourneyActive = useSyncExternalStore(
+    subscribePaymentJourney,
+    isPaymentJourneyActive,
+    isPaymentJourneyActive,
+  );
+  const unlockMayAutoOpen = mayAutoOpenUnlock(unlockState.actionableItems, paymentJourneyActive);
+
   useEffect(() => {
     if (unlockState.actionableCount <= 0) {
       setShowArkadeUnlockWallet(false);
       setSuppressArkadeUnlockAutoOpen(false);
       return;
     }
-    if (unlockState.status !== "running" && !suppressArkadeUnlockAutoOpen) {
+    if (unlockState.status !== "running" && !suppressArkadeUnlockAutoOpen && unlockMayAutoOpen) {
       setShowArkadeUnlockWallet(true);
     }
-  }, [unlockState.actionableCount, unlockState.status, suppressArkadeUnlockAutoOpen]);
+  }, [
+    unlockState.actionableCount,
+    unlockState.status,
+    suppressArkadeUnlockAutoOpen,
+    unlockMayAutoOpen,
+  ]);
 
   const closeArkadeUnlockWallet = useCallback(() => {
     setSuppressArkadeUnlockAutoOpen(true);
@@ -847,6 +836,16 @@ function WalletApp() {
         const storedUsername = authSnapshot.walletUsername?.trim().toLowerCase() || "";
         if (storedUsername) {
           setSignedInHandle(storedUsername);
+          // The stored name is only written at signup or on a live status read,
+          // so a rename on the server would never reach this device. Recheck it
+          // in the background without holding up startup.
+          const startCredId = authSnapshot.walletPublicKeys?.walletPasskeyCredIdB64u;
+          void refreshWalletUsernameFromServer().then((renamed) => {
+            // Not after a logout or account switch that landed meanwhile.
+            const sameWallet =
+              authStateManager.getState().walletPublicKeys?.walletPasskeyCredIdB64u === startCredId;
+            if (renamed && sameWallet) setSignedInHandle(renamed);
+          });
         } else {
           // One-time migration for installs created before username became part
           // of authenticated state. The old LNURL snapshot may still carry the
@@ -1457,18 +1456,26 @@ function WalletApp() {
 
       try {
         console.log(
-          "[App:handleStatelessPayload] Starting PRF bootstrap via bootstrapWalletFromPrf",
+          "[App:handleStatelessPayload] Starting PRF bootstrap via deriveWalletRootsFromPrf",
           {
             isNew: payload.isNew,
             hasCredId,
             hasCredPub,
           },
         );
+        // Derive only: nothing from this passkey may reach storage until the
+        // restore gate below has accepted it (#1086). The SwapKit HTLC roots
+        // are persisted after the gate.
         const prfForBootstrap = new Uint8Array(payload.prf);
-        const bootstrapResult = await bootstrapWalletFromPrf(prfForBootstrap);
+        let bootstrapResult: ReturnType<typeof deriveWalletRootsFromPrf>;
+        try {
+          bootstrapResult = deriveWalletRootsFromPrf(prfForBootstrap);
+        } finally {
+          zeroize(prfForBootstrap);
+        }
         try {
           console.log(
-            "[App:handleStatelessPayload] Completed PRF bootstrap via bootstrapWalletFromPrf",
+            "[App:handleStatelessPayload] Completed PRF bootstrap via deriveWalletRootsFromPrf",
             {
               bitcoinAddressPreview: bootstrapResult?.bitcoinAddress
                 ? `${bootstrapResult.bitcoinAddress.slice(0, 8)}...${bootstrapResult.bitcoinAddress.slice(-6)}`
@@ -1534,6 +1541,39 @@ function WalletApp() {
               setTimeout(() => setShowNostrChat(true), IOS_MODAL_TRANSITION_DELAY_MS);
               return;
             }
+            // #1086: the record exists, but sign-in only proceeds when the
+            // server says it is bound to exactly THIS client key. A second
+            // PRF-derived key for the same passkey would otherwise persist,
+            // sign in and show an empty wallet that then fails at auth.
+            // Nothing below has run yet: no keys, metadata, sentinel, wallet.
+            const clientMatchDecision = decideRestoreClientMatch(recoveryStatus);
+            if (clientMatchDecision.kind !== "proceed") {
+              const diagnostic = restoreClientMatchDiagnostic(
+                clientMatchDecision,
+                recoveryStatus,
+                bootstrapResult.bitcoinPublicKey,
+              );
+              console.error(
+                "[App:handleStatelessPayload] Restore blocked: passkey does not prove the registered client key",
+                diagnostic,
+              );
+              // The derived key is the non-matching one. When this device
+              // still holds a wallet, support opens as that wallet's own
+              // Nostr identity (NostrChatModal default) so its thread stays.
+              const deviceHoldsWalletIdentity =
+                (await hasNostrPrivateKey()) || (await hasStoredKey("bitcoin"));
+              if (!deviceHoldsWalletIdentity) {
+                setSupportKeypairOverride(
+                  deriveNostrKeypairFromBitcoinKey(bootstrapResult.bitcoinPrivateKey),
+                );
+              }
+              setSupportAutoMessage(
+                `${t("screen.PasskeyLoginScreen.restoreKeyMismatchSupportMessage")}\n\n${diagnostic}`,
+              );
+              resetToWelcome();
+              setTimeout(() => setShowNostrChat(true), IOS_MODAL_TRANSITION_DELAY_MS);
+              return;
+            }
           }
 
           // Identity switch. A restore can end on a different passkey than the
@@ -1568,6 +1608,16 @@ function WalletApp() {
             );
             handleError(t("screen.App.previousWalletNotRemoved"));
             return;
+          }
+          // The passkey passed the restore gate and its identity is committed:
+          // only now persist its SwapKit HTLC roots. A refused or aborted
+          // passkey must not replace the roots of the wallet still on this
+          // device, or a restart resumes claims/refunds with the wrong root.
+          const prfForHtlcRoots = new Uint8Array(payload.prf);
+          try {
+            await persistSwapKitHtlcRootsFromPrf(prfForHtlcRoots);
+          } finally {
+            zeroize(prfForHtlcRoots);
           }
           if (identityCommit.kind === "replaced") {
             console.log(

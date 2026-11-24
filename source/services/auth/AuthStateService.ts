@@ -234,11 +234,14 @@ class AuthStateManager {
       walletUsername: string | null;
       walletCreated: "musig2+csv" | null;
     }>,
-  ): Promise<void> {
+    stillValid?: () => boolean,
+  ): Promise<boolean> {
     const flagsStr = await getAuthData(AUTH_STORAGE_KEYS.AUTH_FLAGS);
+    if (stillValid && !stillValid()) return false;
     const flags = flagsStr ? JSON.parse(flagsStr) : {};
     const newFlags = { ...flags, ...updates };
     await storeAuthData(AUTH_STORAGE_KEYS.AUTH_FLAGS, JSON.stringify(newFlags));
+    return true;
   }
 
   // Generate HMAC headers for authenticated requests
@@ -521,17 +524,28 @@ class AuthStateManager {
     this.notifyListeners();
   }
 
-  async setWalletUsername(value: string): Promise<void> {
+  /**
+   * `forCredId` binds the write to one wallet: if a different passkey is signed
+   * in at any point before the write lands (logout, account switch), nothing is
+   * written and this returns false.
+   */
+  async setWalletUsername(value: string, forCredId?: string): Promise<boolean> {
     const normalized = String(value || "")
       .trim()
       .toLowerCase();
     if (!/^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/.test(normalized)) {
       throw new Error("wallet username is invalid");
     }
+    const sameWallet = () =>
+      forCredId === undefined ||
+      this.authState.walletPublicKeys?.walletPasskeyCredIdB64u === forCredId;
     await this.ensureLoadPromise();
-    await this.updateAuthFlags({ walletUsername: normalized });
+    if (!sameWallet()) return false;
+    const written = await this.updateAuthFlags({ walletUsername: normalized }, sameWallet);
+    if (!written || !sameWallet()) return false;
     this.authState.walletUsername = normalized;
     this.notifyListeners();
+    return true;
   }
 
   async markPasskeyUnregistered(): Promise<void> {

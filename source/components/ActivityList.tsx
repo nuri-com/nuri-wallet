@@ -24,6 +24,7 @@ import {
   contactsByArkScript,
 } from "../lib/addressBook/activityPerson";
 import { contactRowLabelKey } from "../lib/addressBook/activityContact";
+import { filterActivityRows } from "../lib/activitySearch";
 import type { ActivityPerson } from "../lib/activityDetail";
 import { arkAddressScript } from "../services/arkade/arkadeCounterparty";
 import { useNuriNames } from "../services/arkade/nuriNames";
@@ -141,6 +142,12 @@ function buildSections(items: ActivityItem[]): Section[] {
   return sections.filter((section) => section.items.length > 0);
 }
 
+/** A row's title: "To Mom" / "From Mom" for a known person, else its own label. */
+function rowLabel(item: ActivityItem, who: { person: ActivityPerson } | null): string {
+  const labelKey = contactRowLabelKey(item.incoming);
+  return who && labelKey ? t(labelKey, { name: who.person.name }) : item.label;
+}
+
 /** The other side's EVM address: a Send again looks its Nuri user up. */
 function evmOf(item: ActivityItem): string | undefined {
   const address = item.saveOffer?.destination.raw ?? item.counterpartyAddress;
@@ -161,6 +168,11 @@ type Props = {
   hideEmpty?: boolean;
   /** Only the rows with this contact (#1793), matched the way rows are named. */
   onlyContact?: Pick<Contact, "id" | "nuriUsername"> | null;
+  /**
+   * Only the rows matching this search (#1675), matched on what each row
+   * shows, its saved-contact name included. Blank: every row.
+   */
+  query?: string;
 };
 
 const ActivityList: React.FC<Props> = ({
@@ -172,6 +184,7 @@ const ActivityList: React.FC<Props> = ({
   emptyText,
   hideEmpty = false,
   onlyContact,
+  query = "",
 }) => {
   // The row whose details are open.
   const [detailFor, setDetailFor] = useState<ActivityItem | null>(null);
@@ -313,12 +326,21 @@ const ActivityList: React.FC<Props> = ({
     if (!active) setDetailFor(null);
   }, [active]);
   // One contact's page lists only the rows the activity names after them.
-  const shown = useMemo(
+  const contactRows = useMemo(
     () =>
       onlyContact
         ? contactHistory(items, onlyContact, contactOf, (item) => namedOf(item)?.username ?? null)
         : items,
     [items, onlyContact, contactOf, namedOf],
+  );
+  // A search finds a row by the title it is drawn with (rowLabel), so a
+  // saved contact's name matches, not only the bank's holder name.
+  const shown = useMemo(
+    () =>
+      filterActivityRows(contactRows, query, (item) => [
+        rowLabel(item, contactRowLabelKey(item.incoming) ? personOf(item) : null),
+      ]),
+    [contactRows, query, personOf],
   );
   const sections = useMemo(() => buildSections(shown), [shown]);
 
@@ -362,9 +384,8 @@ const ActivityList: React.FC<Props> = ({
             ) : null}
             <List>
               {section.items.map((item, index) => {
-                const labelKey = contactRowLabelKey(item.incoming);
-                const who = labelKey ? personOf(item) : null;
-                const label = who && labelKey ? t(labelKey, { name: who.person.name }) : item.label;
+                const who = contactRowLabelKey(item.incoming) ? personOf(item) : null;
+                const label = rowLabel(item, who);
                 return (
                   <React.Fragment key={item.key}>
                     {index > 0 ? <ListSeparator /> : null}

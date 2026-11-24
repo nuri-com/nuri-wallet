@@ -38,6 +38,31 @@ export function payoutDebitCandidates(
   return [...same, ...other];
 }
 
+// A saved payout card as the pick list knows it: Wirex hands back only the
+// name and the last four, never the number.
+export type SavedPayoutCardRef = { recipientId: string; name: string; last4: string };
+
+const foldName = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+
+/**
+ * Saved cards that look like the card being added: same last four AND same
+ * holder name (#1753). Saving it again would make Wirex keep a second
+ * recipient for the same card, listed twice in the picker. Last four and name
+ * alone do not prove it is the same card (a person can hold two cards ending
+ * alike), so this only offers the saved one; it never refuses the save.
+ */
+export function savedPayoutCardMatches<C extends SavedPayoutCardRef>(
+  saved: readonly C[],
+  name: string,
+  cardNumber: string,
+): C[] {
+  const digits = cardNumber.replace(/\D/g, "");
+  const holder = foldName(name);
+  if (digits.length < 12 || !holder) return [];
+  const last4 = digits.slice(-4);
+  return saved.filter((c) => c.last4 === last4 && foldName(c.name) === holder);
+}
+
 // A card number as typed: digits only, grouped in fours for reading.
 export function formatCardNumberInput(text: string): string {
   return text

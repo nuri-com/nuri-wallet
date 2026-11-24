@@ -9,6 +9,12 @@ import { logWithId, newOp, LOG_EMOJI, type LogContext } from "../../lib/Operatio
 import { logger } from "../../lib/log";
 import { reportNetworkFailure, reportNetworkSuccess } from "../app/NetworkStatusService";
 import { EventBus } from "../events/AppEventBusService";
+import {
+  formatFetchFailure,
+  normalizeRequestPath,
+  parseRequestUrl,
+  requestEndpoint,
+} from "./networkFailure";
 
 const NETWORK_STATS_GLOBAL_KEY = "__nuriNetworkLoggingInitialized";
 const NETWORK_STATS_FETCH_WRAPPED_KEY = "__nuriNetworkFetchWrapped";
@@ -60,34 +66,47 @@ function truncate(text: string, max = 64): string {
   return `${text.slice(0, Math.max(1, max - 1))}…`;
 }
 
-function parseUrl(raw: string): { host: string; path: string } {
-  if (!raw) return { host: "unknown", path: "/" };
-  try {
-    const u = new URL(raw);
-    return { host: u.host || "unknown", path: u.pathname || "/" };
-  } catch {
-    const m = raw.match(/^(https?:)?\/\/([^/]+)(\/[^?#]*)?/i);
-    if (m) {
-      return { host: m[2] || "unknown", path: m[3] || "/" };
-    }
-    const m2 = raw.match(/^([^/]+)(\/.*)?$/);
-    if (m2) {
-      return { host: m2[1] || "unknown", path: m2[2] || "/" };
-    }
-    return { host: "unknown", path: raw || "/" };
+const parseUrl = parseRequestUrl;
+const normalizePath = normalizeRequestPath;
+
+// Unexpected failures repeat every poll tick while an upstream is down. Print
+// the first at once, count the repeats, and print again once a minute with the
+// attempt count, so a lasting outage stays visible without flooding the dump.
+const FAILURE_REPEAT_MS = 60_000;
+const FAILURE_STREAK_MAX = 200;
+type FailureStreak = { firstAt: number; lastPrintedAt: number; attempts: number };
+const failureStreaks = new Map<string, FailureStreak>();
+
+export function logUnexpectedFetchFailure(
+  f: Parameters<typeof formatFetchFailure>[0],
+  now = Date.now(),
+): string | null {
+  const outcome = typeof f.status === "number" ? `HTTP_${f.status}` : "ERR";
+  const key = `${requestEndpoint(f.method, f.url)} ${outcome}`;
+  const streak = failureStreaks.get(key);
+  if (streak && now - streak.lastPrintedAt < FAILURE_REPEAT_MS) {
+    streak.attempts += 1;
+    return null;
   }
+  // A failure within two windows of the last printed one continues the streak.
+  const continuing = Boolean(streak && now - streak.lastPrintedAt < FAILURE_REPEAT_MS * 2);
+  const firstAt = continuing && streak ? streak.firstAt : now;
+  const attempts = continuing && streak ? streak.attempts + 1 : 1;
+  failureStreaks.delete(key);
+  failureStreaks.set(key, { firstAt, lastPrintedAt: now, attempts });
+  if (failureStreaks.size > FAILURE_STREAK_MAX) {
+    const oldest = failureStreaks.keys().next().value;
+    if (oldest !== undefined) failureStreaks.delete(oldest);
+  }
+  const sec = Math.max(1, Math.round((now - firstAt) / 1000));
+  const suffix = attempts > 1 ? ` — attempt ${attempts}, failing for ${sec}s` : "";
+  const line = `${formatFetchFailure(f)}${suffix}`;
+  netLog.error(line);
+  return line;
 }
 
-function normalizePath(path: string): string {
-  if (!path) return "/";
-  let p = path.replace(/\/+$/, "") || "/";
-  p = p.replace(/\/address\/[^/]+/g, "/address/:address");
-  p = p.replace(/\/txs\/chain\/[^/]+/g, "/txs/chain/:txid");
-  p = p.replace(/\/tx\/[0-9a-fA-F]{64}/g, "/tx/:txid");
-  p = p.replace(/\/tx\/:txid\/(status|hex)/g, "/tx/:txid/$1");
-  p = p.replace(/\/api\/v1\/prices/g, "/api/v1/prices");
-  p = p.replace(/\/api\/v1\/historical-price/g, "/api/v1/historical-price");
-  return p;
+export function resetFetchFailureStreaksForTests() {
+  failureStreaks.clear();
 }
 
 function isSilentPath(path: string): boolean {
@@ -196,8 +215,7 @@ export function bumpNetworkSource(source: string) {
 let initialized = false;
 
 function compactEndpoint(method: string, url: string): string {
-  const { host, path } = parseUrl(url);
-  return `${String(method || "GET").toUpperCase()} ${host}${normalizePath(path)}`;
+  return requestEndpoint(method, url);
 }
 
 function trimMap(map: Map<string, number>) {
@@ -406,6 +424,7 @@ export function initializeNetworkLogging() {
       const shouldLog = !isSilentPath(path);
       const op = shouldLog ? newOp("Network", "fetch", LOG_EMOJI.network, source, context) : null;
       recordRequest(method, url, source);
+      const startedAt = Date.now();
       try {
         const resp = await originalFetch(input as any, init);
         const expectedStatusReason = await expectedFetchStatusReason(
@@ -452,8 +471,16 @@ export function initializeNetworkLogging() {
           );
           op.end(`HTTP_${resp.status}_EXPECTED`);
         } else if (op && !resp.ok) {
-          op.error(`${compactEndpoint(method, url)} ←${resp.status}`);
-          op.end(`HTTP_${resp.status}`);
+          // One self-contained sentence (route, status, latency, source) instead
+          // of the op story, which lost all of it in support dumps (#1362).
+          logUnexpectedFetchFailure({
+            method,
+            url,
+            status: resp.status,
+            durMs: Date.now() - startedAt,
+            source,
+            context,
+          });
         } else if (op && shouldEmitSuccessLog(method, url, resp.status, source)) {
           op.end(`${compactEndpoint(method, url)} ←${resp.status}`);
         }
@@ -490,8 +517,14 @@ export function initializeNetworkLogging() {
             op.log(`${compactEndpoint(method, url)} ×ERR expected=${expectedErrorReason}`);
             op.end("EXPECTED");
           } else {
-            op.error(`${compactEndpoint(method, url)} ×ERR`, message);
-            op.end("ERR");
+            logUnexpectedFetchFailure({
+              method,
+              url,
+              error: err,
+              durMs: Date.now() - startedAt,
+              source,
+              context,
+            });
           }
         }
         throw err;

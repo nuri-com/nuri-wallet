@@ -1,11 +1,8 @@
 import type { FC } from "react";
-import { Button, ButtonText, Text, View } from "@ds";
 import BlockchainIllustration from "../assets/illustrations/blockchain.svg";
 import CheckRouteIllustration from "../assets/illustrations/checkroute.svg";
-import ErrorTryAgainIllustration from "../assets/illustrations/error-tryagain.svg";
 import { t } from "../lib/i18n";
 import BrandStatusView from "./BrandStatusView";
-import PopRiffleView from "./PopRiffleView";
 
 // "transfer" is the same wait without an exchange in it — the money is going
 // straight to an address, so calling it a swap describes something that is not
@@ -38,62 +35,6 @@ const SwapProcessingView: FC<Props> = ({ phase, statusText }) => {
       caption={statusText}
       illustration={<Illustration width={240} height={240} />}
     />
-  );
-};
-
-// Honest failure state: "Didn't work, try again?" with ONE button that takes the
-// user back to the point that makes sense (a fresh route list). Never a raw
-// error message.
-// `inline` is the embedded use (card-details reveal error), where the sheet
-// already owns the screen and a 40px display headline would shout — it keeps the
-// compact headline. Fullscreen hosts get the shared brand scaffold.
-export const SwapTryAgainView: FC<{
-  onRetry: () => void;
-  retrying?: boolean;
-  inline?: boolean;
-  /**
-   * Overrides the headline for a failure that is NOT "didn't work": an outcome
-   * nobody can confirm yet has to say so, or the user reads a locked button as
-   * a broken screen and looks for another way to send the same money.
-   */
-  title?: string;
-}> = ({ onRetry, retrying = false, inline = false, title }) => {
-  const retryButton = (
-    <Button size="lg" variant="solid" accent="lilac" disabled={retrying} onPress={onRetry}>
-      <ButtonText>{t("swap.fail.retry")}</ButtonText>
-    </Button>
-  );
-
-  if (!inline) {
-    return (
-      <BrandStatusView
-        title={title ?? t("swap.fail.title")}
-        illustration={<ErrorTryAgainIllustration width={156} height={285} />}
-        footer={retryButton}
-      />
-    );
-  }
-
-  return (
-    <View
-      direction="column"
-      align="stretch"
-      justify="between"
-      gap="lg"
-      paddingX="lg"
-      paddingBottom="lg"
-      fill="grow"
-    >
-      <Text size="lg" emphasis>
-        {title ?? t("swap.fail.title")}
-      </Text>
-      <View direction="column" align="center" justify="center" fill="grow">
-        <PopRiffleView active>
-          <ErrorTryAgainIllustration width={156} height={285} />
-        </PopRiffleView>
-      </View>
-      {retryButton}
-    </View>
   );
 };
 

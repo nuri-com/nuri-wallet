@@ -31,6 +31,7 @@ export const it = {
     },
     PayLink: {
       notFound: "@%{username} non può essere pagato da questo link.",
+      expired: "Questa richiesta di pagamento è scaduta.",
       chooseAsset: "Paga con",
       from: "Da",
       to: "A",
@@ -109,6 +110,8 @@ export const it = {
       passkeyError: "Il tuo passkey non si è aperto. Tocca di nuovo per riprovare.",
       restoreBlockedSupportMessage:
         "Ciao, ho provato ad accedere con una passkey della versione precedente dell'app. Sembra che questo wallet non si possa ripristinare qui. Potete aiutarmi?",
+      restoreKeyMismatchSupportMessage:
+        "Ciao, ho provato ad accedere con la mia passkey, ma l'app non ha potuto confermare che appartiene al mio wallet e si è fermata prima di aprirlo. Potete aiutarmi?",
     },
     PasskeyContinueOrSwitchModal: {
       title: "Scegli un wallet",
@@ -138,6 +141,8 @@ export const it = {
       errorSendFailed: "Qualcosa è andato storto. Riprova.",
       errorSendPartnerFull:
         "Il partner di invio è temporaneamente saturo. I tuoi bitcoin sono al sicuro. Riprova più tardi.",
+      lightningAlreadyPaid: "Questa fattura è già pagata.",
+      lightningAlreadyPaying: "Questa fattura è già in pagamento. La trovi nella tua cronologia.",
       errorLightningLockupUnavailable: "Lightning non disponibile. Non è stato inviato nulla.",
       errorOnchainTooFreshHours: "Disponibile tra circa %{hours} h.",
       errorOnchainTooFreshMinutes: "Disponibile tra circa %{minutes} min.",
@@ -198,6 +203,20 @@ export const it = {
       stepDone: "Fatto",
       stepRunning: "In corso…",
       stepWaiting: "In attesa",
+      stepFailed: "Non riuscito",
+      stepRefunded: "Rimborsato",
+      stepStopped: "Interrotto",
+      reason: {
+        providerRejected: "Il fornitore di cambio ha rifiutato questo scambio.",
+        providerUnreachable: "Non è stato possibile raggiungere il fornitore di cambio.",
+        actionExpired: "Un passaggio non è stato completato in tempo.",
+        depositMismatch: "Il deposito non corrispondeva a quanto previsto dallo scambio.",
+        settlementTimeout: "Il fornitore di cambio non ha terminato in tempo.",
+        transactionRefused: "Una transazione di questo scambio è stata rifiutata.",
+        refundFailed: "Non è stato possibile completare il rimborso.",
+        expired: "Questo scambio è scaduto prima che venisse inviato qualcosa.",
+        unknown: "Non è stato indicato alcun motivo. Contatta l'assistenza e controlleremo.",
+      },
       autoNote: "Questo scambio procede da solo, non devi fare nulla né tenere l'app aperta.",
       statusLoadFailed: "Impossibile caricare lo stato attuale. Riprova tra un momento.",
       contactSupport: "Contatta il supporto",
@@ -479,6 +498,8 @@ export const it = {
     SepaRecipientModal: {
       headerTitle: "Bonifico bancario",
       newRecipient: "Nuovo destinatario",
+      savedSyncing: "Caricamento dei destinatari salvati…",
+      savedOffline: "Rubrica non raggiungibile. Solo i destinatari salvati su questo dispositivo.",
       continueLabel: "Continua",
       tabPersonal: "Privato",
       tabCompany: "Azienda",
@@ -509,6 +530,8 @@ export const it = {
       saveLabel: "Salva carta",
       addFailed: "Impossibile salvare questa carta. Controlla numero e nome.",
       notActive: "L'invio a carte non è ancora disponibile sul tuo conto.",
+      savedMatch: "Hai già salvato una carta che termina con %{last4} a questo nome.",
+      useSaved: "Usa la carta salvata",
       loadFailed: "Impossibile caricare le tue carte. Riprova tra poco.",
       cardRow: "Carta •••• %{last4}",
       amountTitle: "Invia alla carta",
@@ -516,6 +539,8 @@ export const it = {
       sendCtaLabel: "Invia %{currency} %{amount} a •••• %{last4}",
       sendCtaLabelNoAmount: "Invia a •••• %{last4}",
       feeHint: "Non basta per coprire la commissione. Prova un importo più basso.",
+      feeHintWithMax:
+        "Non basta per coprire la commissione. Puoi inviare fino a %{amount} %{currency}.",
       sendFailedHint:
         "Il trasferimento non è andato a buon fine. Controlla la tua attività prima di riprovare.",
       activityLabel: "Trasferimento su carta",
@@ -613,7 +638,6 @@ export const it = {
       addFromBalances: "Scambia dai miei saldi",
       addByBankTransfer: "Bonifico bancario",
       addReceive: "Ricevi",
-      addFromWallet: "Da un altro wallet",
       sendToBalances: "Scambia sui miei saldi",
       sendToSomeone: "A qualcuno",
       sendToBank: "Alla banca",
@@ -742,10 +766,6 @@ export const it = {
       notify_bitcoin: "Pagamenti Bitcoin",
       notify_banking: "Carte e banca",
       settings: "Impostazioni",
-      cryptoWallet: "Wallet crypto",
-      connectWalletHint: "Collegane uno per aggiungere fondi",
-      walletFallback: "Wallet",
-      walletDisconnect: "Scollega",
       language: "Lingua",
       currency: "Valuta",
       currencySubtitle: "Totali e importi convertiti sono mostrati in questa valuta.",
@@ -871,6 +891,12 @@ export const it = {
       request: "Richiedi",
       switchAddressType: "Cambia tipo di indirizzo",
     },
+    ActivitySheet: {
+      searchLabel: "Cerca nelle attività",
+      searchPlaceholder: "Cerca",
+      clearSearch: "Cancella ricerca",
+      noMatches: "Nessuna attività corrispondente",
+    },
     CountryPicker: {
       searchLabel: "Cerca paesi",
       searchPlaceholder: "Cerca",
@@ -888,6 +914,8 @@ export const it = {
       fieldCardNumber: "Numero della carta di debito",
       fieldBank: "Banca",
       fieldNetwork: "Rete di mobile money",
+      sepaBank: "Conto bancario in euro (SEPA)",
+      ukBank: "Conto bancario nel Regno Unito",
     },
   },
   common: {
@@ -920,10 +948,6 @@ export const it = {
     },
     status: {
       exchanging: "Scambio in corso… può richiedere un minuto",
-    },
-    fail: {
-      title: "Non ha funzionato,\nriprovi?",
-      retry: "Riprova",
     },
     processing: {
       routeTitle: "Ricerca dello scambio migliore…",

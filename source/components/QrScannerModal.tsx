@@ -1,6 +1,6 @@
 // @screen app.qr-scanner
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Linking, Platform, StyleSheet, View as RNView } from "react-native";
+import { Linking, StyleSheet, View as RNView } from "react-native";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import * as Clipboard from "expo-clipboard";
 
@@ -21,6 +21,7 @@ import QrUploadButton from "./QrUploadButton";
 import { createScanHold } from "./qrScanHold";
 import type { QrScannerProps } from "../types/debug";
 import { extractAddressFromQR, parseQr } from "../lib/qr";
+import { pastePrefill } from "../lib/qr/pastePrefill";
 import { t } from "../lib/i18n";
 import AppFooter from "./AppFooter";
 
@@ -79,11 +80,12 @@ const QrScannerModal: React.FC<Props> = ({
   const handleInput = useCallback(
     async (raw: string, source: "scan" | "paste" | "upload") => {
       // A rejected scan or upload blames the QR. A rejected paste falls back to manual
-      // entry when the caller supports it (the recipient field has its own
-      // paste button), otherwise it blames the clipboard.
+      // entry when the caller supports it, carrying the pasted text into the
+      // recipient field (a Nuri username is not a code, #1705), otherwise it
+      // blames the clipboard.
       const rejectPaste = () => {
         if (onManualEntry) {
-          onManualEntry();
+          onManualEntry(pastePrefill(raw));
         } else {
           showTransientMessage(t("screen.QrScannerModal.pasteInvalid"));
         }
@@ -187,26 +189,33 @@ const QrScannerModal: React.FC<Props> = ({
   );
 
   const onPaste = useCallback(async () => {
-    // On web, iOS forces a clipboard-authorization callout ("Paste"/"Speak") on
-    // every programmatic clipboard read, so a tap can't paste silently the way
-    // the native app does. Go straight to the recipient field instead — the
-    // user pastes/types there with the normal keyboard, no OS callout. Native
-    // keeps the one-tap clipboard paste.
-    if (Platform.OS === "web" && onManualEntry) {
-      onManualEntry();
+    // One explicit Paste carries the copied recipient through, on web too
+    // (#1705): the recipient field's own Paste reads the same clipboard, so
+    // reading here costs no extra OS callout and saves the second tap. When
+    // the clipboard is refused, unavailable or empty, the recipient field
+    // opens for typing (or the scanner says the clipboard is empty).
+    let text: string;
+    try {
+      text = await Clipboard.getStringAsync();
+    } catch {
+      console.log("[QrScannerModal] Clipboard unavailable");
+      if (onManualEntry) {
+        onManualEntry();
+      } else {
+        showTransientMessage(t("screen.QrScannerModal.clipboardEmpty"));
+      }
+      return;
+    }
+    if (!text?.trim()) {
+      console.log("[QrScannerModal] Clipboard empty");
+      if (onManualEntry) {
+        onManualEntry();
+      } else {
+        showTransientMessage(t("screen.QrScannerModal.clipboardEmpty"));
+      }
       return;
     }
     try {
-      const text = await Clipboard.getStringAsync();
-      if (!text?.trim()) {
-        console.log("[QrScannerModal] Clipboard empty");
-        if (onManualEntry) {
-          onManualEntry();
-        } else {
-          showTransientMessage(t("screen.QrScannerModal.clipboardEmpty"));
-        }
-        return;
-      }
       await handleInput(text.trim(), "paste");
     } catch {
       showTransientMessage(t("common.invalidQrTryAgain"));

@@ -64,10 +64,11 @@ async function callRemitTool(
   name: string,
   args: Record<string, unknown>,
   endpoint: string = REMIT_MCP_URL,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<unknown> {
   requestId += 1;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(endpoint, {
       method: "POST",
@@ -372,9 +373,36 @@ function callZapRemitTool(name: string, args: Record<string, unknown>): Promise<
   return callRemitTool(name, args, ZAPREMIT_MCP_URL);
 }
 
+/** One try of a catalog read: answered in well under a second when healthy. */
+export const ZAPREMIT_CATALOG_TIMEOUT_MS = 8_000;
+/** Tries per catalog read before the sheet shows its error (nuri-expo #1847). */
+export const ZAPREMIT_CATALOG_ATTEMPTS = 2;
+
+/**
+ * A read of the payout catalog (countries, methods, options, rates). It creates
+ * nothing, so a stalled or failed try is retried once on a short timeout
+ * instead of leaving the picker on "Loading…" for the full request timeout.
+ * Quotes, invoices and orders never go through here.
+ */
+async function readZapRemitCatalog(name: string, args: Record<string, unknown>): Promise<unknown> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= ZAPREMIT_CATALOG_ATTEMPTS; attempt += 1) {
+    try {
+      return await callRemitTool(name, args, ZAPREMIT_MCP_URL, ZAPREMIT_CATALOG_TIMEOUT_MS);
+    } catch (error) {
+      lastError = error;
+      log(
+        `Remit catalog read failed tool=${name} attempt=${attempt}/${ZAPREMIT_CATALOG_ATTEMPTS} src=services/remit/RemitService.ts#readZapRemitCatalog`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`remit ${name} failed`);
+}
+
 export async function getZapRemitCountries(): Promise<ZapRemitCountry[]> {
   // `{ data: [...] }` arrives already reduced to the list by the shared unwrap.
-  const data = await callZapRemitTool("zapremit_countries", {});
+  const data = await readZapRemitCatalog("zapremit_countries", {});
   if (!Array.isArray(data)) throw new Error("zapremit unavailable");
   return (data as Array<Record<string, unknown>>).flatMap((c) =>
     typeof c?.code === "string" && typeof c?.currency === "string"
@@ -385,7 +413,7 @@ export async function getZapRemitCountries(): Promise<ZapRemitCountry[]> {
 
 /** The methods the app offers for a country: active, no sender KYC. */
 export async function getZapRemitMethods(country: string): Promise<ZapRemitMethod[]> {
-  return parseZapRemitMethods(await callZapRemitTool("zapremit_methods", { country }));
+  return parseZapRemitMethods(await readZapRemitCatalog("zapremit_methods", { country }));
 }
 
 /** Allowed values for a picked field (banks, networks), by its field name. */
@@ -394,7 +422,7 @@ export async function getZapRemitOptions(
   methodCode: string,
   field: string,
 ): Promise<ZapRemitOption[]> {
-  const data = (await callZapRemitTool("zapremit_options", { country, methodCode })) as Record<
+  const data = (await readZapRemitCatalog("zapremit_options", { country, methodCode })) as Record<
     string,
     unknown
   >;
@@ -413,7 +441,7 @@ export async function getZapRemitTerms(
   currency: string,
 ): Promise<ZapRemitTerms> {
   const [rates, methods] = (await Promise.all([
-    callZapRemitTool("zapremit_rates", {}),
+    readZapRemitCatalog("zapremit_rates", {}),
     getZapRemitMethods(country),
   ])) as [{ BTC?: Record<string, unknown> }, ZapRemitMethod[]];
   const btcRate = finiteNumber(rates?.BTC?.[currency]);
@@ -618,7 +646,10 @@ export async function quoteTzPayout(amountTZS: number): Promise<TzPrice> {
 
 /** Banks and Lipa Namba providers, as `{ code, name }` for the form's pickers. */
 export async function listTzOptions(field: "bic" | "providerCode"): Promise<ZapRemitOption[]> {
-  const data = await callZapRemitTool(field === "bic" ? "list_banks" : "list_lipa_providers", {});
+  const data = await readZapRemitCatalog(
+    field === "bic" ? "list_banks" : "list_lipa_providers",
+    {},
+  );
   const record = (data ?? {}) as Record<string, unknown>;
   const list = Array.isArray(data)
     ? data

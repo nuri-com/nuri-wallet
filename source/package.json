@@ -17,17 +17,12 @@
     "@noble/ciphers": "2.0.0",
     "@noble/curves": "2.0.0",
     "@noble/hashes": "2.0.0",
-    "@rainbow-me/rainbowkit": "2.2.11",
     "@react-native-async-storage/async-storage": "2.1.2",
     "@react-native-community/netinfo": "11.4.1",
-    "@reown/appkit-react-native": "^2.0.6",
-    "@reown/appkit-wagmi-react-native": "^2.0.6",
     "@scure/base": "2.4.0",
     "@scure/bip32": "^2.0.0",
     "@scure/btc-signer": "2.4.1",
     "@sumsub/react-native-mobilesdk-module": "^1.40.2",
-    "@tanstack/react-query": "5.104.0",
-    "@walletconnect/react-native-compat": "^2.25.0",
     "@zerodev/ecdsa-validator": "^5.4.9",
     "@zerodev/permissions": "^5.6.3",
     "@zerodev/sdk": "^5.5.7",
@@ -71,8 +66,7 @@
     "react-native-web": "^0.20.0",
     "react-native-webview": "13.13.5",
     "text-encoding": "^0.7.0",
-    "viem": "^2.37.8",
-    "wagmi": "2.19.5"
+    "viem": "^2.37.8"
   },
   "devDependencies": {
     "@babel/core": "^7.29.6",
@@ -92,15 +86,6 @@
     "ajv@^8": "^8.20.0",
     "uuid": "^11.1.1",
     "fast-xml-parser@^4": "^5.11.2",
-    "@walletconnect/core": "2.26.0",
-    "@walletconnect/sign-client": "2.26.0",
-    "@walletconnect/types": "2.26.0",
-    "@walletconnect/utils": "2.26.0",
-    "@walletconnect/universal-provider": "2.26.0",
-    "@walletconnect/ethereum-provider": "2.26.0",
-    "cuer": {
-      "qr": "0.5.5"
-    },
     "ethjs-unit": {
       "bn.js": "4.12.5"
     },

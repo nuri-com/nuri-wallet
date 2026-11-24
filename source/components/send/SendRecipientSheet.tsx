@@ -33,6 +33,7 @@ import DsSheetHost from "../DsSheetHost";
 import PayoutAbroadSheet from "../PayoutAbroadSheet";
 import { petAvatar } from "../../lib/addressBook/petAvatar";
 import { t } from "../../lib/i18n";
+import type { BankPayoutRail } from "../../lib/remit/bankPayoutRails";
 import { createRecipientStepGate } from "../../lib/send/recipientStepGate";
 import type { Contact } from "../../lib/addressBook/contact";
 import { resolveEnsName } from "../../lib/qr/resolveEns";
@@ -65,6 +66,13 @@ type Props = {
   onScan: () => void;
   /** A move between the user's own balances instead. */
   onMoveToBalances: () => void;
+  /** Bank rails the opener runs itself, offered in the abroad picker (#1843). */
+  bankRails?: { sepa: boolean; uk: boolean };
+  /** A bank rail picked there: the opener's own flow takes over. */
+  onBankRail?: (rail: BankPayoutRail) => void;
+  /** What the field starts with on this open: text the scanner's Paste read
+   *  but could not route itself (#1705). Shown for review, never submitted. */
+  initialEntry?: string;
 };
 
 export default function SendRecipientSheet({
@@ -73,6 +81,9 @@ export default function SendRecipientSheet({
   onRecipient,
   onScan,
   onMoveToBalances,
+  bankRails,
+  onBankRail,
+  initialEntry,
 }: Props) {
   const [entry, setEntry] = useState("");
   const [resolving, setResolving] = useState(false);
@@ -94,7 +105,7 @@ export default function SendRecipientSheet({
   entryRef.current = entry;
   const contacts = useAddressBookContacts(visible);
 
-  // Every open starts empty.
+  // Every open starts empty, or with what the scanner's Paste carried in.
   useEffect(() => {
     if (!visible) {
       // Closed: nothing may complete it any more.
@@ -102,13 +113,13 @@ export default function SendRecipientSheet({
       return;
     }
     stepGate.current.reset();
-    setEntry("");
+    setEntry(initialEntry ?? "");
     setResolving(false);
     setNotFound(false);
     setLookupFailed(false);
     setNeedsNetwork(false);
     setAbroadOpen(false);
-  }, [visible]);
+  }, [visible, initialEntry]);
 
   const typed = entry.trim();
   const parsed = useMemo(() => parseRecipientInput(typed), [typed]);
@@ -367,6 +378,15 @@ export default function SendRecipientSheet({
         visible={visible && abroadOpen}
         payWith="bitcoin"
         onClose={() => setAbroadOpen(false)}
+        bankRails={bankRails}
+        onBankRail={
+          onBankRail
+            ? (rail) => {
+                setAbroadOpen(false);
+                onBankRail(rail);
+              }
+            : undefined
+        }
         onDone={(payout) => {
           setAbroadOpen(false);
           finish({ destinations: [], person: null, payout });

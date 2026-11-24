@@ -431,6 +431,7 @@ export async function resetEsims(): Promise<void> {
   await queue.catch(() => {});
   current = parseRecord(null);
   claimFailingSince.clear();
+  claimUnsettledSince.clear();
   loaded = null;
   backupDirty = false;
   relaySynced = false;
@@ -658,6 +659,19 @@ export function esimClaimFailingSince(paymentHash: string): number | undefined {
 }
 
 /**
+ * Since when nadanada has answered "not settled" (402/404) for an order this
+ * wallet marked paid, by payment hash, without delivering it since. A failed
+ * ask in between proves nothing either way and keeps the clock, so answers
+ * alternating with outages still end the spinner. Cleared by a delivery and
+ * by the order leaving.
+ */
+const claimUnsettledSince = new Map<string, number>();
+
+export function esimClaimUnsettledSince(paymentHash: string): number | undefined {
+  return claimUnsettledSince.get(paymentHash);
+}
+
+/**
  * Claim pending orders once (all of them, or only those `which` selects).
  * Overlapping calls share one pass.
  */
@@ -669,8 +683,18 @@ export function claimPendingEsims(
       await loadEsims();
       for (const order of current.pending.filter(which)) {
         try {
-          await claimEsimOrder(order.paymentHash);
+          const result = await claimEsimOrder(order.paymentHash);
           claimFailingSince.delete(order.paymentHash);
+          const stillPaidPending = current.pending.some(
+            (p) => p.paymentHash === order.paymentHash && p.paidAt !== undefined,
+          );
+          if (result?.status === "unpaid" && stillPaidPending) {
+            if (!claimUnsettledSince.has(order.paymentHash)) {
+              claimUnsettledSince.set(order.paymentHash, Date.now());
+            }
+          } else {
+            claimUnsettledSince.delete(order.paymentHash);
+          }
         } catch (error) {
           // nadanada or the network failed: the order stays, the next pass retries.
           if (error instanceof EsimResetError) continue;

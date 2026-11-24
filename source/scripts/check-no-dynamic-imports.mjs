@@ -29,9 +29,18 @@ const SCAN_ROOTS = [
   "ds",
   "lib",
   "native-modules",
+  "pay-page",
   "screens",
   "services",
 ];
+// The pay page's own install and build output are not source.
+const SKIP_DIRS = new Set([
+  "pay-page/node_modules",
+  "pay-page/dist",
+  "pay-page/.expo",
+  "pay-page/cloudflare/assets",
+  "pay-page/cloudflare/.wrangler",
+]);
 const EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs"]);
 const TEST_PATTERN = /\.test\.[jt]sx?$|\.spec\.[jt]sx?$|__tests__|__mocks__/;
 
@@ -72,6 +81,7 @@ function findDynamicImports(source, fileName) {
 function* walk(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
+    if (entry.isDirectory() && SKIP_DIRS.has(full)) continue;
     if (entry.isDirectory()) yield* walk(full);
     else yield full;
   }
@@ -156,6 +166,16 @@ try {
   }
 } finally {
   fs.rmSync(fixtureDir, { recursive: true, force: true });
+}
+
+// The pay page is source like the wallet, but its own install and build are not.
+const payFiles = [...walk("pay-page")];
+if (
+  !payFiles.includes(path.join("pay-page", "PayApp.tsx")) ||
+  payFiles.some((file) => [...SKIP_DIRS].some((dir) => file.startsWith(`${dir}${path.sep}`)))
+) {
+  console.error("pay-page walker self-test failed (source missed or install/build scanned)");
+  process.exit(1);
 }
 
 console.log("no dynamic imports in production code (detector + walker self-tests passed)");

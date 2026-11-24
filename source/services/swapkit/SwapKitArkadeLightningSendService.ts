@@ -30,6 +30,7 @@ import {
   resolveV2CommitIntent,
   SwapKitV2OrderStore,
 } from "./SwapKitV2OrderStore";
+import { arkadeIntentsKeyRef } from "./arkadeIntentsKeyRef";
 import { getSwapKitV2RecoveryKey } from "./SwapKitV2RecoveryKey";
 
 export const LIGHTNING_V2_CAPABILITIES = [
@@ -282,7 +283,7 @@ export async function createArkadeIntentsLightningSend(params: {
       acceptedDepositAmount: option.depositAmount,
       minimumSettleAmount: request.amount,
       // Sent ahead: the reply then carries the funding action (swapkit #421).
-      refundMaterial: { senderPublicKey, walletKeyRef: `nuri-arkade-intents-v1:${key}` },
+      refundMaterial: { senderPublicKey, walletKeyRef: arkadeIntentsKeyRef(key) },
     }).catch(async (error: unknown) => {
       await abandonV2CommitIntent(key).catch(() => {});
       throw error;
@@ -296,15 +297,19 @@ export async function createArkadeIntentsLightningSend(params: {
     idempotencyKey = `${baseKey}:after:${view.orderId}`;
   }
   const orderId = asSwapKitV2OrderId(view.orderId);
-  if (!claimSwapLoop(orderId)) throw new Error("This Lightning payment is already in progress.");
+  // The same invoice returns the order an earlier tap already funded. That
+  // payment is running (or done), so this tap is not a failure: the screen
+  // says so instead of an error and a support report.
+  if (!claimSwapLoop(orderId)) throw new LightningPaymentAlreadyStartedError(orderId, view.status);
   try {
+    if (fundedAlready(view)) throw new LightningPaymentAlreadyStartedError(orderId, view.status);
     if (view.actions.length === 1 && view.actions[0].kind === "arkade_refund_material") {
       view = await executeAndSubmitV2Action(orderId, view.actions[0], {
         recoveryKey,
         executors: {
           arkade_refund_material: async (request) => {
             if (request.scope !== orderId) throw new Error("Refund material scope mismatch.");
-            return { senderPublicKey, walletKeyRef: `nuri-arkade-intents-v1:${orderId}` };
+            return { senderPublicKey, walletKeyRef: arkadeIntentsKeyRef(orderId) };
           },
         },
       });
@@ -357,20 +362,53 @@ export async function createArkadeIntentsLightningSend(params: {
   }
 }
 
+/** A tap on an invoice this wallet is already paying, or has paid. Nothing new
+ * was started and no money moved for this tap. */
+export class LightningPaymentAlreadyStartedError extends Error {
+  readonly orderId: string;
+  readonly completed: boolean;
+  constructor(orderId: string, status: unknown) {
+    const completed = String(status || "").toUpperCase() === "COMPLETED";
+    super(completed ? "lightning_invoice_already_paid" : "lightning_payment_already_started");
+    this.name = "LightningPaymentAlreadyStartedError";
+    this.orderId = orderId;
+    this.completed = completed;
+  }
+}
+
+export function isLightningPaymentAlreadyStartedError(
+  error: unknown,
+): error is LightningPaymentAlreadyStartedError {
+  return (error as { name?: unknown } | null)?.name === "LightningPaymentAlreadyStartedError";
+}
+
+/** The order's lockup is funded: the solver is paying the invoice or has paid it. */
+function fundedAlready(view: SwapKitV2OrderView): boolean {
+  return ["IN_FLIGHT", "SETTLING", "COMPLETED"].includes(String(view.status || "").toUpperCase());
+}
+
 /** Earlier orders for one invoice a send walks past; each was a real tap. */
 const MAX_UNFUNDED_REPLAYS = 50;
 
-/** The server states this order is over and no money ever moved for it. */
+/** The server states this order is over and no money ever moved for it. A
+ * CANCELLED order is one `swap_cancel` retired, which the server refuses for an
+ * order that moved funds (e.g. after the user stopped the payment, #1780). */
 function endedUnfunded(view: SwapKitV2OrderView): boolean {
   const status = String(view.status || "").toUpperCase();
-  if (status === "EXPIRED") return true;
+  if (status === "EXPIRED" || status === "CANCELLED") return true;
   return status === "FAILED" && view.failure?.funds === "none-moved";
 }
 
-/** Fails closed: an unreadable record counts as possibly funded. */
+/** Fails closed: an unreadable record counts as possibly funded. This order's
+ * own send record does not count while it is provably never-sent (the user
+ * cancelled its prompt, no funding txid anywhere, #1780); its action journal
+ * still does. */
 async function mayHaveFunded(orderId: string, paymentHash: string): Promise<boolean> {
   try {
-    return (await lightningSendStartedFor(paymentHash)) || (await wasAnyV2ActionStarted(orderId));
+    return (
+      (await lightningSendStartedFor(paymentHash, { exceptDeclinedOrderId: orderId })) ||
+      (await wasAnyV2ActionStarted(orderId))
+    );
   } catch {
     return true;
   }

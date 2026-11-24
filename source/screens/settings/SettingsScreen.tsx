@@ -51,11 +51,6 @@ import { useAppLocale } from "../../lib/i18n/useAppLocale";
 import { getAppVersion } from "../../lib/loadedAppVersion";
 import { payLinkUrl } from "../../lib/pay/payLinkPath";
 import { inviteLinkUrl } from "../../lib/referral/inviteLink";
-import {
-  PAY_WALLET_AVAILABLE,
-  PayWalletProvider,
-  usePayWalletConnection,
-} from "../../lib/pay/payWallet";
 import { setLanguagePreference } from "../../services/app/LanguagePreferenceService";
 import { EventBus } from "../../services/events/AppEventBusService";
 import {
@@ -134,44 +129,6 @@ const Heading: React.FC<{ title: string; hairline?: boolean }> = ({ title, hairl
   </>
 );
 
-/**
- * The wallet Add money → From another wallet pays from: connect one ahead of
- * time, or see and end the current connection. Mounted only while Settings is
- * open, inside its own PayWalletProvider, so the wallet clients are not built
- * for a session that never looks at them.
- */
-const CryptoWalletRow: React.FC = () => {
-  const wallet = usePayWalletConnection();
-  const [confirming, setConfirming] = useState(false);
-  if (!wallet.available) return null;
-  const name = wallet.walletName ?? t(`${K}.walletFallback`);
-  const short = wallet.account ? `${wallet.account.slice(0, 6)}…${wallet.account.slice(-4)}` : "";
-  const value = wallet.account ? `${name}, ${short}` : t(`${K}.connectWalletHint`);
-  return (
-    <>
-      <ListAction
-        accessibilityLabel={`${t(`${K}.cryptoWallet`)}, ${value}`}
-        onPress={wallet.account ? () => setConfirming(true) : wallet.openConnect}
-      >
-        <ListActionText>{t(`${K}.cryptoWallet`)}</ListActionText>
-        <ListActionTextMuted>{value}</ListActionTextMuted>
-        <ListActionTrailIcon name="chevron-right" />
-      </ListAction>
-      <ChoiceSheet<"disconnect">
-        visible={confirming && wallet.account !== null}
-        onClose={() => setConfirming(false)}
-        title={name}
-        subtitle={short}
-        items={[{ key: "disconnect", label: t(`${K}.walletDisconnect`) }]}
-        onSelect={() => {
-          setConfirming(false);
-          void wallet.disconnect();
-        }}
-      />
-    </>
-  );
-};
-
 const SettingsScreen: React.FC<Props> = ({
   visible,
   onClose,
@@ -239,7 +196,7 @@ const SettingsScreen: React.FC<Props> = ({
     Platform.OS === "web" && typeof window !== "undefined" && window.location?.origin
       ? window.location.origin
       : PAY_LINK_ORIGIN;
-  const payLink = payLinkUrl(origin, username);
+  const payLink = payLinkUrl(PAY_LINK_ORIGIN, username);
   const inviteLink = inviteLinkUrl(origin, username);
   const verified = verification.state === "verified";
   const showBankCards = verification.action !== null;
@@ -392,11 +349,6 @@ const SettingsScreen: React.FC<Props> = ({
                     <ListActionTextMuted>{t(`${K}.currency_${currency}`)}</ListActionTextMuted>
                     <ListActionTrailIcon name="chevron-right" />
                   </ListAction>
-                  {visible && PAY_WALLET_AVAILABLE ? (
-                    <PayWalletProvider>
-                      <CryptoWalletRow />
-                    </PayWalletProvider>
-                  ) : null}
                 </List>
 
                 <Heading title={t(`${K}.shop`)} />
@@ -433,7 +385,7 @@ const SettingsScreen: React.FC<Props> = ({
         <PayLinkCreateSheet
           visible={visible && creatingPayLink}
           onClose={() => setCreatingPayLink(false)}
-          origin={origin}
+          origin={PAY_LINK_ORIGIN}
           username={username}
         />
       ) : null}

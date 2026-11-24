@@ -8,6 +8,8 @@
 // when the server does not use it (older contract, or that step failed there),
 // the action comes back and the wallet answers it as before.
 
+import { arkadeIntentsKeyRef } from "./arkadeIntentsKeyRef";
+
 export type V2RefundMaterial = { senderPublicKey: string; walletKeyRef: string };
 
 /** The contract minor (within major 2) that accepts `refundMaterial` on commit. */
@@ -63,11 +65,12 @@ export async function v2CommitRefundMaterial(args: {
     Date.now() - ahead.at < WARM_REUSE_MS
   ) {
     const material = await ahead.material.catch((): null => null);
-    const suffix = `:${WARM_SCOPE}`;
-    if (material?.walletKeyRef.endsWith(suffix)) {
+    // Only the wallet's own Arkade Intents ref is rescoped, through the same
+    // minting that bounds it to the contract's length (swapkit #443).
+    if (material && material.walletKeyRef === arkadeIntentsKeyRef(WARM_SCOPE)) {
       return {
         senderPublicKey: material.senderPublicKey,
-        walletKeyRef: `${material.walletKeyRef.slice(0, -suffix.length)}:${args.idempotencyKey}`,
+        walletKeyRef: arkadeIntentsKeyRef(args.idempotencyKey),
       };
     }
   }

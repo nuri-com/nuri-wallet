@@ -50,6 +50,12 @@ export type ArkadeLightningSendRecord = {
   senderPublicKey: string;
   createdAtMs: number;
   fundingTxid?: string;
+  /** The user cancelled the passkey prompt for this send before any funding
+   * txid existed (#1780). Positive proof the attempt never started: a record
+   * carrying it (and still no funding txid anywhere) is not "this wallet sent
+   * to the invoice", so it does not block an explicit retry and is retired
+   * without a settled-hash tombstone. Any later funding txid voids it. */
+  declinedUnsentAtMs?: number;
 };
 
 /**
@@ -358,33 +364,124 @@ export async function recordArkadeLightningSendFunding(
 }
 
 export function deleteArkadeLightningSend(ownerKey: string, rfqId: string): Promise<void> {
+  return enqueue(() => deleteSettledLocked(ownerKey, rfqId));
+}
+
+/** The delete itself; the caller holds the write queue. */
+async function deleteSettledLocked(ownerKey: string, rfqId: string): Promise<void> {
+  const [records, outbox, settled] = await Promise.all([
+    readRecordsForMutation(ownerKey, "delete"),
+    readFundingOutboxStrict(ownerKey),
+    readSettledHashesStrict(ownerKey),
+  ]);
+  // The payment hash outlives the record, and is written first: if this
+  // write fails the delete aborts and the record (still counted) stays.
+  const hashes = records
+    .filter((item) => item.rfqId === rfqId)
+    .map((item) => String(item.paymentHash || "").toLowerCase())
+    .filter((hash) => hash && !settled.includes(hash));
+  if (hashes.length > 0) {
+    await AsyncStorage.setItem(settledHashesKey(ownerKey), JSON.stringify([...settled, ...hashes]));
+  }
+  await writeRecords(
+    ownerKey,
+    records.filter((item) => item.rfqId !== rfqId),
+  );
+  if (outbox[rfqId]) {
+    delete outbox[rfqId];
+    await writeFundingOutbox(ownerKey, outbox);
+  }
+  pendingFundingTxids.delete(pendingFundingKey(ownerKey, rfqId));
+}
+
+/**
+ * A record only counts as never-sent while it carries the decline mark and no
+ * funding txid exists for it anywhere (record, durable outbox, process copy).
+ */
+function isDeclinedUnsent(
+  ownerKey: string,
+  record: ArkadeLightningSendRecord,
+  outbox: FundingOutbox,
+): boolean {
+  return (
+    typeof record.declinedUnsentAtMs === "number" &&
+    !record.fundingTxid &&
+    !outbox[record.rfqId] &&
+    !pendingFundingTxids.has(pendingFundingKey(ownerKey, record.rfqId))
+  );
+}
+
+/**
+ * Mark a send the user cancelled at the passkey prompt, before anything was
+ * broadcast (#1780). Keyed by the order id (`txId`). A record that already has
+ * a funding txid anywhere is left alone: the mark is only ever positive proof
+ * of "never sent".
+ */
+export function markArkadeLightningSendDeclined(ownerKey: string, orderId: string): Promise<void> {
   return enqueue(async () => {
-    const [records, outbox, settled] = await Promise.all([
-      readRecordsForMutation(ownerKey, "delete"),
+    const [records, outbox] = await Promise.all([
+      readRecordsForMutation(ownerKey, "decline"),
       readFundingOutboxStrict(ownerKey),
-      readSettledHashesStrict(ownerKey),
     ]);
-    // The payment hash outlives the record, and is written first: if this
-    // write fails the delete aborts and the record (still counted) stays.
-    const hashes = records
-      .filter((item) => item.rfqId === rfqId)
-      .map((item) => String(item.paymentHash || "").toLowerCase())
-      .filter((hash) => hash && !settled.includes(hash));
-    if (hashes.length > 0) {
-      await AsyncStorage.setItem(
-        settledHashesKey(ownerKey),
-        JSON.stringify([...settled, ...hashes]),
-      );
+    let changed = false;
+    const next = records.map((item) => {
+      if (item.txId !== orderId || item.fundingTxid || outbox[item.rfqId]) return item;
+      if (pendingFundingTxids.has(pendingFundingKey(ownerKey, item.rfqId))) return item;
+      changed = true;
+      return { ...item, declinedUnsentAtMs: Date.now() };
+    });
+    if (changed) await writeRecords(ownerKey, next);
+  });
+}
+
+/** An explicit retry of the order: its send record is live again. */
+export function clearArkadeLightningSendDeclined(ownerKey: string, orderId: string): Promise<void> {
+  return enqueue(async () => {
+    const records = await readRecordsForMutation(ownerKey, "undecline");
+    if (!records.some((item) => item.txId === orderId && item.declinedUnsentAtMs !== undefined)) {
+      return;
+    }
+    await writeRecords(
+      ownerKey,
+      records.map((item) => {
+        if (item.txId !== orderId || item.declinedUnsentAtMs === undefined) return item;
+        const { declinedUnsentAtMs: _dropped, ...rest } = item;
+        return rest;
+      }),
+    );
+  });
+}
+
+/**
+ * Retire a terminal send. A record that is still provably never-sent (user
+ * cancelled the prompt, no funding txid anywhere) and whose order the caller
+ * confirmed has no started action leaves no settled-hash tombstone, so the
+ * same invoice can be paid on purpose later. Anything else is deleted exactly
+ * like a settled send.
+ */
+export function retireArkadeLightningSend(
+  ownerKey: string,
+  rfqId: string,
+  options: { noActionStarted: boolean },
+): Promise<void> {
+  return enqueue(async () => {
+    const [records, outbox] = await Promise.all([
+      readRecordsForMutation(ownerKey, "retire"),
+      readFundingOutboxStrict(ownerKey),
+    ]);
+    const mine = records.filter((item) => item.rfqId === rfqId);
+    const unsent =
+      options.noActionStarted &&
+      mine.length > 0 &&
+      mine.every((item) => isDeclinedUnsent(ownerKey, item, outbox));
+    if (!unsent) {
+      await deleteSettledLocked(ownerKey, rfqId);
+      return;
     }
     await writeRecords(
       ownerKey,
       records.filter((item) => item.rfqId !== rfqId),
     );
-    if (outbox[rfqId]) {
-      delete outbox[rfqId];
-      await writeFundingOutbox(ownerKey, outbox);
-    }
-    pendingFundingTxids.delete(pendingFundingKey(ownerKey, rfqId));
   });
 }
 
@@ -393,18 +490,32 @@ export function deleteArkadeLightningSend(ownerKey: string, rfqId: string): Prom
  * still on record (written before the passkey prompt, so in-flight and
  * abandoned sends count) or one settled and deleted. Throws when the store
  * cannot be read; callers must treat that as "started".
+ *
+ * `exceptDeclinedOrderId`: the record of that order does not count while it is
+ * provably never-sent (declined at the prompt, no funding txid anywhere). The
+ * caller must still check that order's action journal itself.
  */
 export async function hasArkadeLightningSendFor(
   ownerKey: string,
   paymentHash: string,
+  options: { exceptDeclinedOrderId?: string } = {},
 ): Promise<boolean> {
   const hash = String(paymentHash || "").toLowerCase();
-  const [records, settled] = await Promise.all([
+  const [records, settled, outbox] = await Promise.all([
     readRecordsStrict(ownerKey),
     readSettledHashesStrict(ownerKey),
+    options.exceptDeclinedOrderId ? readFundingOutboxStrict(ownerKey) : Promise.resolve({}),
   ]);
   return (
     settled.includes(hash) ||
-    records.some((record) => String(record.paymentHash || "").toLowerCase() === hash)
+    records.some(
+      (record) =>
+        String(record.paymentHash || "").toLowerCase() === hash &&
+        !(
+          options.exceptDeclinedOrderId &&
+          record.txId === options.exceptDeclinedOrderId &&
+          isDeclinedUnsent(ownerKey, record, outbox)
+        ),
+    )
   );
 }

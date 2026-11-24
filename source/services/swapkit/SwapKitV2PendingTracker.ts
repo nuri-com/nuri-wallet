@@ -48,6 +48,7 @@ import {
   restoreV2ArkadeReservations,
 } from "./SwapKitV2MoveAccounting";
 import {
+  forgetV2Move,
   getV2Move,
   noteV2MoveNeedsUser,
   noteV2MoveStatus,
@@ -55,6 +56,33 @@ import {
 } from "./SwapKitV2MoveStatus";
 import { lightningPayoutOf, waitForLightningPayout } from "./SwapKitV2LightningPayout";
 import { t } from "../../lib/i18n";
+import { isUserCancelledAuth } from "../../lib/support/isUserCancelledAuth";
+
+/**
+ * How the tracker tells the Lightning send store that a user cancelled a
+ * funding prompt (#1780). Injected by SwapKitV2LightningResume, which owns the
+ * v2 Lightning send records: importing the store here would pull the Arkade SDK
+ * into every tracker consumer.
+ */
+export type V2LightningSendDeclineHooks = {
+  mark: (orderId: string) => Promise<void>;
+  clear: (orderId: string) => Promise<void>;
+};
+let lightningSendDeclineHooks: V2LightningSendDeclineHooks | null = null;
+export function setV2LightningSendDeclineHooks(hooks: V2LightningSendDeclineHooks | null): void {
+  lightningSendDeclineHooks = hooks;
+}
+
+/** Best effort: the Lightning send record of this order (if any) is proven
+ * never-sent after the user cancelled its prompt. */
+async function markLightningSendDeclined(orderId: string): Promise<void> {
+  await lightningSendDeclineHooks?.mark(orderId).catch(() => {});
+}
+
+/** Continue is a deliberate retry: the record counts as live again. */
+async function clearLightningSendDeclined(orderId: string): Promise<void> {
+  await lightningSendDeclineHooks?.clear(orderId).catch(() => {});
+}
 
 const SOURCE = "services/swapkit/SwapKitV2PendingTracker.ts";
 
@@ -310,6 +338,9 @@ async function cancelUnfundedV2Order(id: string, recoveryKey: string): Promise<b
   rememberView(view);
   reconcileV2TerminalOrder(id, view);
   lastViews.delete(id);
+  // The user stopped this payment themselves (#1780): the end they chose is
+  // not a failure to announce, so the pill simply goes.
+  if (SwapKitV2OrderStore.get(id)?.fundingDeclinedAt !== undefined) forgetV2Move(id);
   await SwapKitV2OrderStore.remove(id).catch(() => {});
   logWithId(
     `${LOG_EMOJI.bitcoin} SwapKitV2.track`,
@@ -541,6 +572,12 @@ export function startSwapKitV2Tracking(
         isRefusedBeforeBroadcast(error) ||
         (error instanceof SwapKitV2Error && error.code === "unsupported_action_kind") ||
         isProviderRefused;
+      // The user cancelled the passkey prompt and nothing was sent (#1780):
+      // remember it, so no later automatic wake prompts for this order again.
+      if (refusedUnsent && isUserCancelledAuth(error)) {
+        await SwapKitV2OrderStore.markFundingDeclined(id).catch(() => {});
+        await markLightningSendDeclined(id);
+      }
     } finally {
       payoutWatch.abort();
       releaseSwapLoop(id);
@@ -642,6 +679,9 @@ export async function resumeSwapKitV2Order(
   }
   const rebuilt = await rebuildV2ExecutorsForOrder(order);
   if (order.executorSpec && !rebuilt) throw new Error("Swap funding bounds are unavailable.");
+  // Continue is the explicit retry a cancelled funding prompt waits for (#1780).
+  await SwapKitV2OrderStore.clearFundingDeclined(orderId);
+  await clearLightningSendDeclined(orderId);
   startSwapKitV2Tracking(orderId, view, { ...(rebuilt ?? {}), ...v2ArkadeHoldForOrder(order) });
 }
 

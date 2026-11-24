@@ -26,6 +26,7 @@ export const de = {
     },
     PayLink: {
       notFound: "@%{username} kann über diesen Link nicht bezahlt werden.",
+      expired: "Diese Zahlungsanfrage ist abgelaufen.",
       chooseAsset: "Bezahlen mit",
       from: "Von",
       to: "An",
@@ -106,6 +107,8 @@ export const de = {
         "Dein Passkey wurde nicht geöffnet. Tippe erneut, um es noch einmal zu versuchen.",
       restoreBlockedSupportMessage:
         "Hallo, ich habe versucht, mich mit einem Passkey aus der vorherigen App-Version anzumelden. Dieses Wallet lässt sich hier offenbar nicht wiederherstellen. Könnt ihr mir helfen?",
+      restoreKeyMismatchSupportMessage:
+        "Hallo, ich wollte mich mit meinem Passkey anmelden, aber die App konnte nicht bestätigen, dass er zu meiner Wallet gehört, und hat deshalb vor dem Öffnen gestoppt. Könnt ihr mir helfen?",
     },
     PasskeyContinueOrSwitchModal: {
       title: "Wallet wählen",
@@ -134,6 +137,8 @@ export const de = {
       errorSendFailed: "Etwas ist schiefgelaufen. Bitte erneut versuchen.",
       errorSendPartnerFull:
         "Der Sendepartner ist gerade ausgelastet. Deine Bitcoin sind sicher. Bitte später erneut versuchen.",
+      lightningAlreadyPaid: "Diese Rechnung ist schon bezahlt.",
+      lightningAlreadyPaying: "Diese Rechnung wird schon bezahlt. Du siehst sie in deinem Verlauf.",
       errorLightningLockupUnavailable: "Lightning nicht verfügbar. Nichts gesendet.",
       errorOnchainTooFreshHours: "Verfügbar in etwa %{hours} Std.",
       errorOnchainTooFreshMinutes: "Verfügbar in etwa %{minutes} Min.",
@@ -195,6 +200,20 @@ export const de = {
       stepDone: "Fertig",
       stepRunning: "Läuft…",
       stepWaiting: "Wartet",
+      stepFailed: "Fehlgeschlagen",
+      stepRefunded: "Erstattet",
+      stepStopped: "Angehalten",
+      reason: {
+        providerRejected: "Der Tauschanbieter hat diesen Swap abgelehnt.",
+        providerUnreachable: "Der Tauschanbieter war nicht erreichbar.",
+        actionExpired: "Ein Schritt wurde nicht rechtzeitig abgeschlossen.",
+        depositMismatch: "Die Einzahlung passte nicht zu dem, was der Swap erwartet hat.",
+        settlementTimeout: "Der Tauschanbieter ist nicht rechtzeitig fertig geworden.",
+        transactionRefused: "Eine Transaktion dieses Swaps wurde abgelehnt.",
+        refundFailed: "Die Erstattung konnte nicht abgeschlossen werden.",
+        expired: "Dieser Swap ist abgelaufen, bevor etwas gesendet wurde.",
+        unknown: "Dafür wurde kein Grund angegeben. Kontaktiere den Support, wir sehen es uns an.",
+      },
       autoNote:
         "Dieser Swap läuft von selbst — du musst nichts tun und die App nicht offen halten.",
       statusLoadFailed:
@@ -489,6 +508,8 @@ export const de = {
     SepaRecipientModal: {
       headerTitle: "Bank\u00fcberweisung",
       newRecipient: "Neuer Empfänger",
+      savedSyncing: "Gespeicherte Empfänger werden geladen…",
+      savedOffline: "Adressbuch nicht erreichbar. Nur gespeicherte Empfänger von diesem Gerät.",
       continueLabel: "Weiter",
       tabPersonal: "Privat",
       tabCompany: "Firma",
@@ -519,6 +540,8 @@ export const de = {
       saveLabel: "Karte speichern",
       addFailed: "Die Karte konnte nicht gespeichert werden. Pr\u00fcfe Nummer und Namen.",
       notActive: "Senden an Karten ist f\u00fcr dein Konto noch nicht verf\u00fcgbar.",
+      savedMatch: "Du hast schon eine Karte mit Endung %{last4} f\u00fcr diesen Namen gespeichert.",
+      useSaved: "Gespeicherte Karte nutzen",
       loadFailed: "Deine Karten konnten nicht geladen werden. Versuche es gleich noch einmal.",
       cardRow: "Karte \u2022\u2022\u2022\u2022 %{last4}",
       amountTitle: "An Karte senden",
@@ -526,6 +549,8 @@ export const de = {
       sendCtaLabel: "%{currency} %{amount} an \u2022\u2022\u2022\u2022 %{last4} senden",
       sendCtaLabelNoAmount: "An \u2022\u2022\u2022\u2022 %{last4} senden",
       feeHint: "Nicht genug f\u00fcr die Geb\u00fchr. Versuche einen kleineren Betrag.",
+      feeHintWithMax:
+        "Nicht genug f\u00fcr die Geb\u00fchr. Du kannst bis zu %{amount} %{currency} senden.",
       sendFailedHint:
         "Die \u00dcberweisung ging nicht durch. Pr\u00fcfe deine Aktivit\u00e4t, bevor du es erneut versuchst.",
       activityLabel: "Karten\u00fcberweisung",
@@ -626,7 +651,6 @@ export const de = {
       addFromBalances: "Aus meinem Guthaben tauschen",
       addByBankTransfer: "Bank\u00fcberweisung",
       addReceive: "Empfangen",
-      addFromWallet: "Von einem anderen Wallet",
       sendToBalances: "In mein Guthaben tauschen",
       sendToSomeone: "An jemanden",
       sendToBank: "An Bank",
@@ -757,10 +781,6 @@ export const de = {
       notify_bitcoin: "Bitcoin-Zahlungen",
       notify_banking: "Karten und Bank",
       settings: "Einstellungen",
-      cryptoWallet: "Krypto-Wallet",
-      connectWalletHint: "Verbinde eine, um Geld einzuzahlen",
-      walletFallback: "Wallet",
-      walletDisconnect: "Trennen",
       language: "Sprache",
       currency: "Währung",
       currencySubtitle: "Summen und umgerechnete Beträge werden in dieser Währung angezeigt.",
@@ -887,6 +907,12 @@ export const de = {
       request: "Anfordern",
       switchAddressType: "Adresstyp wechseln",
     },
+    ActivitySheet: {
+      searchLabel: "Aktivität durchsuchen",
+      searchPlaceholder: "Suchen",
+      clearSearch: "Suche löschen",
+      noMatches: "Keine passenden Einträge",
+    },
     CountryPicker: {
       searchLabel: "Länder suchen",
       searchPlaceholder: "Suchen",
@@ -904,6 +930,8 @@ export const de = {
       fieldCardNumber: "Debitkartennummer",
       fieldBank: "Bank",
       fieldNetwork: "Mobile-Money-Anbieter",
+      sepaBank: "Euro-Bankkonto (SEPA)",
+      ukBank: "Britisches Bankkonto",
     },
   },
   common: {
@@ -933,10 +961,6 @@ export const de = {
     cta: {
       minimum: "Min. %{value}",
       maximum: "Max. %{value}",
-    },
-    fail: {
-      title: "Hat nicht geklappt \u2014\nnochmal versuchen?",
-      retry: "Nochmal versuchen",
     },
     processing: {
       routeTitle: "Bester Swap wird gesucht\u2026",

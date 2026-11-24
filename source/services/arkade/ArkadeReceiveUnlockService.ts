@@ -16,7 +16,10 @@ import { getArkadeReceiveOwner } from "./internal/identity";
 import { emitTrace, logArkadeWalletSignTrace } from "./internal/logging";
 import { recoverArkadeRecoverableVtxosManual } from "./internal/receiveAutoRecover";
 import { resumeArkadeLightningClaimsManual } from "./internal/receiveAutoClaim";
-import { renewArkadeExpiringVtxosManual } from "./internal/vtxoRenewal";
+import {
+  ARKADE_VTXO_RENEWAL_NOTHING_DUE,
+  renewArkadeExpiringVtxosManual,
+} from "./internal/vtxoRenewal";
 import { setPendingLnurlSwapsFromReceiveRows } from "./internal/pendingLnurlSwaps";
 import {
   filterArkadeBoardingRowsForCurrentWallet,
@@ -82,6 +85,13 @@ export type ArkadeReceiveUnlockState = {
   /** VTXOs whose batch expires within the renewal window (#1635). */
   vtxoRenewalDueCount: number;
   vtxoRenewalDueSats: number;
+  /**
+   * Until when a due renewal is held back after the operator refused it
+   * because its coins are held by another registration (#1923); 0 when none.
+   * While held the renewal is not offered: another approval would be refused
+   * the same way.
+   */
+  vtxoRenewalHeldUntilMs: number;
   arkadeWalletPendingVtxoCount: number;
   arkadeWalletPendingVtxoSats: number;
   preconfirmedPendingSats: number;
@@ -109,7 +119,48 @@ type ArkadeReceiveUnlockStepResult = {
   status: ArkadeReceiveUnlockStepStatus;
   label: string;
   output?: unknown;
+  /** Refused because another registration holds these coins (duplicatedIntent.ts). */
+  heldByOtherIntent?: boolean;
 };
+
+/**
+ * How long a renewal stays off the unlock screen after the operator refused it
+ * because another registration holds its coins (#1923): one round to end and
+ * the next to start, like a refused boarding coin (boardingSweepBlocked.ts).
+ * Each further refusal in a row doubles it, up to the cap, so a hold that does
+ * not clear does not bring the lock screen back every two minutes. The cap is
+ * far below the renewal window (vtxoRenewalPolicy.ts), so holding never lets a
+ * batch run out.
+ */
+export const VTXO_RENEWAL_REFUSED_HOLD_MS = 2 * 60 * 1000;
+export const VTXO_RENEWAL_REFUSED_HOLD_MAX_MS = 30 * 60 * 1000;
+
+// In-memory only: a reload costs one more attempt, which is refused the same
+// way and starts the hold again.
+let vtxoRenewalHold: { untilMs: number; refusals: number } | null = null;
+
+function vtxoRenewalHeldUntil(nowMs: number): number {
+  return vtxoRenewalHold && vtxoRenewalHold.untilMs > nowMs ? vtxoRenewalHold.untilMs : 0;
+}
+
+function holdVtxoRenewalAfterRefusal(nowMs: number): { untilMs: number; refusals: number } {
+  // Refusals count as "in a row" only while the last hold ended recently; a
+  // refusal long after starts over at the short hold.
+  const inARow =
+    vtxoRenewalHold !== null && nowMs - vtxoRenewalHold.untilMs < VTXO_RENEWAL_REFUSED_HOLD_MAX_MS;
+  const refusals = (inARow ? (vtxoRenewalHold?.refusals ?? 0) : 0) + 1;
+  const holdMs = Math.min(
+    VTXO_RENEWAL_REFUSED_HOLD_MS * 2 ** (refusals - 1),
+    VTXO_RENEWAL_REFUSED_HOLD_MAX_MS,
+  );
+  vtxoRenewalHold = { untilMs: nowMs + holdMs, refusals };
+  return vtxoRenewalHold;
+}
+
+/** Forget a refused renewal's hold (tests, and a renewal that went through). */
+export function resetArkadeVtxoRenewalHold(): void {
+  vtxoRenewalHold = null;
+}
 
 const ARKADE_UNLOCK_FAST_PATH_STATE_MAX_AGE_MS = 15_000;
 
@@ -129,6 +180,7 @@ const IDLE_STATE: ArkadeReceiveUnlockState = {
   recoverableMinSats: ARKADE_RECOVERABLE_UNLOCK_MIN_SATS,
   vtxoRenewalDueCount: 0,
   vtxoRenewalDueSats: 0,
+  vtxoRenewalHeldUntilMs: 0,
   arkadeWalletPendingVtxoCount: 0,
   arkadeWalletPendingVtxoSats: 0,
   preconfirmedPendingSats: 0,
@@ -224,6 +276,9 @@ function formatUnlockDetail(
     `recoverable_min_sats=${state.recoverableMinSats}`,
     `vtxo_renewal_due_count=${state.vtxoRenewalDueCount}`,
     `vtxo_renewal_due_sats=${state.vtxoRenewalDueSats}`,
+    state.vtxoRenewalHeldUntilMs > 0
+      ? `vtxo_renewal_held_until=${new Date(state.vtxoRenewalHeldUntilMs).toISOString()}`
+      : "",
     `arkade_wallet_pending_vtxo_count=${state.arkadeWalletPendingVtxoCount}`,
     `arkade_wallet_pending_vtxo_sats=${state.arkadeWalletPendingVtxoSats}`,
     `preconfirmed_pending_sats=${state.preconfirmedPendingSats}`,
@@ -305,6 +360,7 @@ function buildUnlockState(args: {
   const recoverableSats = parseSats(args.summary?.balanceRecoverableSats);
   const vtxoRenewalDueCount = parseSats(args.summary?.vtxoRenewalDueCount);
   const vtxoRenewalDueSats = parseSats(args.summary?.vtxoRenewalDueSats);
+  const vtxoRenewalHeldUntilMs = vtxoRenewalDueCount > 0 ? vtxoRenewalHeldUntil(Date.now()) : 0;
   const arkadeWalletPendingVtxoCount = Math.max(
     0,
     Math.trunc(Number(args.summary?.debugPendingVtxoCount || 0) || 0),
@@ -334,11 +390,17 @@ function buildUnlockState(args: {
     });
   }
   if (vtxoRenewalDueCount > 0 && vtxoRenewalDueSats >= ARKADE_RECOVERABLE_UNLOCK_MIN_SATS) {
-    actionableItems.push({
-      kind: "vtxo_renewal",
-      count: vtxoRenewalDueCount,
-      sats: vtxoRenewalDueSats,
-    });
+    // A renewal the operator just refused because another registration holds
+    // its coins is not offered again until that hold can have cleared (#1923):
+    // the summary would otherwise stay actionable and invite an approval that
+    // is refused the same way.
+    if (vtxoRenewalHeldUntilMs === 0) {
+      actionableItems.push({
+        kind: "vtxo_renewal",
+        count: vtxoRenewalDueCount,
+        sats: vtxoRenewalDueSats,
+      });
+    }
   }
   const actionableCount = actionableItems.reduce((sum, item) => sum + item.count, 0);
   const actionableSats = actionableItems.reduce((sum, item) => sum + item.sats, 0);
@@ -347,7 +409,8 @@ function buildUnlockState(args: {
     boardingPendingCount > 0 ||
     readyBoardingRows.length > 0 ||
     arkadeWalletPendingVtxoCount > 0 ||
-    preconfirmedPendingSats > 0;
+    preconfirmedPendingSats > 0 ||
+    vtxoRenewalHeldUntilMs > 0;
   const status =
     args.status || (actionableCount > 0 ? "actionable" : hasPending ? "pending" : "idle");
   const core = {
@@ -366,6 +429,7 @@ function buildUnlockState(args: {
     recoverableMinSats: ARKADE_RECOVERABLE_UNLOCK_MIN_SATS,
     vtxoRenewalDueCount,
     vtxoRenewalDueSats,
+    vtxoRenewalHeldUntilMs,
     arkadeWalletPendingVtxoCount,
     arkadeWalletPendingVtxoSats,
     preconfirmedPendingSats,
@@ -575,8 +639,13 @@ async function runStep(
   logs.push(`${label}: start`);
   try {
     const out = await work();
+    // A renewal whose fresh read finds nothing due did no work and failed at
+    // nothing: the offer was stale (#1977). It is a skip, never a reported
+    // payment failure; the refresh after the run drops the stale item.
     const status: ArkadeReceiveUnlockStepStatus =
-      label === "boarding_sweep" && (out === "pending_unconfirmed" || out === "not_wallet_script")
+      (label === "boarding_sweep" &&
+        (out === "pending_unconfirmed" || out === "not_wallet_script")) ||
+      (label === "vtxo_renewal" && out === ARKADE_VTXO_RENEWAL_NOTHING_DUE)
         ? "skipped"
         : "completed";
     logs.push(`${label}: ${status} ${String(out || "done")} durMs=${Date.now() - startedAtMs}`);
@@ -598,7 +667,7 @@ async function runStep(
       logs.push(
         `${label}: blocked duplicated_intent inputs=${held} durMs=${Date.now() - startedAtMs}`,
       );
-      return { status: "failed", label };
+      return { status: "failed", label, heldByOtherIntent: true };
     }
     errors.push(`${label}: ${detail}`);
     logs.push(`${label}: failed ${detail} durMs=${Date.now() - startedAtMs}`);
@@ -723,9 +792,25 @@ export async function runArkadeReceiveUnlock(
           ),
         );
       } else if (kind === "vtxo_renewal") {
-        stepResults.push(
-          await runStep(logs, errors, "vtxo_renewal", () => renewArkadeExpiringVtxosManual()),
+        const step = await runStep(logs, errors, "vtxo_renewal", () =>
+          renewArkadeExpiringVtxosManual(),
         );
+        if (step.heldByOtherIntent) {
+          const hold = holdVtxoRenewalAfterRefusal(Date.now());
+          logs.push(
+            `vtxo_renewal: held until=${new Date(hold.untilMs).toISOString()} refusals=${hold.refusals}`,
+          );
+          logArkadeWalletSignTrace("arkade_vtxo_renewal_held", {
+            status: "held",
+            reason,
+            refusals: hold.refusals,
+            hold_ms: hold.untilMs - Date.now(),
+            expected_next: "reoffer_after_hold_from_fresh_summary",
+          });
+        } else if (step.status === "completed") {
+          resetArkadeVtxoRenewalHold();
+        }
+        stepResults.push(step);
       } else if (kind === "boarding_sweep") {
         if (sweepReadyRows.length === 0) {
           // The state says sats are waiting, but this session has no rows to
