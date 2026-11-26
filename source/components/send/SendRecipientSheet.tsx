@@ -67,7 +67,7 @@ type Props = {
   /** A move between the user's own balances instead. */
   onMoveToBalances: () => void;
   /** Bank rails the opener runs itself, offered in the abroad picker (#1843). */
-  bankRails?: { sepa: boolean; uk: boolean };
+  bankRails?: { sepa: boolean; uk: boolean; card: boolean };
   /** A bank rail picked there: the opener's own flow takes over. */
   onBankRail?: (rail: BankPayoutRail) => void;
   /** What the field starts with on this open: text the scanner's Paste read

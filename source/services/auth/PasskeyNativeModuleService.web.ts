@@ -138,8 +138,11 @@ async function getAssertion(opts: {
   prfSalt?: string;
   /** Set only by the plain "sign in with any of my passkeys" restore. */
   acceptPickedCredential?: boolean;
+  /** Aborts the pending get() so a later ceremony is not refused as "already pending". */
+  signal?: AbortSignal;
 }): Promise<PublicKeyCredential> {
   ensureWebAuthn();
+  opts.signal?.throwIfAborted();
   // Naming the credential is what we want everywhere it works: the browser
   // goes straight to the wallet's passkey with no chooser. Android Chrome is
   // the exception — measured on Android 15 / Chrome 153, a get() with a
@@ -167,7 +170,10 @@ async function getAssertion(opts: {
       prf: { eval: { first: utf8(opts.prfSalt) } },
     };
   }
-  const assertion = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential | null;
+  const assertion = (await navigator.credentials.get({
+    publicKey,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  })) as PublicKeyCredential | null;
   if (!assertion) throw new Error("empty_assertion");
   // The exact credential is enforced by default. One shape relaxes it, and only
   // for the plain restore where the platform cannot filter the picker (Android
@@ -259,7 +265,7 @@ export const useExistingWalletPasskey = async (
   rpId: string,
   prfSalt: string,
   credIdB64u?: string | null,
-  opts?: { acceptPickedCredential?: boolean },
+  opts?: { acceptPickedCredential?: boolean; signal?: AbortSignal },
 ): Promise<NativePasskeyResult> => {
   const assertion = await getAssertion({
     rpId,
@@ -267,6 +273,7 @@ export const useExistingWalletPasskey = async (
     credIdB64u,
     prfSalt,
     acceptPickedCredential: opts?.acceptPickedCredential,
+    signal: opts?.signal,
   });
   const prf = readPrfFirst(assertion);
   if (!prf) throw new Error("missing_assertion_prf");

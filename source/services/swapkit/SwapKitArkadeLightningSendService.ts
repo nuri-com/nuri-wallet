@@ -297,10 +297,7 @@ export async function createArkadeIntentsLightningSend(params: {
     idempotencyKey = `${baseKey}:after:${view.orderId}`;
   }
   const orderId = asSwapKitV2OrderId(view.orderId);
-  // The same invoice returns the order an earlier tap already funded. That
-  // payment is running (or done), so this tap is not a failure: the screen
-  // says so instead of an error and a support report.
-  if (!claimSwapLoop(orderId)) throw new LightningPaymentAlreadyStartedError(orderId, view.status);
+  if (!claimSwapLoop(orderId)) throw new ArkadeLightningPaymentInProgressError(orderId);
   try {
     if (fundedAlready(view)) throw new LightningPaymentAlreadyStartedError(orderId, view.status);
     if (view.actions.length === 1 && view.actions[0].kind === "arkade_refund_material") {
@@ -360,6 +357,32 @@ export async function createArkadeIntentsLightningSend(params: {
     }
     throw error;
   }
+}
+
+/**
+ * The same invoice's order is already being driven by another loop (an earlier
+ * tap still waiting on its approval, or the tracker resuming it), so this
+ * attempt stops before it touches anything. Not a failure: the running attempt
+ * owns the order, its approval and its outcome, and nothing was sent by this
+ * one (#2004). Callers must not report it as failed or offer a blind retry.
+ */
+export class ArkadeLightningPaymentInProgressError extends Error {
+  readonly orderId: string;
+  constructor(orderId: string) {
+    super("This Lightning payment is already in progress.");
+    this.name = "ArkadeLightningPaymentInProgressError";
+    this.orderId = orderId;
+  }
+}
+
+export function isArkadeLightningPaymentInProgressError(
+  error: unknown,
+): error is ArkadeLightningPaymentInProgressError {
+  return (
+    error instanceof ArkadeLightningPaymentInProgressError ||
+    (error as { name?: unknown } | null | undefined)?.name ===
+      "ArkadeLightningPaymentInProgressError"
+  );
 }
 
 /** A tap on an invoice this wallet is already paying, or has paid. Nothing new

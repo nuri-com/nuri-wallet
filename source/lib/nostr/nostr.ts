@@ -24,13 +24,23 @@ import {
   hasNostrPrivateKey,
   storeNostrPrivateKey,
 } from "../secureKeyStorage";
-import { deriveNostrPrivateKeyFromBitcoinKey } from "../walletDerivation";
+import { deriveNostrPrivateKeyFromBitcoinKey, isValidNostrPrivateKey } from "../walletDerivation";
 
 export type NostrKeypair = {
   sk: Uint8Array;
   pkHex: string;
   npub: string;
 };
+
+/**
+ * False for a keypair whose secret key was wiped (zeroize fills it with 0) or is
+ * otherwise not a valid secp256k1 scalar. The blocked-restore support chat gets an
+ * in-memory keypair that App zeroizes when the chat closes; a component still holding
+ * that object would otherwise sign with 0 and throw "invalid scalar" (#2017).
+ */
+export function isUsableNostrKeypair(pair: NostrKeypair | null | undefined): pair is NostrKeypair {
+  return Boolean(pair && pair.sk instanceof Uint8Array && isValidNostrPrivateKey(pair.sk));
+}
 
 import { getEventHash, type NostrEvent, signEvent, verifyEvent } from "./event";
 

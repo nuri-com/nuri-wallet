@@ -529,6 +529,10 @@ export type SwapKitV2DispatchOptions = {
    *  tracker's sats hold) runs while the funding is prepared, never after the
    *  broadcast. A rejection refuses the broadcast. */
   beforeFunding?: Promise<void>;
+  /** Diagnostics only: called once, synchronously, right before a journaled
+   *  action's durable evidence is re-submitted (the executor does not run).
+   *  Must not throw; it cannot change what is submitted. */
+  onReplay?: () => void;
 };
 
 /** Every ready action's kind must have an executor BEFORE the first one runs —
@@ -579,6 +583,11 @@ export async function executeAndSubmitV2Action(
       { orderId, actionId },
       { source: `${SOURCE}#executeAndSubmitV2Action`, event: "FLOW", action: "replay" },
     );
+    try {
+      options.onReplay?.();
+    } catch {
+      // A diagnostics hook never decides whether evidence is submitted.
+    }
     return submitSwapKitV2Evidence({
       orderId,
       recoveryKey: options.recoveryKey,

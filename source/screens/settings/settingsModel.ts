@@ -58,3 +58,20 @@ export function verificationRow(input: WirexVerificationInput): {
   }
   return { state: "none", action: "start" };
 }
+
+/** The top Settings navigation rows, in screen order. */
+export type NavigationRow = "payLink" | "invite" | "addressBook" | "support";
+
+/**
+ * The navigation rows Settings shows, in order. Pay link and Invite need a
+ * username/link and drop out without one; the screen draws a list separator
+ * between consecutive entries only, so a hidden row never leaves a stray or
+ * doubled line.
+ */
+export function navigationRows(available: { payLink: boolean; invite: boolean }): NavigationRow[] {
+  const rows: NavigationRow[] = [];
+  if (available.payLink) rows.push("payLink");
+  if (available.invite) rows.push("invite");
+  rows.push("addressBook", "support");
+  return rows;
+}

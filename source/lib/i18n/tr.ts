@@ -142,6 +142,8 @@ export const tr = {
       lightningAlreadyPaid: "Bu fatura zaten ödendi.",
       lightningAlreadyPaying: "Bu fatura zaten ödeniyor. Geçmişinde görünüyor.",
       errorLightningLockupUnavailable: "Lightning kullanılamıyor. Hiçbir şey gönderilmedi.",
+      errorLightningSendStillRunning:
+        "Son Lightning ödemen hâlâ sürüyor. Bitmesini bekle, sonra tekrar gönder.",
       errorOnchainTooFreshHours: "Yaklaşık %{hours} saat içinde kullanılabilir.",
       errorOnchainTooFreshMinutes: "Yaklaşık %{minutes} dk içinde kullanılabilir.",
       errorOnchainTooFresh: "Henüz kullanılamıyor. Daha sonra tekrar dene.",
@@ -244,6 +246,13 @@ export const tr = {
       errorPersistentBody: "Hâlâ çalışmıyor. Lütfen destekle iletişime geç.",
       amountBelowMin: "En az %{sats} sats",
       amountAboveMax: "En fazla %{sats} sats",
+      paidTitle: "Ödendi",
+      paidBody: "Ödeme cüzdanına ulaştı.",
+      detectedTitle: "Ödeme geldi",
+      detectedBody:
+        "Hâlâ tamamlanıyor, bitince bakiyende görünür. Görünmezse destekle iletişime geç.",
+      newRequest: "Yeni talep",
+      expired: "Fatura süresi doldu",
     },
     QrScannerModal: {
       title: "QR tara",
@@ -904,6 +913,7 @@ export const tr = {
       fieldNetwork: "Mobil para ağı",
       sepaBank: "Euro banka hesabı (SEPA)",
       ukBank: "Birleşik Krallık banka hesabı",
+      cardBank: "Visa veya Mastercard kart",
     },
   },
   common: {

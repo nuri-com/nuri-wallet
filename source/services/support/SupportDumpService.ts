@@ -40,6 +40,17 @@ import {
 import { publishNostrEventToRelays } from "../../lib/nostr/relayPublish";
 import { bytesToHex, secp256k1, schnorr, zeroize } from "../../lib/crypto";
 import type { BufferedLogEntry } from "../logging/DebugLogBuffer";
+import {
+  capPreferringIssues,
+  fitDumpText,
+  SHARE_INFO_DUMP_TEXT_BYTES,
+  utf8Length,
+} from "./supportDumpText";
+
+// Manual Share Info: more entries and a longer continuous tail than automatic
+// reports (160 entries, 60 tail). The log buffer itself keeps 800 entries.
+const SHARE_INFO_MAX_LOG_ENTRIES = 400;
+const SHARE_INFO_TAIL_LOG_ENTRIES = 300;
 
 export type SupportDumpAppSnapshot = {
   activeTab?: string;
@@ -136,7 +147,7 @@ function collapseConsecutiveLogs(entries: BufferedLogEntry[]): BufferedLogEntry[
 
 function selectLogsForDump(
   raw: BufferedLogEntry[],
-  opts: { maxIncluded: number },
+  opts: { maxIncluded: number; tailCount?: number },
 ): { logs: BufferedLogEntry[]; summary: any } {
   const cleaned = raw.filter((e) => !isNoisyLogEntry(e));
   const errorOrWarnIdx: number[] = [];
@@ -156,7 +167,7 @@ function selectLogsForDump(
     }
   }
 
-  const tailCount = 60;
+  const tailCount = Math.max(0, Math.floor(opts.tailCount ?? 60));
   for (let i = Math.max(0, cleaned.length - tailCount); i < cleaned.length; i += 1) {
     includeIdx.add(i);
   }
@@ -166,6 +177,9 @@ function selectLogsForDump(
     .map((i) => cleaned[i]);
 
   const collapsed = collapseConsecutiveLogs(selected);
+  // Entries the dump could have carried (after noise filter and the same
+  // repeat-collapse), so the coverage line also counts what selection dropped.
+  const availableCount = collapseConsecutiveLogs(cleaned).length;
 
   const maxIncluded = Math.max(10, Math.floor(opts.maxIncluded));
   if (collapsed.length <= maxIncluded) {
@@ -174,6 +188,7 @@ function selectLogsForDump(
       summary: {
         rawCount: raw.length,
         cleanedCount: cleaned.length,
+        availableCount,
         includedCount: collapsed.length,
         errors: collapsed.filter((l) => l.level === "error").length,
         warns: collapsed.filter((l) => l.level === "warn").length,
@@ -181,33 +196,16 @@ function selectLogsForDump(
     };
   }
 
-  // Prefer errors/warns, then fill with latest remaining context.
-  const picked: BufferedLogEntry[] = [];
-  const seen = new Set<string>();
-  const reversed = [...collapsed].reverse();
-  const keyOf = (e: BufferedLogEntry) => `${e.ts}|${e.level}|${e.message}`;
-  const add = (e: BufferedLogEntry) => {
-    const k = keyOf(e);
-    if (seen.has(k)) return;
-    picked.push(e);
-    seen.add(k);
-  };
-
-  for (const e of reversed) {
-    if (picked.length >= maxIncluded) break;
-    if (e.level === "error" || e.level === "warn") add(e);
-  }
-  for (const e of reversed) {
-    if (picked.length >= maxIncluded) break;
-    add(e);
-  }
-
-  picked.reverse();
+  // Manual Share Info reserves its recent tail first, then prefers errors/warns,
+  // then fills with latest remaining context; time order kept. Automatic reports
+  // pass no tailCount and keep the old issue-first cap.
+  const picked = capPreferringIssues(collapsed, maxIncluded, opts.tailCount);
   return {
     logs: picked,
     summary: {
       rawCount: raw.length,
       cleanedCount: cleaned.length,
+      availableCount,
       includedCount: picked.length,
       errors: picked.filter((l) => l.level === "error").length,
       warns: picked.filter((l) => l.level === "warn").length,
@@ -395,10 +393,23 @@ export async function sendSupportDump(opts: {
       ? await wirexService.getOnboardEmail(ethAddress).catch((): null => null)
       : null;
 
-  const maxLogEntries = Math.max(20, Math.floor(opts.maxLogEntries ?? SUPPORT_MAX_LOG_ENTRIES));
+  // A manual Share Info carries a longer, continuous recent history so support
+  // can follow one journey (prepare, approve, submit, outcome) from one share.
+  // Automatic error reports keep the short window.
+  const manualShare = Boolean(opts.includePersonalData);
+  const maxLogEntries = Math.max(
+    20,
+    Math.floor(
+      opts.maxLogEntries ?? (manualShare ? SHARE_INFO_MAX_LOG_ENTRIES : SUPPORT_MAX_LOG_ENTRIES),
+    ),
+  );
+  const maxTextBudget = manualShare ? SHARE_INFO_DUMP_TEXT_BYTES : MAX_SUPPORT_DUMP_TEXT_CHARS;
   const scanLimit = Math.min(1200, Math.max(250, maxLogEntries * 8));
   const rawLogs = getBufferedLogs({ maxEntries: scanLimit });
-  const selected = selectLogsForDump(rawLogs, { maxIncluded: maxLogEntries });
+  const selected = selectLogsForDump(rawLogs, {
+    maxIncluded: maxLogEntries,
+    tailCount: manualShare ? SHARE_INFO_TAIL_LOG_ENTRIES : undefined,
+  });
   const logs = selected.logs.map((entry) => {
     const limit =
       entry.level === "error"
@@ -710,32 +721,26 @@ export async function sendSupportDump(opts: {
       });
     }
 
-    const logLines = logs.map((entry) =>
-      formatLogEntry(entry, entry.level === "error" ? 1200 : entry.level === "warn" ? 900 : 220),
-    );
+    const logLines = logs.map((entry) => ({
+      ts: entry.ts,
+      text: formatLogEntry(
+        entry,
+        entry.level === "error" ? 1200 : entry.level === "warn" ? 900 : 220,
+      ),
+    }));
 
     const header = `${lines.join("\n")}\nLogs ${selected.summary.includedCount}/${selected.summary.cleanedCount}/${selected.summary.rawCount} err=${selected.summary.errors} warn=${selected.summary.warns}:`;
 
-    const max = MAX_SUPPORT_DUMP_TEXT_CHARS;
-    if (header.length >= max) {
-      return safeText(header.slice(0, max));
-    }
-
-    const remaining = max - header.length - 1;
-    const picked: string[] = [];
-    let used = 0;
-    for (let i = logLines.length - 1; i >= 0; i -= 1) {
-      const line = logLines[i];
-      const next = used === 0 ? line.length : used + 1 + line.length;
-      if (next > remaining) break;
-      picked.push(line);
-      used = next;
-    }
-    picked.reverse();
-
-    const logBody = picked.join("\n");
-    const combined = `${header}\n${logBody}`;
-    return safeText(combined);
+    return safeText(
+      fitDumpText({
+        header,
+        lines: logLines,
+        budget: maxTextBudget,
+        formatTime: formatLogTime,
+        measure: manualShare ? utf8Length : undefined,
+        availableCount: selected.summary.availableCount,
+      }).text,
+    );
   };
 
   const text = buildDumpText();

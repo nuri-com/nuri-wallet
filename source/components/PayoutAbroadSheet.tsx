@@ -76,7 +76,7 @@ type Props = {
   onClose: () => void;
   onDone: (destination: ZapRemitDestination) => void;
   /** Bank rails the opening screen can run right now; unavailable ones are not shown. */
-  bankRails?: { sepa: boolean; uk: boolean };
+  bankRails?: { sepa: boolean; uk: boolean; card: boolean };
   onBankRail?: (rail: BankPayoutRail) => void;
 };
 
@@ -124,7 +124,11 @@ export default function PayoutAbroadSheet({
 }: Props) {
   const rails =
     bankRails && onBankRail
-      ? bankPayoutRails({ sepaReady: bankRails.sepa, ukSend: bankRails.uk })
+      ? bankPayoutRails({
+          sepaReady: bankRails.sepa,
+          ukSend: bankRails.uk,
+          cardReady: bankRails.card,
+        })
       : [];
   const [countries, setCountries] = useState<ZapRemitCountry[] | null>(null);
   const [country, setCountry] = useState<ZapRemitCountry | null>(null);
@@ -310,10 +314,17 @@ export default function PayoutAbroadSheet({
                     {rail === "uk" ? (
                       <ListActionLeadingAvatar source={flagForIso2("GB")} />
                     ) : (
-                      <ListActionLeadingAvatar name="bank" variant="soft" accent="lilac" />
+                      <ListActionLeadingAvatar
+                        name={rail === "card" ? "card" : "bank"}
+                        variant="soft"
+                        accent="lilac"
+                      />
                     )}
                     <ListActionText>{t(`${K}.${rail}Bank`)}</ListActionText>
-                    <ListActionTextMuted>{rail === "uk" ? "GBP" : "EUR"}</ListActionTextMuted>
+                    {/* A card payout's currency follows the card, so none is named. */}
+                    {rail === "card" ? null : (
+                      <ListActionTextMuted>{rail === "uk" ? "GBP" : "EUR"}</ListActionTextMuted>
+                    )}
                     <ListActionTrailIcon name="chevron-right" />
                   </ListAction>
                 </Fragment>

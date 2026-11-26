@@ -32,6 +32,8 @@ type Props = {
   busy: boolean;
   failed: boolean;
   emailInUse: boolean;
+  /** Email this wallet already saved; filled in when the screen opens empty. */
+  savedEmail?: string | null;
 };
 
 const WirexEmailEntryModal: React.FC<Props> = ({
@@ -41,6 +43,7 @@ const WirexEmailEntryModal: React.FC<Props> = ({
   busy,
   failed,
   emailInUse,
+  savedEmail,
 }) => {
   const [email, setEmail] = useState("");
   // The email the last failure belongs to. Once the user edits it, the old
@@ -63,6 +66,10 @@ const WirexEmailEntryModal: React.FC<Props> = ({
     stopAndroidFocus.current = null;
   }, [visible]);
   useEffect(() => () => stopAndroidFocus.current?.(), []);
+  // The saved email arrives just after the screen opens; never overwrite typing.
+  useEffect(() => {
+    if (visible && savedEmail) setEmail((current) => current || savedEmail);
+  }, [visible, savedEmail]);
 
   // Android ignores a single focus() right after the page animates in and the
   // keyboard never opens; the shared helper retries until it does.

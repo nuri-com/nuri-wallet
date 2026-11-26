@@ -20,6 +20,7 @@
 import { useEffect, useRef } from "react";
 
 import type { PayIntent } from "./payIntent";
+import { payPagePath } from "./payLinkPath";
 
 /** `nuri://pay/name?to=…&amount=…`, what the native app's router reads. */
 export function payIntentDeepLink(intent: PayIntent): string {
@@ -60,7 +61,7 @@ export function payLinkBrowserUrl(intent: PayIntent, origin: string): string {
   const base = origin.replace(/\/+$/, "");
   const params = payIntentParams(intent);
   params.set(PAY_LINK_STAY_PARAM, "1");
-  return `${base}/pay/${intent.username}?${params.toString()}`;
+  return `${base}${payPagePath(intent.username)}?${params.toString()}`;
 }
 
 /** Whether the page was opened by the app handing the link back (`?browser=1`). */

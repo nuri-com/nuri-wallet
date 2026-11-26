@@ -141,6 +141,8 @@ export const uk = {
       lightningAlreadyPaid: "Цей рахунок уже оплачено.",
       lightningAlreadyPaying: "Цей рахунок уже оплачується. Він є у твоїй історії.",
       errorLightningLockupUnavailable: "Lightning недоступний. Нічого не надіслано.",
+      errorLightningSendStillRunning:
+        "Твій останній платіж Lightning ще триває. Зачекай, поки він завершиться, і надішли знову.",
       errorOnchainTooFreshHours: "Буде доступно приблизно через %{hours} год.",
       errorOnchainTooFreshMinutes: "Буде доступно приблизно через %{minutes} хв.",
       errorOnchainTooFresh: "Поки недоступно. Спробуй пізніше.",
@@ -244,6 +246,13 @@ export const uk = {
       errorPersistentBody: "Досі не працює. Звернись у підтримку.",
       amountBelowMin: "Мінімум %{sats} sats",
       amountAboveMax: "Максимум %{sats} sats",
+      paidTitle: "Оплачено",
+      paidBody: "Платіж надійшов у твій гаманець.",
+      detectedTitle: "Платіж надійшов",
+      detectedBody:
+        "Він ще завершується і з'явиться в балансі після цього. Якщо ні, звернися в підтримку.",
+      newRequest: "Новий запит",
+      expired: "Термін рахунку минув",
     },
     QrScannerModal: {
       title: "Сканувати QR",
@@ -907,6 +916,7 @@ export const uk = {
       fieldNetwork: "Мережа мобільних грошей",
       sepaBank: "Банківський рахунок у євро (SEPA)",
       ukBank: "Банківський рахунок у Великій Британії",
+      cardBank: "Картка Visa або Mastercard",
     },
   },
   common: {

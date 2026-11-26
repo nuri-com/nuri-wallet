@@ -137,6 +137,8 @@ export const en = {
       lightningAlreadyPaid: "This invoice is already paid.",
       lightningAlreadyPaying: "This invoice is already being paid. It shows in your history.",
       errorLightningLockupUnavailable: "Lightning unavailable. Nothing was sent.",
+      errorLightningSendStillRunning:
+        "Your last Lightning payment is still running. Wait for it to finish, then send again.",
       errorOnchainTooFreshHours: "Available in about %{hours}h.",
       errorOnchainTooFreshMinutes: "Available in about %{minutes} min.",
       errorOnchainTooFresh: "Not available yet. Try again later.",
@@ -242,6 +244,13 @@ export const en = {
       errorPersistentBody: "Still not working. Please contact support.",
       amountBelowMin: "Minimum %{sats} sats",
       amountAboveMax: "Maximum %{sats} sats",
+      paidTitle: "Paid",
+      paidBody: "The payment arrived in your wallet.",
+      detectedTitle: "Payment arrived",
+      detectedBody:
+        "It's still settling and shows in your balance once done. If it doesn't, contact support.",
+      newRequest: "New request",
+      expired: "Invoice expired",
     },
     QrScannerModal: {
       title: "Scan QR",
@@ -905,6 +914,7 @@ export const en = {
       fieldNetwork: "Mobile money network",
       sepaBank: "Euro bank account (SEPA)",
       ukBank: "UK bank account",
+      cardBank: "Visa or Mastercard",
     },
   },
   common: {

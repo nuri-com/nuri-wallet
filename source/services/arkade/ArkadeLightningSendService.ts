@@ -16,6 +16,7 @@ import { provisionRefundKey } from "@arkade-os/sdk";
 import { errMsg } from "../../lib/errorMessage";
 import { bytesToHex } from "../../lib/bytes";
 import { decodeBolt11Facts } from "../../lib/bitcoin/lightning";
+import { logger } from "../../lib/log";
 import { shortTime } from "../../lib/logShared";
 import {
   isLnurlPaymentInput,
@@ -54,6 +55,12 @@ import {
 import { emitTrace, logArkadeWalletSignTrace } from "./internal/logging";
 import { ArkadeMaxSendAmountError, maxFundableAmountSats } from "./internal/maxSendAmount";
 import { inferArkadeNetwork } from "./internal/network";
+import {
+  classifyLnPayOutcome,
+  createLnPayPhaseTimer,
+  formatLnPayPhaseTiming,
+  type LnPayPhaseTimer,
+} from "./internal/payPhaseTimer";
 import {
   attachOutgoingPaySwap,
   createTraceOpId,
@@ -176,18 +183,62 @@ export async function prefetchArkadeLightningQuote(invoice: string): Promise<voi
   } catch {}
 }
 
-export async function payArkadeLightningInvoice(_params: {
-  invoice: string;
-  amountSats?: number;
-  maxFeeSats?: number;
-  /** The payee's own pay-by moment (epoch ms), such as a remit price hold that
-   * ends long before the BOLT11 does. Rechecked at the funding boundary. */
-  payBy?: number | null;
-  /** Fires after the ceiling check, the invoice-expiry re-check and the user's
-   * approval, immediately before the lockup is funded — the irreversible
-   * boundary. Anything that refuses earlier moved nothing. */
-  onBeforeBroadcast?: () => void | Promise<void>;
-}): Promise<{
+/**
+ * Pays a BOLT11 invoice or LNURL from the arkade wallet. Every attempt ends
+ * with one `ln_pay_phase_timing` line: per-step durations from the tap to the
+ * funded lockup and the last step reached, so a slow or missing passkey prompt
+ * can be placed in a support dump (#1514). The timing never changes the send.
+ */
+export async function payArkadeLightningInvoice(
+  params: Parameters<typeof payArkadeLightningInvoiceTimed>[0],
+): ReturnType<typeof payArkadeLightningInvoiceTimed> {
+  const timer = createLnPayPhaseTimer();
+  try {
+    const result = await payArkadeLightningInvoiceTimed(params, timer);
+    logLnPayPhaseTiming(timer, "funded");
+    return result;
+  } catch (error: unknown) {
+    logLnPayPhaseTiming(timer, classifyLnPayOutcome(error));
+    throw error;
+  }
+}
+
+// The timing line is a milestone, not a breadcrumb: it goes out at `event`
+// level so release builds (default level event, trace muted) print it to the
+// console and the support dump's console-backed buffer keeps it.
+const lnSendLog = logger("services/arkade/ArkadeLightningSendService.ts");
+
+// The logger drops a repeated non-warning line within its dedup window, so two
+// quick attempts with the same outcome and timings (an immediate refusal, for
+// example) would leave one line. A per-session attempt number keeps every
+// attempt's line distinct.
+let lnPayAttemptSeq = 0;
+
+function logLnPayPhaseTiming(
+  timer: LnPayPhaseTimer,
+  outcome: Parameters<LnPayPhaseTimer["fields"]>[0],
+): void {
+  try {
+    lnPayAttemptSeq += 1;
+    lnSendLog.event(formatLnPayPhaseTiming({ attempt: lnPayAttemptSeq, ...timer.fields(outcome) }));
+  } catch {}
+}
+
+async function payArkadeLightningInvoiceTimed(
+  _params: {
+    invoice: string;
+    amountSats?: number;
+    maxFeeSats?: number;
+    /** The payee's own pay-by moment (epoch ms), such as a remit price hold that
+     * ends long before the BOLT11 does. Rechecked at the funding boundary. */
+    payBy?: number | null;
+    /** Fires after the ceiling check, the invoice-expiry re-check and the user's
+     * approval, immediately before the lockup is funded — the irreversible
+     * boundary. Anything that refuses earlier moved nothing. */
+    onBeforeBroadcast?: () => void | Promise<void>;
+  },
+  phases: LnPayPhaseTimer,
+): Promise<{
   id?: string;
   status?: string;
   paymentHash?: string;
@@ -265,6 +316,7 @@ export async function payArkadeLightningInvoice(_params: {
         expected_next: "sdk_invoice_decode",
       });
       requestKind = "lnurl";
+      phases.mark("lnurl_resolved");
       payTrace.requestKind = requestKind;
       emitTrace({
         atMs: Date.now(),
@@ -338,6 +390,7 @@ export async function payArkadeLightningInvoice(_params: {
     provisionRefundKey(wallet),
   ]);
   const balance: WalletBalance = isRecord(balanceRaw) ? balanceRaw : {};
+  phases.mark("prepared");
   const availableSats = asNumber(balance.available);
   const boardingSats = asNumber(isRecord(balance.boarding) ? balance.boarding.total : 0);
   const maxPotentialSats = Number.isFinite(availableSats)
@@ -394,6 +447,7 @@ export async function payArkadeLightningInvoice(_params: {
       refundAddress,
     });
     activeOrderId = payment.txId;
+    phases.mark("quoted");
     // A send the user pressed is their explicit retry: an earlier cancelled
     // prompt for the same invoice (same order) no longer holds it (#1780).
     await SwapKitV2OrderStore.clearFundingDeclined(payment.txId).catch(() => {});
@@ -508,11 +562,13 @@ export async function payArkadeLightningInvoice(_params: {
         op: "ln_pay",
       }),
     ]);
+    phases.mark("recorded");
     let submittedEventEmitted = false;
     const emitSubmittedEvent = (submittedTxid: string) => {
       const txid = String(submittedTxid || "").trim();
       if (!txid || submittedEventEmitted) return;
       submittedEventEmitted = true;
+      phases.mark("broadcast");
       logArkadeWalletSignTrace("ln_pay_send_submitted", {
         kind: requestKind,
         txid: truncateForLog(txid, 20),
@@ -531,12 +587,22 @@ export async function payArkadeLightningInvoice(_params: {
       });
     };
     let fundingTxid = "";
+    let fundingExecutorRan = false;
     try {
       await executeAndSubmitV2Action(asSwapKitV2OrderId(payment.txId), payment.fundingAction, {
         recoveryKey: payment.recoveryKey,
+        // A journaled replay: an earlier attempt broadcast. Mark the boundary
+        // before the evidence re-submission so its wait lands in funded_ms and
+        // a failed submission still names the broadcast as the last step.
+        onReplay: () => phases.mark("broadcast", { resumed: true }),
         executors: {
           arkade_intents_fund: async (_request, ctx) => {
+            fundingExecutorRan = true;
             if (ctx.previouslyStarted) {
+              // An earlier attempt already broadcast; this one only waits for
+              // its funding evidence. Mark the boundary before that wait so it
+              // lands in funded_ms, not broadcast_ms.
+              phases.mark("broadcast", { resumed: true });
               const evidence = await fundArkadeIntentsOutpoint({
                 lockupAddress: fundingAddress,
                 amountSats: fundingAmountSats,
@@ -545,6 +611,7 @@ export async function payArkadeLightningInvoice(_params: {
               fundingTxid = evidence.arkTxid;
               return evidence;
             }
+            phases.mark("approval_started");
             fundingTxid = String(
               await withOutgoingBrowserApproval(
                 {
@@ -585,6 +652,9 @@ export async function payArkadeLightningInvoice(_params: {
                   // can take long enough to cross the deadline themselves.
                   ctx.assertBeforeDeadline?.();
                   assertPayeeStillHolding(_params.payBy);
+                  // Funding guards passed: from here wallet.send runs the
+                  // passkey prompt, the signing and the submission.
+                  phases.mark("signing");
                   // The passkey prompt and signing run inside wallet.send, so
                   // the hold also rides into it: the SDK refuses at its own
                   // provider submission once it has passed, sending nothing.
@@ -645,6 +715,9 @@ export async function payArkadeLightningInvoice(_params: {
         throw error;
       }
     }
+    // Returned without running the executor: the action's evidence was already
+    // journaled, so an earlier attempt broadcast and this one only replayed it.
+    if (!fundingExecutorRan) phases.mark("broadcast", { resumed: true });
     emitTrace({
       atMs: Date.now(),
       op: "ln_pay_request",
@@ -659,6 +732,7 @@ export async function payArkadeLightningInvoice(_params: {
       ]),
     });
     emitSubmittedEvent(fundingTxid);
+    phases.mark("funded");
     funded = {
       amount: fundingAmountSats,
       txid: fundingTxid,

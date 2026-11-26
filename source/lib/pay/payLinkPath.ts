@@ -1,4 +1,5 @@
-// `/pay/username` — the public payment link.
+// The public payment link: `pay.nuri.com/username` on the pay page's own
+// origin, and `/pay/username` in the app's own link scheme (`nuri://pay/...`).
 //
 // Deliberately a separate parser from `parsePasskeyUsernamePath`: `/@username`
 // signs a returning owner in, `/pay/username` shows a stranger how to pay that
@@ -118,11 +119,38 @@ export function parsePayLinkPath(pathname: string): string | null {
   return USERNAME.test(username) ? username : null;
 }
 
-/** The link that opens `username`'s pay page, or null for a handle the page would refuse. */
+/**
+ * The username a path on the pay page's own origin names: `/emino`, the link
+ * the app makes. `/@emino` and the older `/pay/emino` and `/pay/@emino` links
+ * already shared open the same page.
+ */
+export function parsePayPagePath(pathname: string): string | null {
+  const legacy = parsePayLinkPath(pathname);
+  if (legacy) return legacy;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(String(pathname || ""));
+  } catch {
+    return null;
+  }
+  const match = /^\/@?([^/@]+)\/?$/.exec(decoded);
+  const username = match?.[1]?.trim().toLowerCase() || "";
+  return USERNAME.test(username) ? username : null;
+}
+
+/** The pay page's own path for `username`: `/emino`. */
+export function payPagePath(username: string): string {
+  return `/${username}`;
+}
+
+/**
+ * The link that opens `username`'s pay page (`https://pay.nuri.com/emino`), or
+ * null for a handle the page would refuse.
+ */
 export function payLinkUrl(origin: string, username: string | null | undefined): string | null {
   const handle = String(username ?? "")
     .trim()
     .toLowerCase();
   if (!USERNAME.test(handle)) return null;
-  return `${origin.replace(/\/+$/, "")}/pay/${handle}`;
+  return `${origin.replace(/\/+$/, "")}${payPagePath(handle)}`;
 }

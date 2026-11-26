@@ -23,6 +23,7 @@ import {
   ListActionText,
   ListActionTextMuted,
   ListActionTrailIcon,
+  ListSeparator,
   ListSwitch,
   ListSwitchText,
   NuriIcon,
@@ -64,7 +65,7 @@ import {
   type NotificationPreferences,
 } from "../../services/notifications/notificationPreferences";
 import { getPermission } from "../../services/notifications/NotificationService";
-import type { VerificationRowState } from "./settingsModel";
+import { type NavigationRow, navigationRows, type VerificationRowState } from "./settingsModel";
 import { useInvitees } from "./useInvitees";
 
 const K = "screen.Settings";
@@ -198,6 +199,12 @@ const SettingsScreen: React.FC<Props> = ({
       : PAY_LINK_ORIGIN;
   const payLink = payLinkUrl(PAY_LINK_ORIGIN, username);
   const inviteLink = inviteLinkUrl(origin, username);
+  const navigationPress: Record<NavigationRow, () => void> = {
+    payLink: () => setCreatingPayLink(true),
+    invite: () => setInviting(true),
+    addressBook: onOpenAddressBook,
+    support: openSupport,
+  };
   const verified = verification.state === "verified";
   const showBankCards = verification.action !== null;
 
@@ -241,36 +248,24 @@ const SettingsScreen: React.FC<Props> = ({
                   </View>
                 ) : null}
 
+                {/* Rows that are hidden leave no separator behind: the
+                    separator sits between the rows that are actually shown. */}
                 <List>
-                  {payLink && username ? (
-                    <ListAction
-                      accessibilityLabel={t(`${K}.payLink`)}
-                      onPress={() => setCreatingPayLink(true)}
-                    >
-                      <ListActionText>{t(`${K}.payLink`)}</ListActionText>
-                      <ListActionTrailIcon name="chevron-right" />
-                    </ListAction>
-                  ) : null}
-                  {inviteLink ? (
-                    <ListAction
-                      accessibilityLabel={t(`${K}.invite`)}
-                      onPress={() => setInviting(true)}
-                    >
-                      <ListActionText>{t(`${K}.invite`)}</ListActionText>
-                      <ListActionTrailIcon name="chevron-right" />
-                    </ListAction>
-                  ) : null}
-                  <ListAction
-                    accessibilityLabel={t(`${K}.addressBook`)}
-                    onPress={onOpenAddressBook}
-                  >
-                    <ListActionText>{t(`${K}.addressBook`)}</ListActionText>
-                    <ListActionTrailIcon name="chevron-right" />
-                  </ListAction>
-                  <ListAction accessibilityLabel={t(`${K}.support`)} onPress={openSupport}>
-                    <ListActionText>{t(`${K}.support`)}</ListActionText>
-                    <ListActionTrailIcon name="chevron-right" />
-                  </ListAction>
+                  {navigationRows({
+                    payLink: Boolean(payLink && username),
+                    invite: Boolean(inviteLink),
+                  }).map((row, index) => (
+                    <React.Fragment key={row}>
+                      {index > 0 ? <ListSeparator /> : null}
+                      <ListAction
+                        accessibilityLabel={t(`${K}.${row}`)}
+                        onPress={navigationPress[row]}
+                      >
+                        <ListActionText>{t(`${K}.${row}`)}</ListActionText>
+                        <ListActionTrailIcon name="chevron-right" />
+                      </ListAction>
+                    </React.Fragment>
+                  ))}
                 </List>
 
                 {showBankCards ? (
@@ -316,17 +311,19 @@ const SettingsScreen: React.FC<Props> = ({
 
                 <Heading title={t(`${K}.notifications`)} hairline={!showBankCards} />
                 <List>
-                  {NOTIFICATION_CATEGORIES.map((category) => {
+                  {NOTIFICATION_CATEGORIES.map((category, index) => {
                     const on = notifications ? categoryOn(notifications, category) : false;
                     return (
-                      <ListSwitch
-                        key={category}
-                        accent="lilac"
-                        checked={on}
-                        onPress={() => chooseCategory(category, !on)}
-                      >
-                        <ListSwitchText>{t(`${K}.notify_${category}`)}</ListSwitchText>
-                      </ListSwitch>
+                      <React.Fragment key={category}>
+                        {index > 0 ? <ListSeparator /> : null}
+                        <ListSwitch
+                          accent="lilac"
+                          checked={on}
+                          onPress={() => chooseCategory(category, !on)}
+                        >
+                          <ListSwitchText>{t(`${K}.notify_${category}`)}</ListSwitchText>
+                        </ListSwitch>
+                      </React.Fragment>
                     );
                   })}
                 </List>
@@ -341,6 +338,7 @@ const SettingsScreen: React.FC<Props> = ({
                     <ListActionTextMuted>{LANGUAGE_OPTIONS[locale].label}</ListActionTextMuted>
                     <ListActionTrailIcon name="chevron-right" />
                   </ListAction>
+                  <ListSeparator />
                   <ListAction
                     accessibilityLabel={`${t(`${K}.currency`)}, ${t(`${K}.currency_${currency}`)}`}
                     onPress={() => setPicker("currency")}

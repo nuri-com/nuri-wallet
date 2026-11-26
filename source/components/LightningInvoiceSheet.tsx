@@ -7,6 +7,7 @@ import {
   ButtonText,
   Header,
   IconButton,
+  NuriIcon,
   Scroll,
   Text,
   Topbar,
@@ -35,11 +36,29 @@ import { groupCount } from "../lib/formatting";
 import { checkReceiveAmountSats } from "../services/arkade/internal/receiveLimits";
 import { useArkadeLightningLimits } from "../services/arkade/lightningLimits";
 import AppFooter from "./AppFooter";
+import { ARKADE_LIGHTNING_RECEIVE_ROWS_EVENT } from "../services/arkade/ArkadeReceiveUnlockService";
+import { EventBus } from "../services/events/AppEventBusService";
+import {
+  type InvoiceReceiptPhase,
+  type InvoiceReceiptRow,
+  type InvoiceReceiptTarget,
+  receiptAwaitsPayment,
+  receiptEnded,
+  receiptPhaseFromRows,
+} from "../services/arkade/invoiceReceipt";
 
 type SheetState =
   | { kind: "entering" }
   | { kind: "creating" }
-  | { kind: "ready"; invoice: string; expiresAtMs: number; amountSats: number }
+  | {
+      kind: "ready";
+      invoice: string;
+      expiresAtMs: number;
+      amountSats: number;
+      /** The server's swap id and payment hash: what a receipt must match. */
+      swapId: string;
+      paymentHash?: string;
+    }
   | { kind: "error" };
 
 type Props = {
@@ -51,7 +70,13 @@ type Props = {
    * absolute expiry timestamp. If the server has no concrete TTL, parent may
    * default to a sensible value.
    */
-  onCreateInvoice: (amountSats: number) => Promise<{ invoice: string; expiresAtMs: number }>;
+  onCreateInvoice: (amountSats: number) => Promise<{
+    invoice: string;
+    expiresAtMs: number;
+    /** Server swap id; without it the sheet cannot tell this invoice got paid. */
+    swapId?: string;
+    paymentHash?: string;
+  }>;
   lightningAddress?: string | null;
   onOpenSupportChat?: () => void;
 };
@@ -72,6 +97,12 @@ const LightningInvoiceSheet: React.FC<Props> = ({
   const keypadFit = useKeypadFit();
   const [copied, setCopied] = useState(false);
   const [failureCount, setFailureCount] = useState(0);
+  // What is known about the shown invoice's payment (#2044). Keyed to the swap
+  // it belongs to, so a new request starts from "waiting" and an update for an
+  // earlier invoice cannot land on the next one.
+  const [receipt, setReceipt] = useState<{ swapId: string; phase: InvoiceReceiptPhase } | null>(
+    null,
+  );
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inFlightRef = useRef(false);
   const {
@@ -99,7 +130,49 @@ const LightningInvoiceSheet: React.FC<Props> = ({
     setState({ kind: "entering" });
     setSecondsLeft(0);
     setCopied(false);
+    setReceipt(null);
   }, [visible]);
+
+  const receiptTarget = useMemo<InvoiceReceiptTarget | null>(
+    () =>
+      state.kind === "ready" && state.swapId
+        ? {
+            swapId: state.swapId,
+            paymentHash: state.paymentHash,
+            invoice: state.invoice,
+            amountSats: state.amountSats,
+          }
+        : null,
+    [state],
+  );
+
+  // Follows the receive sync rows for the shown invoice; they only move the
+  // receipt forward (invoiceReceipt.ts).
+  useEffect(() => {
+    if (!visible || !receiptTarget) return;
+    const target = receiptTarget;
+    const apply = (next: (phase: InvoiceReceiptPhase) => InvoiceReceiptPhase) =>
+      setReceipt((current) => {
+        const phase = current?.swapId === target.swapId ? current.phase : "waiting";
+        const advanced = next(phase);
+        return current?.swapId === target.swapId && advanced === phase
+          ? current
+          : { swapId: target.swapId, phase: advanced };
+      });
+    const offRows = EventBus.on<{ rows?: InvoiceReceiptRow[] }>(
+      ARKADE_LIGHTNING_RECEIVE_ROWS_EVENT,
+      (payload) => {
+        const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+        apply((phase) => receiptPhaseFromRows(phase, rows, target));
+      },
+    );
+    return () => {
+      offRows();
+    };
+  }, [visible, receiptTarget]);
+
+  const receiptPhase: InvoiceReceiptPhase =
+    receiptTarget && receipt?.swapId === receiptTarget.swapId ? receipt.phase : "waiting";
 
   // The fiat side is typed in the display currency, so it is priced in it too;
   // a switch drops the old price rather than dividing by a rate in the other.
@@ -120,9 +193,10 @@ const LightningInvoiceSheet: React.FC<Props> = ({
     };
   }, [visible, fiatSymbol]);
 
-  // Tick the countdown once per second while a ready invoice is showing.
+  // Tick the countdown once per second while a ready invoice waits for a payer.
+  const awaitingPayment = receiptAwaitsPayment(receiptPhase);
   useEffect(() => {
-    if (state.kind !== "ready") return;
+    if (state.kind !== "ready" || !awaitingPayment) return;
     const tick = () => {
       const remaining = Math.max(0, Math.floor((state.expiresAtMs - Date.now()) / 1000));
       setSecondsLeft(remaining);
@@ -130,7 +204,7 @@ const LightningInvoiceSheet: React.FC<Props> = ({
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [state]);
+  }, [state, awaitingPayment]);
 
   useEffect(() => {
     return () => {
@@ -220,7 +294,15 @@ const LightningInvoiceSheet: React.FC<Props> = ({
       if (!invoice) throw new Error("empty invoice");
       const ttl = expiresAtMs > Date.now() ? expiresAtMs : Date.now() + 10 * 60 * 1000;
       setFailureCount(0);
-      setState({ kind: "ready", invoice, expiresAtMs: ttl, amountSats: parsedAmount });
+      setReceipt(null);
+      setState({
+        kind: "ready",
+        invoice,
+        expiresAtMs: ttl,
+        amountSats: parsedAmount,
+        swapId: String(result?.swapId || "").trim(),
+        paymentHash: String(result?.paymentHash || "").trim() || undefined,
+      });
     } catch (error: unknown) {
       setFailureCount((n) => n + 1);
       console.warn(
@@ -256,9 +338,15 @@ const LightningInvoiceSheet: React.FC<Props> = ({
     setState({ kind: "entering" });
     setSecondsLeft(0);
     setFailureCount(0);
+    setReceipt(null);
   }, [setFiatDigits, setInputMode, setSatsDigits]);
 
-  const isExpired = state.kind === "ready" && secondsLeft <= 0;
+  // A paid invoice is not expired, whatever the clock says; a refused or
+  // expired one (server evidence) is.
+  const isExpired =
+    state.kind === "ready" && (receiptEnded(receiptPhase) || (awaitingPayment && secondsLeft <= 0));
+  const isPaid =
+    state.kind === "ready" && (receiptPhase === "detected" || receiptPhase === "received");
 
   const renderEntering = () => (
     <>
@@ -298,7 +386,45 @@ const LightningInvoiceSheet: React.FC<Props> = ({
     </View>
   );
 
+  const renderReceipt = (ready: Extract<SheetState, { kind: "ready" }>) => {
+    const readySats = Math.max(0, Math.trunc(ready.amountSats));
+    const received = receiptPhase === "received";
+    return (
+      <View direction="column" align="stretch" justify="center" gap="lg" fill="grow">
+        <View direction="column" align="center" gap="sm">
+          <NuriIcon name={received ? "check-circle" : "spinner"} />
+          <Text size="lg" emphasis align="center">
+            {t(
+              received
+                ? "screen.LightningInvoiceSheet.paidTitle"
+                : "screen.LightningInvoiceSheet.detectedTitle",
+            )}
+          </Text>
+          <Text size="md" muted align="center">
+            {t(
+              received
+                ? "screen.LightningInvoiceSheet.paidBody"
+                : "screen.LightningInvoiceSheet.detectedBody",
+            )}
+          </Text>
+        </View>
+        <AmountDisplay
+          fill={false}
+          primaryAmount={groupCount(readySats)}
+          primaryImage={BTC_LOGO}
+          primaryUnit={SATS_UNIT}
+          secondary={{
+            amount: bitcoinSecondaryAmount(true, readySats, fiatPerBtc),
+            image: fiatImageFor(fiatSymbol),
+            unit: fiatSymbol,
+          }}
+        />
+      </View>
+    );
+  };
+
   const renderReady = (ready: Extract<SheetState, { kind: "ready" }>) => {
+    if (isPaid) return renderReceipt(ready);
     // The invoice's fixed amount, shown the way the entry screen shows it.
     const readySats = Math.max(0, Math.trunc(ready.amountSats));
 
@@ -338,7 +464,11 @@ const LightningInvoiceSheet: React.FC<Props> = ({
             {/* The button is always the last thing on the sheet, so the expiry
                 sits with the invoice it describes. */}
             <Text size="sm" muted align="center">
-              {t("screen.LightningInvoiceSheet.expiresShort")}
+              {t(
+                receiptEnded(receiptPhase)
+                  ? "screen.LightningInvoiceSheet.expired"
+                  : "screen.LightningInvoiceSheet.expiresShort",
+              )}
             </Text>
           </AddressQrTile>
           <AmountDisplay
@@ -418,6 +548,15 @@ const LightningInvoiceSheet: React.FC<Props> = ({
           </Button>
         );
       case "ready":
+        if (isPaid) {
+          // A new request starts a new invoice with its own receipt; the
+          // previous payment stays with the previous invoice.
+          return (
+            <Button size="lg" variant="solid" accent="lilac" onPress={handleReset}>
+              <ButtonText>{t("screen.LightningInvoiceSheet.newRequest")}</ButtonText>
+            </Button>
+          );
+        }
         return isExpired ? (
           <Button size="lg" variant="solid" accent="lilac" onPress={handleReset}>
             <ButtonText>{t("screen.LightningInvoiceSheet.tryAgain")}</ButtonText>

@@ -71,7 +71,7 @@ import {
   parsePasskeyUsernamePath,
   shouldWipeForPasskeySwitch,
 } from "./lib/auth/passkeyUsernameLink";
-import { parsePayLinkPath } from "./lib/pay/payLinkPath";
+import { parsePayLinkPath, payLinkUrl } from "./lib/pay/payLinkPath";
 import { parseInviteLinkPath } from "./lib/referral/inviteLink";
 import {
   consumePendingReferrer,
@@ -216,8 +216,8 @@ function initialPasskeyUsername(): string | null {
 
 // `/pay/@username` is a link handed to strangers. The page lives on its own
 // origin now (pay-page/, PAY_LINK_ORIGIN), so an old link that still reaches
-// the wallet is sent there, path and query unchanged. The edge worker already
-// redirects it; this covers a shell the browser had cached.
+// the wallet is sent there as `pay.nuri.com/username`, query unchanged. The
+// edge worker already redirects it; this covers a shell the browser had cached.
 function initialPayLinkUsername(): string | null {
   if (Platform.OS !== "web" || typeof window === "undefined") return null;
   return parsePayLinkPath(window.location.pathname);
@@ -341,8 +341,8 @@ export default function App() {
   );
   useEffect(() => {
     if (!payLinkUsername) return;
-    const base = PAY_LINK_ORIGIN.replace(/\/+$/, "");
-    window.location.replace(`${base}${window.location.pathname}${window.location.search}`);
+    const link = payLinkUrl(PAY_LINK_ORIGIN, payLinkUsername);
+    if (link) window.location.replace(`${link}${window.location.search}`);
   }, [payLinkUsername]);
   return payLinkUsername ? null : <WalletApp />;
 }

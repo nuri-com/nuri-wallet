@@ -1,5 +1,5 @@
 // @screen wallet.send
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard, View as RNView, StyleSheet } from "react-native";
 
 import {
@@ -51,6 +51,7 @@ import {
   type TzStablePayment,
   tzPaymentLapsed,
 } from "../../../services/remit/RemitService";
+import { ownRemitRefundTargets } from "../../../services/remit/remitRefundTargets";
 import AppFooter from "../../../components/AppFooter";
 
 type Props = WalletSendStablecoinProps;
@@ -99,6 +100,8 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   // The order's offer for the stable it was priced in; another balance paying
   // retires it (a new order is fetched), it is never relabelled.
   const [tzBound, setTzBound] = useState<BoundTzOffer | null>(null);
+  // Synchronous in-flight latch for the order request (see handleTzOrder).
+  const tzOrderInFlight = useRef(false);
   const stableCode = token?.code === "USD" ? "USDC" : "EURC";
   const tzsAmount = Number(tzsDigits) || 0;
   const tzPayment = tzOfferFor(tzBound, stableCode);
@@ -194,11 +197,22 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
   // First press: the order, which states the exact amount and address. Nothing
   // moves; an unpaid order lapses on its own.
   const handleTzOrder = async () => {
-    if (!payout || tzsAmount <= 0 || tzOutOfBand) return;
+    if (!payout || tzsAmount <= 0 || tzOutOfBand || isRequesting) return;
+    // Two taps can land before React commits isRequesting, and both closures
+    // would still read false; the ref is the latch that makes it one order.
+    if (tzOrderInFlight.current) return;
+    tzOrderInFlight.current = true;
+    // A lapsed offer this replaces is dropped first, so a failed request
+    // (#2026: no answer, outcome unknown) never leaves its stale amount shown.
+    // The order is not retried on its own; Try again is the user's next tap.
+    setTzBound(null);
     setIsRequesting(true);
     setSendFailed(false);
     try {
-      const order = await createTzOrder(tzsAmount, payout.recipient);
+      // The user pays this order from their own address, which the service
+      // refunds by itself; only a Lightning target is named here.
+      const { lightningAddress } = await ownRemitRefundTargets();
+      const order = await createTzOrder(tzsAmount, payout.recipient, { lightningAddress });
       const offer = stableCode === "USDC" ? order.usdc : order.eurc;
       if (!offer) throw new Error(`no ${stableCode} offer`);
       setTzBound({ stable: stableCode, offer });
@@ -209,6 +223,7 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
         userMessage: "I tried to start a payout to Tanzania and it did not start.",
       }).catch(() => {});
     } finally {
+      tzOrderInFlight.current = false;
       setIsRequesting(false);
     }
   };
@@ -414,8 +429,14 @@ const WalletSendStablecoinModal: React.FC<Props> = ({
       ? t("screen.WalletSendStablecoinModal.exceedsBalanceHint")
       : tzOutOfBand && tzMethod
         ? tzsAmount < tzMethod.min
-          ? t("screen.BitcoinSendScreen.remitMinimum", { amount: `${tzMethod.min} TZS` })
-          : t("screen.BitcoinSendScreen.remitMaximum", { amount: `${tzMethod.max} TZS` })
+          ? t("screen.BitcoinSendScreen.remitMinimum", {
+              amount: groupCount(tzMethod.min),
+              currency: "TZS",
+            })
+          : t("screen.BitcoinSendScreen.remitMaximum", {
+              amount: groupCount(tzMethod.max),
+              currency: "TZS",
+            })
         : tzStableAmount != null
           ? `${tzPayment ? "" : "\u2248 "}${tzStableAmount.toFixed(2)} ${stableCode}`
           : null;

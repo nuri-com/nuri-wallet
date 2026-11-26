@@ -143,6 +143,8 @@ export const nl = {
       lightningAlreadyPaid: "Deze factuur is al betaald.",
       lightningAlreadyPaying: "Deze factuur wordt al betaald. Je ziet hem in je geschiedenis.",
       errorLightningLockupUnavailable: "Lightning niet beschikbaar. Er is niets verstuurd.",
+      errorLightningSendStillRunning:
+        "Je laatste Lightning-betaling loopt nog. Wacht tot die klaar is en verstuur dan opnieuw.",
       errorOnchainTooFreshHours: "Beschikbaar over ongeveer %{hours} u.",
       errorOnchainTooFreshMinutes: "Beschikbaar over ongeveer %{minutes} min.",
       errorOnchainTooFresh: "Nog niet beschikbaar. Probeer het later opnieuw.",
@@ -247,6 +249,13 @@ export const nl = {
       errorPersistentBody: "Het lukt nog steeds niet. Neem contact op met support.",
       amountBelowMin: "Minimaal %{sats} sats",
       amountAboveMax: "Maximaal %{sats} sats",
+      paidTitle: "Betaald",
+      paidBody: "De betaling is in je wallet aangekomen.",
+      detectedTitle: "Betaling ontvangen",
+      detectedBody:
+        "Hij wordt nog afgerond en verschijnt daarna in je saldo. Zo niet, neem contact op met support.",
+      newRequest: "Nieuw verzoek",
+      expired: "Factuur verlopen",
     },
     QrScannerModal: {
       title: "QR scannen",
@@ -918,6 +927,7 @@ export const nl = {
       fieldNetwork: "Mobiel-geldnetwerk",
       sepaBank: "Eurobankrekening (SEPA)",
       ukBank: "Britse bankrekening",
+      cardBank: "Visa- of Mastercard-kaart",
     },
   },
   common: {

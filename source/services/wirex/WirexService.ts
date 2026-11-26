@@ -42,6 +42,7 @@ import { mergeWirexActivity } from "../../lib/wirex/mergeWirexActivity";
 import { cardWithdrawalActivityItems } from "../../lib/wirex/cardWithdrawals";
 import { fetchCardWithdrawalsToCash } from "./cardWithdrawals";
 import { fxRateService } from "../pricing/FxRateService";
+import { readStepUpEthereumKey } from "../auth/stepUpKey";
 import {
   deleteAuthData,
   getAuthData,
@@ -50,6 +51,11 @@ import {
   storeAuthData,
 } from "../../lib/secureKeyStorage";
 import { submitSignedApproval } from "../../lib/wirex/bridgeCallback";
+import {
+  CARD_DETAILS_RESULT_TRANSIENT_RETRIES,
+  cardDetailsFailureReason,
+  isCardDetailsTransportFailure,
+} from "../../lib/wirex/cardDetailsFailure";
 import {
   assertWirexVirtualCardNames,
   isWirexCardLast4,
@@ -418,10 +424,37 @@ export class WirexWithdrawUnconfirmedError extends Error {
 /** A REST call the server answered with ok:false; `code` is the server's exact error string. */
 export class WirexApiError extends Error {
   readonly code: string;
-  constructor(message: string, code: string) {
+  /** HTTP status of the answer, when the call read one (#1448). */
+  readonly httpStatus: number | null;
+  constructor(message: string, code: string, httpStatus: number | null = null) {
     super(message);
     this.name = "WirexApiError";
     this.code = code;
+    this.httpStatus = httpStatus;
+  }
+}
+
+/** The server answered with a body that is not JSON (proxy page, 5xx, empty). */
+export class WirexNonJsonResponseError extends Error {
+  readonly httpStatus: number;
+  constructor(message: string, httpStatus: number) {
+    super(message);
+    this.name = "WirexNonJsonResponseError";
+    this.httpStatus = httpStatus;
+  }
+}
+
+/**
+ * A card-details reveal failed. `reason` is a short, non-sensitive cause
+ * (lib/wirex/cardDetailsFailure.ts) that support dumps can read instead of the
+ * old bare `failed: error` (#1448). Never carries card data.
+ */
+export class WirexCardDetailsError extends Error {
+  readonly reason: string;
+  constructor(reason: string, cause?: unknown) {
+    super(`${LOG_TAG} card details reveal failed: ${reason}`, { cause });
+    this.name = "WirexCardDetailsError";
+    this.reason = reason;
   }
 }
 
@@ -614,6 +647,53 @@ const WITHDRAW_START_TIMEOUT_MS = 30_000;
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const LOG_TAG = "[WirexService]";
+
+// Bound on one step-up (#1898): the fresh biometric read plus its signature.
+// Generous for a user reading the prompt, short enough that a native read
+// that never settles does not freeze every later card transfer and reveal.
+export const STEP_UP_TIMEOUT_MS = 60_000;
+export const WIREX_STEP_UP_TIMEOUT_ERROR = "wirex_step_up_timeout";
+
+// After the deadline aborts a step-up, how long the queue waits for the aborted
+// read to actually settle before the next step-up starts. On web an aborted
+// WebAuthn get() rejects at once; this only bounds a provider that ignores it.
+export const STEP_UP_ABORT_GRACE_MS = 5_000;
+
+type StepUpOutcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
+
+async function withStepUpDeadline<T>(op: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const running: Promise<StepUpOutcome<T>> = op(controller.signal).then(
+    (value) => ({ ok: true, value }),
+    (error: unknown) => ({ ok: false, error }),
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), STEP_UP_TIMEOUT_MS);
+  });
+  const outcome = await Promise.race([running, timedOut]);
+  if (timer) clearTimeout(timer);
+  if (outcome !== "timeout") {
+    if ("error" in outcome) throw outcome.error;
+    return outcome.value;
+  }
+  // Web: abort the passkey ceremony so the browser's single WebAuthn slot is
+  // free for the next step-up (otherwise it fails "a request is already pending").
+  // Native: the stalled keychain read cannot be cancelled; the abort releases
+  // its fresh-read slot so later unlocks are not queued behind it.
+  controller.abort();
+  // Hold the queue until the aborted read settled (bounded), so the next
+  // step-up never overlaps it. Its late result is never used.
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    running,
+    new Promise<void>((resolve) => {
+      grace = setTimeout(resolve, STEP_UP_ABORT_GRACE_MS);
+    }),
+  ]);
+  if (grace) clearTimeout(grace);
+  throw new Error(WIREX_STEP_UP_TIMEOUT_ERROR);
+}
 
 // ── Read session (server-side IDOR gate on GET reads) ──────────────────
 // The backend gates every read route behind a wallet-signed bearer token: only
@@ -962,15 +1042,27 @@ class WirexService {
   private async parseEnvelope<T>(response: Response, label: string): Promise<RestEnvelope<T>> {
     try {
       return (await response.json()) as RestEnvelope<T>;
-    } catch {
-      throw new Error(`${LOG_TAG} ${label} returned non-JSON (http ${response.status})`);
+    } catch (error) {
+      // A connection that drops while the body is read is a transport failure,
+      // not a non-JSON answer: rethrow it so read-only polls can retry it. A
+      // SyntaxError is always a parse failure (its message can quote body text
+      // such as "Gateway Timeout", so it is never matched as transport).
+      if (!(error instanceof SyntaxError) && isCardDetailsTransportFailure(error)) throw error;
+      throw new WirexNonJsonResponseError(
+        `${LOG_TAG} ${label} returned non-JSON (http ${response.status})`,
+        response.status,
+      );
     }
   }
 
-  private finalizeEnvelope<T>(envelope: RestEnvelope<T>, label: string): T {
+  private finalizeEnvelope<T>(
+    envelope: RestEnvelope<T>,
+    label: string,
+    httpStatus: number | null = null,
+  ): T {
     if (!envelope.ok) {
       const code = this.getErrorString(envelope.error);
-      throw new WirexApiError(`${LOG_TAG} ${label} failed: ${code}`, code);
+      throw new WirexApiError(`${LOG_TAG} ${label} failed: ${code}`, code, httpStatus);
     }
     if (envelope.data === null || envelope.data === undefined) {
       throw new Error(`${LOG_TAG} ${label} returned no data`);
@@ -979,27 +1071,90 @@ class WirexService {
   }
 
   private async unwrap<T>(response: Response, label: string): Promise<T> {
-    return this.finalizeEnvelope(await this.parseEnvelope<T>(response, label), label);
+    return this.finalizeEnvelope(
+      await this.parseEnvelope<T>(response, label),
+      label,
+      response.status,
+    );
   }
 
   // ── Signer (biometric EOA keychain), injected into the bridge ────────
   // Reuses the app's on-device held Ethereum key for EVM message signing.
   // Biometric is only for signing; the private key is zeroized immediately after.
-  private buildSigner(): SignFn {
-    return async ({ message }) => {
-      const pk = await getPrivateKey("ethereum");
-      try {
-        const account = privateKeyToAccount(`0x${bytesToHex(pk)}`);
-        // EIP-191 either way: a string is signed as its UTF-8 text, bytes as-is.
-        const signature = await account.signMessage({
-          message: typeof message === "string" ? message : { raw: message },
-        });
-        void this.checkSignerMatchesBootstrapAddress(account.address);
-        return { address: account.address, signature };
-      } finally {
-        zeroize(pk);
-      }
-    };
+  //
+  // `stepUp` (#1898): money leaving the card (SEPA, UK payments, push to card) and the card
+  // reveal (PAN/CVV) must not ride the session-cached key. Each step-up signs
+  // with a key the user confirms right then (services/auth/stepUpKey): native
+  // runs its own biometric keychain read, separate from ordinary unlocks and
+  // leaving the session cache untouched; web runs a user-verified passkey PRF
+  // ceremony and re-derives the key. Same on both: a cancelled confirmation
+  // throws, so nothing is signed or sent.
+  //
+  // Step-ups run one at a time, so each one prompts only after the previous
+  // signature is done and gets its own confirmation.
+  //
+  // A keychain read or passkey ceremony that never settles must not hold the
+  // queue forever: each step-up is bounded by STEP_UP_TIMEOUT_MS. On timeout
+  // it rejects (so the caller signs and sends nothing), the step-up's signal is
+  // aborted (freeing the browser's single WebAuthn slot on web, the fresh-read
+  // slot on native), and the queue moves on once the aborted read settled (at
+  // most STEP_UP_ABORT_GRACE_MS later). A late result of the abandoned read is
+  // wiped and never signs.
+  private stepUpQueue: Promise<unknown> = Promise.resolve();
+  private enqueueStepUp<T>(op: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const run = this.stepUpQueue.then(() => withStepUpDeadline(op));
+    this.stepUpQueue = run.catch((): undefined => undefined);
+    return run;
+  }
+
+  private buildSigner(opts: { stepUp?: boolean } = {}): SignFn {
+    const sign: SignFn = (input) => this.signWithEthereumKey(input);
+    if (!opts.stepUp) return sign;
+    return (input) =>
+      this.enqueueStepUp((signal) => this.signWithEthereumKey(input, { stepUp: true, signal }));
+  }
+
+  // Step-up signature over terms that carry a timestamp. `build` runs only once
+  // this step-up reaches the front of the queue, so the signed `ts` is not
+  // stale after waiting behind an earlier prompt (server accepts ±5 min).
+  private signStepUp<T extends { message: string | Uint8Array }>(
+    build: () => T,
+  ): Promise<T & Awaited<ReturnType<SignFn>>> {
+    return this.enqueueStepUp(async (signal) => {
+      const terms = build();
+      const signed = await this.signWithEthereumKey(
+        { message: terms.message },
+        { stepUp: true, signal },
+      );
+      return { ...terms, ...signed };
+    });
+  }
+
+  private async signWithEthereumKey(
+    { message }: Parameters<SignFn>[0],
+    opts: { stepUp?: boolean; signal?: AbortSignal } = {},
+  ): ReturnType<SignFn> {
+    // Step-up: a key the user just confirmed (biometric on native, passkey
+    // ceremony on web — services/auth/stepUpKey), never the session cache.
+    const pk = opts.stepUp
+      ? await readStepUpEthereumKey(opts.signal)
+      : await getPrivateKey("ethereum");
+    if (opts.signal?.aborted) {
+      // The deadline already gave up on this step-up: never sign late.
+      zeroize(pk);
+      throw new Error(WIREX_STEP_UP_TIMEOUT_ERROR);
+    }
+    try {
+      const account = privateKeyToAccount(`0x${bytesToHex(pk)}`);
+      // EIP-191 either way: a string is signed as its UTF-8 text, bytes as-is.
+      const signature = await account.signMessage({
+        message: typeof message === "string" ? message : { raw: message },
+      });
+      void this.checkSignerMatchesBootstrapAddress(account.address);
+      return { address: account.address, signature };
+    } finally {
+      zeroize(pk);
+    }
   }
 
   // One-time sanity check (PR #777 review): the keychain key actually signing
@@ -2505,9 +2660,10 @@ class WirexService {
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new Error(`${LOG_TAG} sepaTransfer: invalid amount`);
     }
-    const ts = Math.floor(Date.now() / 1000);
-    const message = buildWirexSepaTransferMessage({ amount, iban, ts });
-    const { address, signature } = await this.buildSigner()({ message });
+    const { ts, address, signature } = await this.signStepUp(() => {
+      const ts = Math.floor(Date.now() / 1000);
+      return { ts, message: buildWirexSepaTransferMessage({ amount, iban, ts }) };
+    });
     const body: Record<string, unknown> = {
       wallet: address,
       account_id: params.accountId,
@@ -2598,15 +2754,17 @@ class WirexService {
   // Signs the quote exactly as the server stored it; the server rebuilds the
   // same string from that quote and executes it once.
   async cardTransfer(quote: WirexCardTransferQuote): Promise<WirexSepaTransferResult> {
-    const ts = Math.floor(Date.now() / 1000);
-    const message = buildWirexCardTransferMessage({
-      amount: quote.amount,
-      currency: quote.currency,
-      last4: quote.card.last4,
-      estimationId: quote.estimationId,
-      ts,
+    const { ts, address, signature } = await this.signStepUp(() => {
+      const ts = Math.floor(Date.now() / 1000);
+      const message = buildWirexCardTransferMessage({
+        amount: quote.amount,
+        currency: quote.currency,
+        last4: quote.card.last4,
+        estimationId: quote.estimationId,
+        ts,
+      });
+      return { ts, message };
     });
-    const { address, signature } = await this.buildSigner()({ message });
     const data = await this.post<{ ok?: boolean; transfer_id?: string | null }>(
       wirexConfig.routes.cardTransfer,
       { wallet: address, estimation_id: quote.estimationId, ts, signature },
@@ -2695,15 +2853,18 @@ class WirexService {
   // ukSendHeld); any other error means nothing was sent (signing declined, or
   // the server answered with a refusal).
   async ukTransfer(quote: WirexUkTransferQuote): Promise<{ transferId: string }> {
-    const ts = Math.floor(Date.now() / 1000);
-    const message = buildWirexUkTransferMessage({
-      amount: quote.amount,
-      sortCode: quote.payee.sortCode,
-      last4: quote.payee.accountNumber.slice(-4),
-      estimationId: quote.estimationId,
-      ts,
+    // Money leaving the card: a fresh confirmation, like SEPA and push to card (#1898).
+    const { ts, address, signature } = await this.signStepUp(() => {
+      const ts = Math.floor(Date.now() / 1000);
+      const message = buildWirexUkTransferMessage({
+        amount: quote.amount,
+        sortCode: quote.payee.sortCode,
+        last4: quote.payee.accountNumber.slice(-4),
+        estimationId: quote.estimationId,
+        ts,
+      });
+      return { ts, message };
     });
-    const { address, signature } = await this.buildSigner()({ message });
     const key = ukPendingKeyFor(address);
     // Written before the request: an app killed mid-send still holds the next one.
     await storeAuthData(
@@ -2940,15 +3101,40 @@ class WirexService {
     // 2) Sign + submit the approval on-device.
     await submitSignedApproval({
       approvalUrl: start.approval_url,
-      sign: this.buildSigner(),
+      sign: this.buildSigner({ stepUp: true }),
       credentialIdB64u: credentialId ?? undefined,
     });
 
-    // 3) Poll card/details/result until the payload is ready.
-    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
-      const data = await this.get<CardDetailsResultData>(wirexConfig.routes.cardDetailsResult, {
-        session_id: start.session_id,
-      });
+    // 3) Poll card/details/result until the payload is ready. Every failure
+    // here names its cause (#1448): server refusal with its code + HTTP status,
+    // a terminal status, a non-JSON answer, or a transport failure. The poll is
+    // a read, so a dropped connection is retried a couple of times before it
+    // counts. Transport retries have their own budget: they never use up one of
+    // the POLL_MAX_ATTEMPTS answers, so a drop near the end is still retried and
+    // named as transport instead of still_pending.
+    let transportFailures = 0;
+    let answers = 0;
+    while (answers < POLL_MAX_ATTEMPTS) {
+      let data: CardDetailsResultData;
+      try {
+        data = await this.get<CardDetailsResultData>(wirexConfig.routes.cardDetailsResult, {
+          session_id: start.session_id,
+        });
+        transportFailures = 0;
+      } catch (pollError) {
+        if (
+          !(pollError instanceof WirexApiError) &&
+          !(pollError instanceof WirexNonJsonResponseError) &&
+          isCardDetailsTransportFailure(pollError) &&
+          transportFailures < CARD_DETAILS_RESULT_TRANSIENT_RETRIES
+        ) {
+          transportFailures += 1;
+          await sleep(POLL_INTERVAL_MS);
+          continue;
+        }
+        throw this.cardDetailsPollError(pollError);
+      }
+      answers += 1;
       // Only an actual payload counts as success. A terminal status without
       // payload means Wirex rejected the reveal — throw so the caller shows
       // its retry state instead of an empty details modal.
@@ -2956,13 +3142,43 @@ class WirexService {
         return { cardId, ...parseWirexCardDetails(data) };
       }
       if (data.status != null && data.status !== "pending" && data.status !== "waiting") {
-        throw new Error(`${LOG_TAG} card/details/result terminal status "${data.status}"`);
+        throw new WirexCardDetailsError(
+          cardDetailsFailureReason({ kind: "terminal_status", status: String(data.status) }),
+        );
       }
       await sleep(POLL_INTERVAL_MS);
     }
-    throw new Error(
-      `${LOG_TAG} card/details/result still pending after ${POLL_MAX_ATTEMPTS} attempts`,
+    throw new WirexCardDetailsError(
+      cardDetailsFailureReason({ kind: "still_pending", attempts: POLL_MAX_ATTEMPTS }),
     );
+  }
+
+  // Maps a failed result poll to its non-sensitive cause. A refusal's raw server
+  // text is NOT kept as `cause` (it is arbitrary and could echo card data); only
+  // errors whose own message is ours (transport, non-JSON) are.
+  private cardDetailsPollError(error: unknown): WirexCardDetailsError {
+    if (error instanceof WirexApiError) {
+      return new WirexCardDetailsError(
+        cardDetailsFailureReason({
+          kind: "refused",
+          code: error.code,
+          httpStatus: error.httpStatus,
+        }),
+      );
+    }
+    if (error instanceof WirexNonJsonResponseError) {
+      return new WirexCardDetailsError(
+        cardDetailsFailureReason({ kind: "non_json", httpStatus: error.httpStatus }),
+        error,
+      );
+    }
+    if (isCardDetailsTransportFailure(error)) {
+      return new WirexCardDetailsError(cardDetailsFailureReason({ kind: "transport" }), error);
+    }
+    if (error instanceof Error && error.message.endsWith("returned no data")) {
+      return new WirexCardDetailsError(cardDetailsFailureReason({ kind: "no_data" }), error);
+    }
+    return new WirexCardDetailsError(cardDetailsFailureReason({ kind: "unknown" }), error);
   }
 
   // ── Public: the account's user record (read-session gated) ──

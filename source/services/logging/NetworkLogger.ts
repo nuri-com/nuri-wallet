@@ -257,10 +257,35 @@ function parseStackSourceLine(line: string): string | null {
   return null;
 }
 
-function inferRequestSourceFromStack(fallback?: string): string | undefined {
-  const err = new Error();
-  const stack = typeof err.stack === "string" ? err.stack : "";
-  const lines = stack.split("\n").slice(1);
+// Release builds keep function names but not file paths: every frame points at
+// the JS bundle (`index.android.bundle`, `main.jsbundle`, Hermes `.hbc`). A
+// file-path marker therefore never matched the logger's own frames there, and
+// the source became this helper's own frame, which the op logger renders as
+// "Network infer request source from stack failed." (#1362). Skip the logger's
+// own functions by name, and never take a frame that only says "somewhere in
+// the bundle".
+const NETWORK_STACK_INTERNAL_FUNCS = new Set([
+  "inferRequestSourceFromStack",
+  "pickRequestSourceFromStack",
+  "parseStackSourceLine",
+  "resolveSource",
+  "wrappedFetch",
+]);
+
+const BUNDLE_FILE_RX =
+  /(?:^|[\s/])(?:index(?:\.[a-z]+)?\.bundle|[\w.-]*\.jsbundle|[\w.-]*\.hbc)(?::\d+)?#/i;
+
+function isUninformativeStackSource(source: string): boolean {
+  const func = source.slice(source.lastIndexOf("#") + 1);
+  if (NETWORK_STACK_INTERNAL_FUNCS.has(func)) return true;
+  // A bundle frame without a function name says nothing about the caller.
+  return BUNDLE_FILE_RX.test(source) && (func === "anonymous" || func === "");
+}
+
+export function pickRequestSourceFromStack(stack: string, fallback?: string): string | undefined {
+  const lines = String(stack || "")
+    .split("\n")
+    .slice(1);
 
   for (const line of lines) {
     const parsed = parseStackSourceLine(line);
@@ -268,9 +293,15 @@ function inferRequestSourceFromStack(fallback?: string): string | undefined {
     if (parsed.includes("node_modules")) continue;
     const isInternal = NETWORK_STACK_INTERNAL_MARKERS.some((marker) => parsed.includes(marker));
     if (isInternal) continue;
+    if (isUninformativeStackSource(parsed)) continue;
     return parsed;
   }
   return fallback;
+}
+
+function inferRequestSourceFromStack(fallback?: string): string | undefined {
+  const err = new Error();
+  return pickRequestSourceFromStack(typeof err.stack === "string" ? err.stack : "", fallback);
 }
 
 function inferRequestSourceFromUrl(url: string): string {
@@ -281,13 +312,14 @@ function inferRequestSourceFromUrl(url: string): string {
   return `${host}${normalizedPath}`;
 }
 
-function resolveSource(rawSource: string | undefined, url: string): string {
+export function resolveSource(rawSource: string | undefined, url: string): string {
   const source = String(rawSource || "").trim();
   if (
     !source ||
     /^unknown(#|$)/i.test(source) ||
     /^index\.bundle(?::\d+)?(?:#|$)/i.test(source) ||
-    /#getCallerSource$/i.test(source)
+    /#getCallerSource$/i.test(source) ||
+    isUninformativeStackSource(source)
   ) {
     return inferRequestSourceFromUrl(url);
   }

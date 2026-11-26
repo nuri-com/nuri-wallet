@@ -54,6 +54,77 @@ export type RemitInvoice = {
 let requestId = 0;
 
 /**
+ * Why a remit request never got an answer (nuri-expo #2026). A bare "Aborted"
+ * from fetch says nothing about whether the wallet's own deadline fired, the
+ * request was cancelled, or the connection dropped, nor whether the service
+ * may already have acted on it.
+ */
+export type RemitRequestFailureKind = "timeout" | "aborted" | "transport";
+
+/** How far the request got: still waiting for headers, or reading the body. */
+export type RemitRequestPhase = "headers" | "body";
+
+export class RemitRequestError extends Error {
+  readonly tool: string;
+  readonly kind: RemitRequestFailureKind;
+  readonly phase: RemitRequestPhase;
+  readonly elapsedMs: number;
+  readonly timeoutMs: number;
+  /**
+   * The request left the device but no answer came back, so the service may
+   * have acted on it (for `send_tzs`: an unpaid order may exist). It is never
+   * retried automatically; an unpaid order lapses on its own.
+   */
+  readonly outcomeUnknown: boolean;
+
+  constructor(init: {
+    tool: string;
+    kind: RemitRequestFailureKind;
+    phase: RemitRequestPhase;
+    elapsedMs: number;
+    timeoutMs: number;
+    cause?: string;
+  }) {
+    const what =
+      init.kind === "timeout"
+        ? `timed out after ${init.timeoutMs} ms`
+        : init.kind === "aborted"
+          ? // Not "cancelled": that word reads as a dismissed passkey prompt
+            // to isUserCancelledAuth, which would hide this failure.
+            "was aborted"
+          : `lost its connection${init.cause ? ` (${init.cause})` : ""}`;
+    super(
+      `remit ${init.tool} ${what} waiting for the response ${init.phase} after ${init.elapsedMs} ms; outcome unknown`,
+    );
+    this.name = "RemitRequestError";
+    this.tool = init.tool;
+    this.kind = init.kind;
+    this.phase = init.phase;
+    this.elapsedMs = init.elapsedMs;
+    this.timeoutMs = init.timeoutMs;
+    this.outcomeUnknown = true;
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  const name = (error as { name?: unknown } | null)?.name;
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return name === "AbortError" || /^abort(ed)?\b/i.test(message.trim());
+}
+
+/** A short, data-free cause for a transport error: its name and first words. */
+function transportCause(error: unknown): string {
+  const name = (error as { name?: unknown } | null)?.name;
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const head = message
+    .replace(/https?:\/\/\S+/g, "<url>")
+    .replace(/[^\w .:<>-]/g, "")
+    .slice(0, 60)
+    .trim();
+  return [typeof name === "string" ? name : "", head].filter(Boolean).join(": ");
+}
+
+/**
  * One MCP tool call.
  *
  * The endpoint is stateless for tool calls — it answers `tools/call` without a
@@ -68,9 +139,50 @@ async function callRemitTool(
 ): Promise<unknown> {
   requestId += 1;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = Date.now();
+  let timedOut = false;
+  let phase: RemitRequestPhase = "headers";
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   try {
-    const response = await fetch(endpoint, {
+    return await sendRemitRequest(name, args, endpoint, controller.signal, () => {
+      phase = "body";
+    });
+  } catch (thrown) {
+    // Answers the service gave (HTTP status, JSON-RPC or tool refusals, bad
+    // bodies) keep their own message; only "no answer" is reclassified.
+    if (!(thrown instanceof NoAnswer)) throw thrown;
+    const error = thrown.error;
+    const aborted = isAbortError(error);
+    const failure = new RemitRequestError({
+      tool: name,
+      kind: timedOut ? "timeout" : aborted ? "aborted" : "transport",
+      phase,
+      elapsedMs: Date.now() - startedAt,
+      timeoutMs,
+      cause: timedOut || aborted ? undefined : transportCause(error),
+    });
+    log(
+      `Remit request failed tool=${name} kind=${failure.kind} phase=${failure.phase} elapsed_ms=${failure.elapsedMs} timeout_ms=${timeoutMs} outcome=unknown src=services/remit/RemitService.ts#callRemitTool`,
+    );
+    throw failure;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function sendRemitRequest(
+  name: string,
+  args: Record<string, unknown>,
+  endpoint: string,
+  signal: AbortSignal,
+  onHeaders: () => void,
+): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -84,26 +196,37 @@ async function callRemitTool(
         method: "tools/call",
         params: { name, arguments: args },
       }),
-      signal: controller.signal,
+      signal,
     });
-    if (!response.ok) {
-      throw new Error(`remit ${name} failed (${response.status})`);
-    }
-
-    // The abort timer stays armed until the body is fully read: headers can
-    // arrive promptly while the body (an SSE frame, or a stalled stream)
-    // trickles forever, and a send screen must never wait on that.
-    const body = await response.text();
-    const envelope = parseJsonRpcBody(body);
-    const error = (envelope as { error?: { message?: string } })?.error;
-    if (error) {
-      throw new Error(String(error.message || `remit ${name} failed`));
-    }
-    const result = (envelope as { result?: unknown })?.result;
-    return unwrapToolResult(result);
-  } finally {
-    clearTimeout(timeout);
+  } catch (error) {
+    throw new NoAnswer(error);
   }
+  onHeaders();
+  if (!response.ok) {
+    throw new Error(`remit ${name} failed (${response.status})`);
+  }
+
+  // The abort timer stays armed until the body is fully read: headers can
+  // arrive promptly while the body (an SSE frame, or a stalled stream)
+  // trickles forever, and a send screen must never wait on that.
+  let body: string;
+  try {
+    body = await response.text();
+  } catch (error) {
+    throw new NoAnswer(error);
+  }
+  const envelope = parseJsonRpcBody(body);
+  const error = (envelope as { error?: { message?: string } })?.error;
+  if (error) {
+    throw new Error(String(error.message || `remit ${name} failed`));
+  }
+  const result = (envelope as { result?: unknown })?.result;
+  return unwrapToolResult(result);
+}
+
+/** fetch or the body read threw: the service's answer, if any, never arrived. */
+class NoAnswer {
+  constructor(readonly error: unknown) {}
 }
 
 /**
@@ -202,16 +325,22 @@ export async function createRemitLightningInvoice(params: {
   amountTZS: number;
   phoneNumber: string;
   clientReference?: string;
+  /** The user's own Lightning address, refunded when the payout fails. */
+  refundLightningAddress?: string | null;
 }): Promise<RemitInvoice> {
   const tzs = Math.floor(Number(params.amountTZS) || 0);
   if (tzs <= 0) throw new Error("amount required");
   const phoneNumber = String(params.phoneNumber || "").trim();
   if (!phoneNumber) throw new Error("recipient required");
+  const { refundDestination } = remitRefundArgs({
+    lightningAddress: params.refundLightningAddress,
+  });
 
   const data = (await callRemitTool("send_tzs_to_phone_with_lightning", {
     amountTZS: tzs,
     phoneNumber,
     ...(params.clientReference ? { clientReference: params.clientReference } : {}),
+    ...(refundDestination ? { refundDestination } : {}),
   })) as Record<string, unknown>;
 
   // The corridor names its own fields, so they are read directly; `findInvoice`
@@ -458,9 +587,14 @@ export function localToSats(amount: number, btcRate: number): number {
 /**
  * The invoice that delivers `amount` of the method's currency to `recipient`.
  *
- * Quote, then invoice: neither moves money, and ZapRemit pays out only once
- * this invoice settles. Each press gets a fresh reference: a quote lives a
- * minute, and an unpaid one is simply left to expire.
+ * With the user's own Lightning address as `refundLightningAddress` this is the
+ * Nuri Remit relay (`zapremit_send`, nuri-expo #2058): a 15-minute invoice to
+ * Nuri Remit, which quotes and pays ZapRemit only after the user's payment has
+ * settled, and refunds the full amount to that address when the payout cannot
+ * be made. That removes the 45 s quote race a direct invoice has. Without a
+ * usable address it falls back to the direct path: quote, then ZapRemit's own
+ * invoice. Neither moves money; each press gets a fresh reference, and an
+ * unpaid invoice is simply left to expire.
  */
 export async function createZapRemitLightningInvoice(params: {
   country: string;
@@ -468,20 +602,65 @@ export async function createZapRemitLightningInvoice(params: {
   currency: string;
   amount: number;
   recipient: Record<string, unknown>;
-}): Promise<{ invoice: string; orderId: string; payBy: number }> {
+  /** The user's own `<name>@nuri.com`; refunded when a relayed payout fails. */
+  refundLightningAddress?: string | null;
+}): Promise<{ invoice: string; orderId: string; payBy: number; relay: boolean }> {
   const amount = Math.floor(Number(params.amount) || 0);
   if (amount <= 0) throw new Error("amount required");
   const fullName = params.recipient?.fullName;
   if (typeof fullName === "string" && !fullName.trim()) throw new Error("recipient required");
 
-  const quote = (await callZapRemitTool("zapremit_quote", {
+  // Recipient fields can never name the refund target: only the caller's own address.
+  const { refundDestination: _d, refundAddress: _a, ...recipient } = params.recipient ?? {};
+  const { refundDestination } = remitRefundArgs({
+    lightningAddress: params.refundLightningAddress,
+  });
+  const order = {
     country: params.country,
     methodCode: params.methodCode,
     amount,
     currency: params.currency,
-    recipient: params.recipient,
+    recipient,
     referenceId: randomUUID().toLowerCase(),
-  })) as Record<string, unknown>;
+  };
+
+  let relay: Record<string, unknown> | null = null;
+  if (refundDestination) {
+    try {
+      relay = (await callZapRemitTool("zapremit_send", {
+        ...order,
+        refundDestination,
+      })) as Record<string, unknown>;
+    } catch (error) {
+      // A host without the relay says so; that press takes the direct path.
+      // Any other refusal is the order's own and is shown as it is.
+      if (!isRelayUnavailable(error)) throw error;
+      log(
+        `Remit relay unavailable, direct ZapRemit invoice src=services/remit/RemitService.ts#createZapRemitLightningInvoice`,
+      );
+    }
+  }
+  if (relay) {
+    const orderId = typeof relay?.orderId === "string" ? relay.orderId : "";
+    if (!orderId) throw new Error("zapremit returned no order");
+    const invoice =
+      typeof relay?.invoice === "string" && isBolt11Invoice(relay.invoice.trim())
+        ? relay.invoice.trim()
+        : findInvoice(relay);
+    if (!invoice) throw new Error("zapremit returned no invoice");
+    log(
+      `🔐 STEP Remit=1 step=remit_zapremit_invoice_created status=ok relay=1 country=${params.country} method=${params.methodCode} amount=${amount} currency=${params.currency} sats=${
+        finiteNumber(relay?.amountSats) ?? "?"
+      } src=services/remit/RemitService.ts#createZapRemitLightningInvoice`,
+    );
+    // The relay quotes ZapRemit only after the payment settles, so the last
+    // moment to pay is the relay invoice's own expiry, less the pay budget.
+    const payBy = zapRelayPayBy(relay);
+    if (payBy === null) throw new Error("zapremit returned no price hold");
+    return { invoice, orderId, payBy, relay: true };
+  }
+
+  const quote = (await callZapRemitTool("zapremit_quote", order)) as Record<string, unknown>;
   const orderId = typeof quote?.orderId === "string" ? quote.orderId : "";
   if (!orderId) throw new Error("zapremit returned no order");
 
@@ -496,7 +675,7 @@ export async function createZapRemitLightningInvoice(params: {
   if (!invoice) throw new Error("zapremit returned no invoice");
 
   log(
-    `🔐 STEP Remit=1 step=remit_zapremit_invoice_created status=ok country=${params.country} method=${params.methodCode} amount=${amount} currency=${params.currency} sats=${
+    `🔐 STEP Remit=1 step=remit_zapremit_invoice_created status=ok relay=0 country=${params.country} method=${params.methodCode} amount=${amount} currency=${params.currency} sats=${
       finiteNumber(payment?.amountSats) ?? "?"
     } src=services/remit/RemitService.ts#createZapRemitLightningInvoice`,
   );
@@ -504,7 +683,24 @@ export async function createZapRemitLightningInvoice(params: {
   // so paying it blind is how a payout fails after the sats have left.
   const payBy = zapPayBy(payment) ?? zapPayBy(quote);
   if (payBy === null) throw new Error("zapremit returned no price hold");
-  return { invoice, orderId, payBy };
+  return { invoice, orderId, payBy, relay: false };
+}
+
+function isRelayUnavailable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /relay_unavailable|relay is not configured/i.test(message);
+}
+
+/**
+ * The last moment a press may still pay a relay invoice, epoch ms: its own
+ * expiry (`payBefore`, about 15 minutes) less the pay budget. Null when the
+ * service did not say.
+ */
+export function zapRelayPayBy(relay: Record<string, unknown> | null | undefined): number | null {
+  const until = Date.parse(
+    String(relay?.payBefore ?? relay?.invoiceExpiresAt ?? relay?.expiresAt ?? ""),
+  );
+  return Number.isFinite(until) ? until - ZAP_PAY_BUDGET_MS : null;
 }
 
 /**
@@ -663,21 +859,60 @@ export async function listTzOptions(field: "bic" | "providerCode"): Promise<ZapR
 }
 
 /**
+ * Where the service sends the money back when a paid payout fails (nuri-expo
+ * #2058, Remit v2.8.0): the user's own Lightning address for a Lightning-paid
+ * order, the user's own Base address for a USDC/EURC order funded by a swap
+ * (whose on-chain sender is the solver, not the user).
+ */
+export type RemitRefundTargets = {
+  lightningAddress?: string | null;
+  baseAddress?: string | null;
+};
+
+const LIGHTNING_ADDRESS = /^[a-z0-9][a-z0-9._-]*@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
+
+/**
+ * The refund fields for a Remit order. A target that is not well formed is left
+ * out rather than sent: the service then falls back to the verified payer.
+ */
+export function remitRefundArgs(refund?: RemitRefundTargets | null): {
+  refundDestination?: string;
+  refundAddress?: string;
+} {
+  const out: { refundDestination?: string; refundAddress?: string } = {};
+  const lightning = String(refund?.lightningAddress ?? "")
+    .trim()
+    .toLowerCase();
+  if (LIGHTNING_ADDRESS.test(lightning)) out.refundDestination = lightning;
+  const base = String(refund?.baseAddress ?? "").trim();
+  if (/^0x[0-9a-fA-F]{40}$/.test(base)) out.refundAddress = base;
+  return out;
+}
+
+/**
  * The order that pays `amountTZS` to a Tanzanian bank account, Lipa Namba or
  * TanQR. Creating it moves no money; the service pays out once one of its
- * offers is paid, and an unpaid order lapses on its own.
+ * offers is paid, and an unpaid order lapses on its own. `refund` names the
+ * user's own addresses for a failed payout; the recipient can never set them.
  */
 export async function createTzOrder(
   amountTZS: number,
   recipient: Record<string, unknown>,
+  refund?: RemitRefundTargets | null,
 ): Promise<TzOrder> {
   const tzs = Math.floor(Number(amountTZS) || 0);
   if (tzs <= 0) throw new Error("amount required");
-  const order = parseTzOrder(await callZapRemitTool("send_tzs", { amountTZS: tzs, ...recipient }));
+  const { refundDestination: _d, refundAddress: _a, ...payee } = recipient;
+  const refundArgs = remitRefundArgs(refund);
+  const order = parseTzOrder(
+    await callZapRemitTool("send_tzs", { amountTZS: tzs, ...payee, ...refundArgs }),
+  );
   log(
     `🔐 STEP Remit=1 step=remit_tz_order_created status=ok tzs=${tzs} lightning=${
       order.invoice ? 1 : 0
-    } usdc=${order.usdc ? 1 : 0} eurc=${order.eurc ? 1 : 0} src=services/remit/RemitService.ts#createTzOrder`,
+    } usdc=${order.usdc ? 1 : 0} eurc=${order.eurc ? 1 : 0} refund_ln=${
+      refundArgs.refundDestination ? 1 : 0
+    } refund_base=${refundArgs.refundAddress ? 1 : 0} src=services/remit/RemitService.ts#createTzOrder`,
   );
   return order;
 }

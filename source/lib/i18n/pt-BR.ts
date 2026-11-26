@@ -143,6 +143,8 @@ export const ptBR = {
       lightningAlreadyPaid: "Esta fatura já foi paga.",
       lightningAlreadyPaying: "Esta fatura já está sendo paga. Ela aparece no seu histórico.",
       errorLightningLockupUnavailable: "Lightning indisponível. Nada foi enviado.",
+      errorLightningSendStillRunning:
+        "Seu último pagamento Lightning ainda está em andamento. Espere terminar e envie de novo.",
       errorOnchainTooFreshHours: "Disponível em cerca de %{hours} h.",
       errorOnchainTooFreshMinutes: "Disponível em cerca de %{minutes} min.",
       errorOnchainTooFresh: "Ainda não disponível. Tente mais tarde.",
@@ -247,6 +249,13 @@ export const ptBR = {
       errorPersistentBody: "Ainda não funciona. Fale com o suporte.",
       amountBelowMin: "Mínimo de %{sats} sats",
       amountAboveMax: "Máximo de %{sats} sats",
+      paidTitle: "Pago",
+      paidBody: "O pagamento chegou na sua carteira.",
+      detectedTitle: "Pagamento recebido",
+      detectedBody:
+        "Ainda está sendo concluído e aparecerá no seu saldo ao terminar. Se não, fale com o suporte.",
+      newRequest: "Nova solicitação",
+      expired: "Fatura expirada",
     },
     QrScannerModal: {
       title: "Escanear QR",
@@ -916,6 +925,7 @@ export const ptBR = {
       fieldNetwork: "Rede de dinheiro móvel",
       sepaBank: "Conta bancária em euro (SEPA)",
       ukBank: "Conta bancária no Reino Unido",
+      cardBank: "Cartão Visa ou Mastercard",
     },
   },
   common: {

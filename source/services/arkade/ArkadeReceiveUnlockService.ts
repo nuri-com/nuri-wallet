@@ -21,6 +21,7 @@ import {
   renewArkadeExpiringVtxosManual,
 } from "./internal/vtxoRenewal";
 import { setPendingLnurlSwapsFromReceiveRows } from "./internal/pendingLnurlSwaps";
+import { emitArkadeLightningReceiveRows } from "./internal/receiveUpdatedEvents";
 import {
   filterArkadeBoardingRowsForCurrentWallet,
   getArkadeBoardingOwnershipCopyLogs,
@@ -43,6 +44,7 @@ import {
 import { getArkadeWalletSummary, loadArkadeWalletSummary } from "./internal/walletSummary";
 import type { ArkadeWalletSummary } from "./types/wallet";
 export {
+  ARKADE_LIGHTNING_RECEIVE_ROWS_EVENT,
   ARKADE_OPEN_UNLOCK_WALLET_EVENT,
   ARKADE_RECEIVE_UNLOCK_PROGRESS_EVENT,
   emitArkadeOpenUnlockWallet,
@@ -597,6 +599,7 @@ export async function refreshArkadeReceiveUnlockState(options?: {
       lightningRows.filter((row) => !isReverseFinalStatus(readLightningStatus(row))),
     );
     emitLightningReceived(lightningRows);
+    emitArkadeLightningReceiveRows(lightningRows);
     return publishState(
       buildUnlockState({
         lightningRows,

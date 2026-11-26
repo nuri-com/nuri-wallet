@@ -51,7 +51,7 @@ export const basescanTokenUrl = (token: string, account: string) =>
 export const UPDATE_BASE_URL = "https://update.nuri.com";
 
 // ── Public payment link ──────────────────────────────────────────────
-// Where `/pay/@username` is served: the pay page's own origin (pay-page/), so
+// Where pay links are served (`pay.nuri.com/username`): the pay page's own origin (pay-page/), so
 // the wallet connection packages it loads never share storage with a wallet.
 export const PAY_LINK_ORIGIN = IS_MAINNET ? "https://pay.nuri.com" : "https://pay-sandbox.nuri.com";
 

@@ -46,6 +46,8 @@ export type WirexOnboardingState = {
   failed: boolean;
   /** The last attempt failed because the email belongs to another account. */
   emailInUse: boolean;
+  /** This wallet's already saved account email, shown filled in on the email screen. */
+  savedEmail: string | null;
   /** Open the email screen — the first-time "Open Free Account" entry point. */
   start: () => void;
   /** Close the email screen without onboarding. */
@@ -62,6 +64,7 @@ export function useWirexOnboarding(options?: WirexOnboardingOptions): WirexOnboa
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [emailInUse, setEmailInUse] = useState(false);
+  const [savedEmail, setSavedEmail] = useState<string | null>(null);
 
   const resolveKycIdentity = useCallback(() => {
     const username = String(authenticatedUsername || "")
@@ -123,14 +126,25 @@ export function useWirexOnboarding(options?: WirexOnboardingOptions): WirexOnboa
     [onKycFinished, resolveKycIdentity],
   );
 
+  // A signup that was left before the account status reached the server still
+  // has its email saved on this device, and only that email is accepted again.
+  // Fill it in so the user is not asked for something the app already knows.
   const start = useCallback(() => {
     setFailed(false);
     setEmailInUse(false);
+    setSavedEmail(null);
     setEmailEntryVisible(true);
+    void (async () => {
+      const wallet = await getEthereumAddress();
+      if (!wallet) return;
+      const email = await wirexService.getOnboardEmail(wallet).catch((): null => null);
+      if (email) setSavedEmail(email);
+    })();
   }, []);
   const cancel = useCallback(() => {
     setFailed(false);
     setEmailInUse(false);
+    setSavedEmail(null);
     setEmailEntryVisible(false);
   }, []);
 
@@ -229,6 +243,7 @@ export function useWirexOnboarding(options?: WirexOnboardingOptions): WirexOnboa
     busy,
     failed,
     emailInUse,
+    savedEmail,
     start,
     cancel,
     submitEmail,

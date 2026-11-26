@@ -64,6 +64,45 @@ export function emitArkadeReceiveUnlockProgress(payload: ArkadeReceiveUnlockProg
   } catch {}
 }
 
+// The displayed-invoice receipt (#2044) reads every successful receive sync's
+// Lightning rows. The payload carries public fields only (ids, hash, invoice,
+// amount, status), no preimage.
+export const ARKADE_LIGHTNING_RECEIVE_ROWS_EVENT = "arkade:lightningReceiveRows";
+
+export type ArkadeLightningReceiveRowsPayload = {
+  rows: Array<{
+    id?: string;
+    receive_id?: string;
+    swap_id?: string;
+    invoice?: string;
+    payment_hash_hex?: string;
+    preimage_hash_hex?: string;
+    amount_msat?: number;
+    status?: string;
+    boltz_status?: string;
+  }>;
+};
+
+export function emitArkadeLightningReceiveRows(
+  rows: ReadonlyArray<ArkadeLightningReceiveRowsPayload["rows"][number]>,
+): void {
+  try {
+    EventBus.emit(ARKADE_LIGHTNING_RECEIVE_ROWS_EVENT, {
+      rows: rows.map((row) => ({
+        id: row.id,
+        receive_id: row.receive_id,
+        swap_id: row.swap_id,
+        invoice: row.invoice,
+        payment_hash_hex: row.payment_hash_hex,
+        preimage_hash_hex: row.preimage_hash_hex,
+        amount_msat: row.amount_msat,
+        status: row.status,
+        boltz_status: row.boltz_status,
+      })),
+    } satisfies ArkadeLightningReceiveRowsPayload);
+  } catch {}
+}
+
 export function emitArkadeReceiveUpdated(
   reason: string,
   summary: ArkadeLightningClaimSummary,

@@ -33,7 +33,14 @@ function subscriberPart(raw: string): string | null {
   const compact = stripSeparators(raw);
   if (!compact) return null;
 
-  const withoutPlus = compact.startsWith("+") ? compact.slice(1) : compact;
+  // `00` is the international dialling prefix written in place of `+`
+  // (00255…). Only stripped in front of the Tanzanian country code, so a
+  // trunk-zero number can never lose its own digits to it.
+  const withoutPlus = compact.startsWith("+")
+    ? compact.slice(1)
+    : compact.startsWith(`00${COUNTRY_CODE}`)
+      ? compact.slice(2)
+      : compact;
   if (!/^\d+$/.test(withoutPlus)) return null;
 
   // +255712345678 / 255712345678

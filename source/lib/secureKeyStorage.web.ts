@@ -233,6 +233,15 @@ export async function adoptRecoveredWalletKeys(
 // in-flight promise and raises no provider UI that could hang.
 export function abandonInFlightWalletUnlock(): void {}
 
+// Native-only: web step-ups run a user-verified passkey ceremony instead
+// (services/auth/stepUpKey.web.ts).
+export async function readFreshWalletKey(
+  _keyType: "ethereum",
+  _signal?: AbortSignal,
+): Promise<Uint8Array> {
+  throw new Error("Fresh wallet key reads are only supported on iOS and Android");
+}
+
 export async function unlockWalletKeys(): Promise<Array<"bitcoin" | "ethereum" | "nostr">> {
   const [hasBitcoin, hasEthereum] = await Promise.all([
     hasStoredKey("bitcoin"),

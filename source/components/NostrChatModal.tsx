@@ -34,6 +34,7 @@ import {
   createNip04DirectMessage,
   createNip17GiftWrap,
   getOrCreateNostrKeypair,
+  isUsableNostrKeypair,
   NOSTR_KINDS,
   normalizeNostrPubkey,
   openNip04DirectMessage,
@@ -719,6 +720,11 @@ const NostrChatModal: React.FC<Props> = ({
 
   useEffect(() => {
     let cancelled = false;
+    // Drop the previous open's keys first. A blocked-restore keypairOverride is wiped
+    // (zeroized) by App when the chat closes, and the fresh pair below only lands after
+    // a later render, so a send on reopen would otherwise sign with that zeroed key
+    // ("invalid scalar: out of range", #2017).
+    setKeys(null);
     if (!visible) return;
     logWithId(
       `${LOG_EMOJI.auth} Support.chat`,
@@ -734,6 +740,12 @@ const NostrChatModal: React.FC<Props> = ({
       try {
         const pair = keypairOverride ?? (await getOrCreateNostrKeypair());
         if (!cancelled) {
+          if (!isUsableNostrKeypair(pair)) {
+            // Never sign with a wiped key; say so instead of failing every send.
+            console.warn("[NostrChatModal] key load failed", { error: "unusable keypair" });
+            setStatus(t("screen.NostrChatModal.keyError"));
+            return;
+          }
           if (!keypairOverride) {
             try {
               await storeAuthData(NOSTR_PUBKEY_CACHE_KEY, pair.pkHex);
@@ -1116,7 +1128,7 @@ const NostrChatModal: React.FC<Props> = ({
       setStatus(t("screen.NostrChatModal.openNuriChatToShareLogs"));
       return;
     }
-    if (!keys) {
+    if (!isUsableNostrKeypair(keys)) {
       setStatus(t("screen.NostrChatModal.keysNotReadyYet"));
       return;
     }
@@ -1441,9 +1453,9 @@ const NostrChatModal: React.FC<Props> = ({
   ]);
 
   const handleSend = (override?: unknown) => {
-    if (!keys) {
+    if (!isUsableNostrKeypair(keys)) {
       setStatus(t("screen.NostrChatModal.keysNotReady"));
-      console.warn("[NostrChatModal] Send failed: keys not ready");
+      console.warn("[NostrChatModal] Send failed: keys not ready", { wiped: Boolean(keys) });
       return;
     }
     if (!activeRecipient) {
@@ -1681,6 +1693,8 @@ const NostrChatModal: React.FC<Props> = ({
     const msg = autoSendMessage?.trim();
     if (!msg || autoSentRef.current) return;
     if (!keys || !supportHex || activeRecipient !== supportHex) return;
+    // A wiped key would fail and burn the one-off send; wait for the fresh pair.
+    if (!isUsableNostrKeypair(keys)) return;
     autoSentRef.current = true;
     handleSend(msg);
   }, [visible, autoSendMessage, keys, supportHex, activeRecipient]);

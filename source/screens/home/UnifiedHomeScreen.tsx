@@ -2737,6 +2737,8 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
           return {
             invoice: created.invoice,
             expiresAtMs: created.expiresAtMs ?? Date.now() + (created.expirySeconds ?? 600) * 1000,
+            swapId: created.id,
+            paymentHash: created.paymentHash,
           };
         }}
       />
@@ -3227,14 +3229,17 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         }}
         // The Visa & Banking transfers, with the same gates as its own Send
         // sheet; picking one runs that flow, which asks for the recipient,
-        // prices and confirms (#1843).
+        // prices and confirms (#1843). The card row is that Send sheet's "To a
+        // card": the push-to-card flow checks the recipient card itself.
         bankRails={{
           sepa: !wirexRailsNeedActivation && wirexBankReady,
           uk: !wirexRailsNeedActivation && wirex.ukSend === true,
+          card: !wirexRailsNeedActivation,
         }}
         onBankRail={(rail) => {
           setRecipientSheetOpen(false);
           sendStartRef.current = [];
+          if (rail === "card") return void cardPayout.start();
           if (rail === "uk") return void ukPayout.start();
           handOff(wirexSend.startSepa);
         }}
@@ -3562,6 +3567,7 @@ const UnifiedHomeScreen: React.FC<UnifiedHomeScreenProps> = ({ signedInHandle })
         busy={onboarding.busy}
         failed={onboarding.failed}
         emailInUse={onboarding.emailInUse}
+        savedEmail={onboarding.savedEmail}
       />
     </>
   );

@@ -15,6 +15,16 @@
 // because a browser has no biometric prompt — but it does have WebAuthn, so
 // the PWA needs this.
 
+/** RemitRequestError (services/remit) by name, itself or as the cause. */
+function isRemitRequestFailure(error: unknown): boolean {
+  const nameOf = (value: unknown) =>
+    value && typeof value === "object" ? (value as { name?: unknown }).name : undefined;
+  return (
+    nameOf(error) === "RemitRequestError" ||
+    nameOf((error as { cause?: unknown } | null)?.cause) === "RemitRequestError"
+  );
+}
+
 function errorText(error: unknown): string {
   if (!error) return "";
   if (typeof error === "string") return error;
@@ -46,6 +56,10 @@ function errorText(error: unknown): string {
  * than something that went wrong.
  */
 export function isUserCancelledAuth(error: unknown): boolean {
+  // A remit request that got no answer is a service failure whatever words
+  // its message or transport cause carry ("cancelled" on iOS), never a prompt
+  // the user dismissed.
+  if (isRemitRequestFailure(error)) return false;
   const text = errorText(error);
   if (!text) return false;
   // NotAllowedError is WebAuthn's own refusal/timeout answer and means nothing

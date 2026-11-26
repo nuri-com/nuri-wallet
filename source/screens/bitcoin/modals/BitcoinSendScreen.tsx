@@ -70,11 +70,14 @@ import {
   isArkadeLightningLockupMismatchError,
   prefetchArkadeLightningQuote,
 } from "../../../services/arkade/ArkadeLightningSendService";
-import { clearPrefetchedArkadeIntentsLightningQuote } from "../../../services/swapkit/SwapKitArkadeLightningSendService";
+import {
+  clearPrefetchedArkadeIntentsLightningQuote,
+  isArkadeLightningPaymentInProgressError,
+  isLightningPaymentAlreadyStartedError,
+} from "../../../services/swapkit/SwapKitArkadeLightningSendService";
 import { reportErrorToSupport } from "../../../lib/support/reportErrorToSupport";
 import { isUserCancelledAuth } from "../../../lib/support/isUserCancelledAuth";
 import { isArkadeMaxSendAmountError } from "../../../services/arkade/internal/maxSendAmount";
-import { isLightningPaymentAlreadyStartedError } from "../../../services/swapkit/SwapKitArkadeLightningSendService";
 import { isArkadeVtxoTooFreshError } from "../../../services/arkade/internal/settlementExpiryGap";
 import { getArkadeWalletSummary } from "../../../services/arkade/ArkadeWalletService";
 import {
@@ -125,6 +128,7 @@ import {
   tzPaymentLapsed,
   type ZapRemitTerms,
 } from "../../../services/remit/RemitService";
+import { ownRemitRefundTargets } from "../../../services/remit/remitRefundTargets";
 import {
   btcRailRefundAddress,
   executeV2BtcToStable,
@@ -398,6 +402,9 @@ export default function BitcoinSendScreen({
     },
   });
   const arkadeLightningSendActiveRef = useRef(false);
+  // Which payment the running Lightning attempt pays (invoice or LNURL+amount),
+  // so a repeat tap on it can be told apart from a different payment (#2004).
+  const arkadeLightningSendKeyRef = useRef<string | null>(null);
   const arkadePendingIdRef = useRef<string | null>(null);
   const arkadeLocalPendingIdRef = useRef<string | null>(null);
   const arkadeSubmittedTxidRef = useRef<string | null>(null);
@@ -1144,6 +1151,42 @@ export default function BitcoinSendScreen({
       const zapRecipient =
         abroadDestination ?? (keRecipient ? kenyaMpesaDestination(keRecipient, remitName) : null);
       const isRemit = tzRecipient !== null || zapRecipient !== null;
+      // An earlier tap on this sheet is still paying over Lightning (#2004) and
+      // owns the shared pill and send refs. No other target may start before it
+      // ends: every branch below hands off to the pill or resets those refs.
+      // A repeat of the same payment closes quietly, anything else says why.
+      if (arkadeLightningSendActiveRef.current) {
+        const requestedKey =
+          isBolt11 && !isRemit
+            ? `bolt11:${lightningRequest}`
+            : isLnurl && !isRemit
+              ? `lnurl:${lightningRequest}:${currentSats}`
+              : null;
+        if (requestedKey !== null && arkadeLightningSendKeyRef.current === requestedKey) {
+          log(
+            `🔐 STEP Arkade_v4=1 step=wallet_send_already_in_progress status=deferred why=earlier_attempt_running src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
+          );
+          await closeAndNotifyRefresh();
+          return;
+        }
+        log(
+          `🔐 STEP Arkade_v4=1 step=wallet_send_other_payment_running status=refused why=earlier_attempt_running src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
+        );
+        failSend(t("screen.BitcoinSendScreen.errorLightningSendStillRunning"));
+        return;
+      }
+      // The check above runs once, before several awaits. A Lightning attempt
+      // started on another tap during one of them owns the pill and refs by
+      // the time this run resumes, so every branch that awaited rechecks here
+      // right before it hands off to the pill.
+      const lightningAttemptStartedMeanwhile = (): boolean => {
+        if (!arkadeLightningSendActiveRef.current) return false;
+        log(
+          `🔐 STEP Arkade_v4=1 step=wallet_send_other_payment_running status=refused why=earlier_attempt_running phase=after_prepare src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
+        );
+        failSend(t("screen.BitcoinSendScreen.errorLightningSendStillRunning"));
+        return true;
+      };
       log(
         `🔐 STEP Arkade_v4=1 step=wallet_send_confirm_pressed status=start sats=${currentSats} target=${isArk ? "ark_send" : isBolt11 ? "bolt11" : isLnurl ? "lnurl" : addr ? "bitcoin_onchain" : "missing"} amount_source=${isBolt11 ? "bolt11_invoice" : "ui_amount"} expected_next=validate_send_target src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
       );
@@ -1317,6 +1360,7 @@ export default function BitcoinSendScreen({
           failSend(t("screen.BitcoinSendScreen.errorSendFailed"));
           return;
         }
+        if (lightningAttemptStartedMeanwhile()) return;
         // Success is claimed only once an ORDER EXISTS. Firing it before the
         // quote+commit round-trip showed the user a sent payment that a
         // rejection then swallowed — no order, no pill, nothing to reconcile.
@@ -1360,6 +1404,11 @@ export default function BitcoinSendScreen({
         await closeAndNotifyRefresh();
         return;
       }
+      // Set only once this run claims the shared pill and event refs (right at
+      // its handOffToPill). A run that returns earlier, e.g. a remit price
+      // fetch that resolves after the sheet started another payment, never
+      // owned them and must not reset the newer attempt's refs (#2004).
+      let ownsSendAttempt = false;
       try {
         setBusy(true);
         setErrorMessage(null);
@@ -1411,7 +1460,14 @@ export default function BitcoinSendScreen({
               let invoice: string;
               let payBy: number | null = null;
               if (zapRecipient.provider === "tz") {
-                const order = await createTzOrder(remitAmount, zapRecipient.recipient);
+                // A failed payout refunds to the user's own Lightning address
+                // (Lightning-paid) or Base address (the swap's sender is the
+                // solver, so the service cannot refund to it).
+                const order = await createTzOrder(
+                  remitAmount,
+                  zapRecipient.recipient,
+                  await ownRemitRefundTargets(),
+                );
                 if (order.invoice) {
                   invoice = order.invoice;
                   payBy = tzPayBy(order.expiresAt);
@@ -1475,6 +1531,9 @@ export default function BitcoinSendScreen({
                   currency: zapRecipient.currency,
                   amount: remitAmount,
                   recipient: zapRecipient.recipient,
+                  // Set: the Nuri Remit relay pays ZapRemit after settlement
+                  // and refunds here if the payout fails (#2058).
+                  refundLightningAddress: (await ownRemitRefundTargets()).lightningAddress,
                 });
                 invoice = zap.invoice;
                 payBy = zap.payBy;
@@ -1504,6 +1563,7 @@ export default function BitcoinSendScreen({
                   /\D/g,
                   "",
                 )}-${remitAmount}`,
+                refundLightningAddress: (await ownRemitRefundTargets()).lightningAddress,
               });
             } else {
               throw new Error(t("screen.BitcoinSendScreen.errorInvalidAddress"));
@@ -1572,7 +1632,15 @@ export default function BitcoinSendScreen({
             }
             const owner = await getEthereumAddress();
             if (!owner) throw new Error(t("screen.BitcoinSendScreen.errorSendFailed"));
+            if (arkadeLightningSendActiveRef.current) {
+              // Not this run's attempt: leave its refs and busy state alone.
+              ownsSendAttempt = false;
+              lightningAttemptStartedMeanwhile();
+              setBusy(false);
+              return;
+            }
             handOffToPill();
+            ownsSendAttempt = true;
             // A refused commit (an expired option, a moved price) drops the
             // shown quote, so Try again quotes afresh instead of resubmitting it.
             await executeV2BtcToStable({
@@ -1623,9 +1691,39 @@ export default function BitcoinSendScreen({
         // starting a new pill or balance hold; the boundary callback re-checks
         // immediately before wallet.send for race safety.
         if (target.kind === "ark_send") await assertDirectArkadeSendCanStart();
+        // An earlier tap on this sheet is still paying over Lightning (#2004).
+        // Its pill, pending row and event refs are shared with this run, so
+        // this tap must leave before it replaces or resets any of them: the
+        // running attempt keeps its approval, pill and pending status.
+        const lightningSendKey =
+          target.kind === "bolt11"
+            ? `bolt11:${target.invoice}`
+            : target.kind === "lnurl"
+              ? `lnurl:${target.lnurl}:${target.amountSats}`
+              : null;
+        if (arkadeLightningSendActiveRef.current) {
+          ownsSendAttempt = false;
+          if (lightningSendKey && arkadeLightningSendKeyRef.current === lightningSendKey) {
+            log(
+              `🔐 STEP Arkade_v4=1 step=wallet_send_already_in_progress status=deferred why=earlier_attempt_running src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
+            );
+            await closeAndNotifyRefresh();
+            return;
+          }
+          // A different payment while the earlier one still runs: nothing is
+          // dispatched, and the sheet says why instead of closing silently.
+          log(
+            `🔐 STEP Arkade_v4=1 step=wallet_send_other_payment_running status=refused why=earlier_attempt_running src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
+          );
+          failSend(t("screen.BitcoinSendScreen.errorLightningSendStillRunning"));
+          setBusy(false);
+          return;
+        }
         // Money is about to move: the pill takes over from the sheet.
         handOffToPill();
-        arkadeLightningSendActiveRef.current = target.kind === "bolt11" || target.kind === "lnurl";
+        ownsSendAttempt = true;
+        arkadeLightningSendActiveRef.current = lightningSendKey !== null;
+        arkadeLightningSendKeyRef.current = lightningSendKey;
         arkadeSendAttemptIdRef.current += 1;
         arkadePendingIdRef.current = null;
         arkadeLocalPendingIdRef.current = null;
@@ -1701,11 +1799,28 @@ export default function BitcoinSendScreen({
           scheduleSendSuccess(result.txid || result.paymentHash || result.kind);
         }
       } catch (e: any) {
-        const pendingId = arkadePendingIdRef.current;
-        const localPendingId = arkadeLocalPendingIdRef.current;
-        const submittedTxid = arkadeSubmittedTxidRef.current;
-        const closedAfterSubmitted = arkadeSubmittedClosedRef.current;
+        // Refs, pill and balance hold belong to whichever run claimed them: a
+        // run that failed before its own claim leaves another attempt's alone.
+        const pendingId = ownsSendAttempt ? arkadePendingIdRef.current : null;
+        const localPendingId = ownsSendAttempt ? arkadeLocalPendingIdRef.current : null;
+        const submittedTxid = ownsSendAttempt ? arkadeSubmittedTxidRef.current : null;
+        const closedAfterSubmitted = ownsSendAttempt && arkadeSubmittedClosedRef.current;
         const directArkadeReconciliationRequired = isDirectArkadeSendReconciliationRequiredError(e);
+        // The same invoice is already being paid by an earlier tap or the
+        // tracker (#2004): that attempt owns the order, its approval, its pill,
+        // its balance hold and any pending row its events created here. This
+        // one sent nothing, so it is not a failure: no Try again, no support
+        // report, nothing reverted. Drop this attempt's pill and close the
+        // sheet so the running payment's own status is what the user sees.
+        if (isArkadeLightningPaymentInProgressError(e)) {
+          log(
+            `🔐 STEP Arkade_v4=1 step=wallet_send_already_in_progress status=deferred src=screens/bitcoin/modals/BitcoinSendScreen.tsx#handleConfirm`,
+          );
+          takeBackFromPill();
+          setSubmittedAmountLocked(false);
+          await closeAndNotifyRefresh();
+          return;
+        }
         // Signed and gone: the pill states the failure. Refused before that:
         // the sheet comes back with its figures and says why.
         if (
@@ -1714,13 +1829,13 @@ export default function BitcoinSendScreen({
         ) {
           movePillRef.current?.fail(e);
           movePillRef.current = null;
-        } else {
+        } else if (ownsSendAttempt) {
           takeBackFromPill();
         }
         // Once direct wallet.send may have started, the durable local row and
         // outgoing hold are the only safe truth. Never turn an ambiguous spend
         // back into available balance or a retryable form.
-        if (!directArkadeReconciliationRequired) {
+        if (!directArkadeReconciliationRequired && ownsSendAttempt) {
           bitcoinBalanceStore.revertArkadeOutgoingBalance("send_error");
           if (localPendingId || pendingId || submittedTxid) {
             await removeArkadePending(localPendingId, pendingId, submittedTxid);
@@ -1824,12 +1939,20 @@ export default function BitcoinSendScreen({
           );
         }
       } finally {
-        arkadeLightningSendActiveRef.current = false;
-        arkadePendingIdRef.current = null;
-        arkadeLocalPendingIdRef.current = null;
-        arkadeSubmittedTxidRef.current = null;
-        arkadeSubmittedClosedRef.current = false;
-        setBusy(false);
+        // A tap that deferred to an earlier running attempt leaves that
+        // attempt's refs and busy state alone.
+        if (ownsSendAttempt) {
+          arkadeLightningSendActiveRef.current = false;
+          arkadeLightningSendKeyRef.current = null;
+          arkadePendingIdRef.current = null;
+          arkadeLocalPendingIdRef.current = null;
+          arkadeSubmittedTxidRef.current = null;
+          arkadeSubmittedClosedRef.current = false;
+          setBusy(false);
+        } else if (!arkadeLightningSendActiveRef.current) {
+          // Never claimed and nothing else running: just release the sheet.
+          setBusy(false);
+        }
       }
       return;
     };

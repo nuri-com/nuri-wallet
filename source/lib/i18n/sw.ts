@@ -138,6 +138,8 @@ export const sw = {
       lightningAlreadyPaid: "Ankara hii tayari imelipwa.",
       lightningAlreadyPaying: "Ankara hii tayari inalipwa. Inaonekana kwenye historia yako.",
       errorLightningLockupUnavailable: "Lightning haipatikani. Hakuna kilichotumwa.",
+      errorLightningSendStillRunning:
+        "Malipo yako ya mwisho ya Lightning bado yanaendelea. Subiri yamalizike, kisha tuma tena.",
       errorOnchainTooFreshHours: "Itapatikana baada ya takriban saa %{hours}.",
       errorOnchainTooFreshMinutes: "Itapatikana baada ya takriban dakika %{minutes}.",
       errorOnchainTooFresh: "Bado haipatikani. Jaribu tena baadaye.",
@@ -247,6 +249,13 @@ export const sw = {
       errorPersistentBody: "Bado haifanyi kazi. Tafadhali wasiliana na msaada.",
       amountBelowMin: "Kiwango cha chini %{sats} sats",
       amountAboveMax: "Kiwango cha juu %{sats} sats",
+      paidTitle: "Imelipwa",
+      paidBody: "Malipo yamefika kwenye pochi yako.",
+      detectedTitle: "Malipo yamefika",
+      detectedBody:
+        "Bado yanakamilishwa na yataonekana kwenye salio yakimalizika. Yasipoonekana, wasiliana na msaada.",
+      newRequest: "Ombi jipya",
+      expired: "Ankara imeisha muda",
     },
     QrScannerModal: {
       title: "Changanua QR",
@@ -911,6 +920,7 @@ export const sw = {
       fieldNetwork: "Mtandao wa pesa za simu",
       sepaBank: "Akaunti ya benki ya Euro (SEPA)",
       ukBank: "Akaunti ya benki ya Uingereza",
+      cardBank: "Kadi ya Visa au Mastercard",
     },
   },
   common: {

@@ -144,6 +144,8 @@ export const pl = {
       lightningAlreadyPaid: "Ta faktura jest już opłacona.",
       lightningAlreadyPaying: "Ta faktura jest już opłacana. Widzisz ją w swojej historii.",
       errorLightningLockupUnavailable: "Lightning jest niedostępny. Nic nie zostało wysłane.",
+      errorLightningSendStillRunning:
+        "Twoja ostatnia płatność Lightning wciąż trwa. Poczekaj, aż się zakończy, i wyślij ponownie.",
       errorOnchainTooFreshHours: "Dostępne za około %{hours} godz.",
       errorOnchainTooFreshMinutes: "Dostępne za około %{minutes} min.",
       errorOnchainTooFresh: "Jeszcze niedostępne. Spróbuj później.",
@@ -247,6 +249,13 @@ export const pl = {
       errorPersistentBody: "Nadal nie działa. Skontaktuj się z pomocą.",
       amountBelowMin: "Minimum %{sats} sats",
       amountAboveMax: "Maksimum %{sats} sats",
+      paidTitle: "Zapłacono",
+      paidBody: "Płatność dotarła do Twojego portfela.",
+      detectedTitle: "Płatność otrzymana",
+      detectedBody:
+        "Płatność wciąż się rozlicza i pojawi się w saldzie po zakończeniu. Jeśli nie, skontaktuj się z pomocą.",
+      newRequest: "Nowa prośba",
+      expired: "Faktura wygasła",
     },
     QrScannerModal: {
       title: "Skanuj QR",
@@ -917,6 +926,7 @@ export const pl = {
       fieldNetwork: "Sieć pieniądza mobilnego",
       sepaBank: "Konto bankowe w euro (SEPA)",
       ukBank: "Konto bankowe w Wielkiej Brytanii",
+      cardBank: "Karta Visa lub Mastercard",
     },
   },
   common: {
